@@ -39,7 +39,7 @@ Some quick guidelines to keep the codebase maintainable:
   - [ ] FULLENCR & auth tag checking codepaths
 - [x] Encoding/decoding of ZigBee NWK APS frames
 - [x] Network forming
-- [ ] Network state saving (de facto backups)
+- [~] Network state saving (de facto backups)
   - [ ] Deal with frame counters (avoiding too many writes, but preventing mismatch issues)
   - [ ] Runtime changing of network parameters (ZDO channel, PAN ID...)
 - [~] Joining/Rejoining
