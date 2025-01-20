@@ -69,6 +69,11 @@ And likely more, and of course a bunch of `TODO`s in the code!
 
 ### Testing
 
+Use the appropriate OpenThread RCP firmware:
+- Silabs adapters: preliminary builds at https://github.com/Nerivec/silabs-firmware-builder/actions/runs/12876357998
+- TI adapters: upcoming
+
+> Currently, this has only been tested on Silabs MG24-series adapters, but as long as the top-mentioned requirements are met, any OpenThread RCP firmware should work.
 
 #### CLI
 
