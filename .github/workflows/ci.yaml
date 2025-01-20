@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: 'package.json'
+
+      - uses: biomejs/setup-biome@v2
+        with:
+          version: latest
+
+      - run: npm ci
+
+      - run: npm run build:prod
+
+      - run: biome ci
+
+  tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - run: npm ci
+
+      - run: npm run build:prod
+
+      # coverage disabled in early stages
+      # - run: npm run test:cov
+      - run: npm run test
+
+      # get some "in-workflow" reference numbers for future comparison
+      # TODO: send results to PR as needed
+      - run: npm run bench

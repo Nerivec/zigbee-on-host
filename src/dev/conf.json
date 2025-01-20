@@ -1,0 +1,33 @@
+{
+    "adapter": {
+        "path": "COM4",
+        "baudRate": 460800,
+        "rtscts": true
+    },
+    "streamRaw": {
+        "txChannel": 25,
+        "ccaBackoffAttempts": 1,
+        "ccaRetries": 4,
+        "enableCSMACA": true,
+        "headerUpdated": true,
+        "reTx": false,
+        "securityProcessed": true,
+        "txDelay": 0,
+        "txDelayBaseTime": 0,
+        "rxChannelAfterTxDone": 25
+    },
+    "network": {
+        "tcKey": [90, 105, 103, 66, 101, 101, 65, 108, 108, 105, 97, 110, 99, 101, 48, 57],
+        "tcKeyFrameCounter": 0,
+        "networkKey": [1, 3, 5, 7, 9, 11, 13, 15, 0, 2, 4, 6, 8, 10, 12, 13],
+        "networkKeyFrameCounter": 0,
+        "networkKeySequenceNumber": 0,
+        "panId": 26979,
+        "extendedPANId": [17, 221, 34, 221, 51, 221, 68, 221],
+        "channel": 25,
+        "eui64": [99, 108, 105, 99, 108, 105, 99, 108],
+        "nwkUpdateId": 0,
+        "txPower": 19
+    },
+    "sendMACToZEP": false
+}
