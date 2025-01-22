@@ -5,6 +5,9 @@
     "engines": {
         "node": ">=20.17.0"
     },
+    "files": [
+      "./dist"
+    ],
     "types": "./dist/drivers/ot-rcp-driver.d.ts",
     "main": "./dist/drivers/ot-rcp-driver.js",
     "scripts": {
