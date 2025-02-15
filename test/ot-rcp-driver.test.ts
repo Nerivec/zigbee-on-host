@@ -214,10 +214,10 @@ describe("OT RCP Driver", () => {
             driver.netParams.networkKeySequenceNumber = 1;
             driver.netParams.tcKey = Buffer.from([0x51, 0x69, 0x62, 0x58, 0x53, 0x67, 0x64, 0x56, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
             driver.netParams.tcKeyFrameCounter = 896723;
-            driver.deviceTable.set(1234n, { address16: 1, rxOnWhenIdle: true, authorized: true });
-            driver.deviceTable.set(12656887476334n, { address16: 3457, rxOnWhenIdle: true, authorized: true });
-            driver.deviceTable.set(12328965645634n, { address16: 9674, rxOnWhenIdle: false, authorized: true });
-            driver.deviceTable.set(234367481234n, { address16: 54748, rxOnWhenIdle: true, authorized: false });
+            driver.deviceTable.set(1234n, { address16: 1, rxOnWhenIdle: true, authorized: true, neighbor: true });
+            driver.deviceTable.set(12656887476334n, { address16: 3457, rxOnWhenIdle: true, authorized: true, neighbor: true });
+            driver.deviceTable.set(12328965645634n, { address16: 9674, rxOnWhenIdle: false, authorized: true, neighbor: false });
+            driver.deviceTable.set(234367481234n, { address16: 54748, rxOnWhenIdle: true, authorized: false, neighbor: true });
 
             await driver.saveState();
 
@@ -255,10 +255,15 @@ describe("OT RCP Driver", () => {
             );
             expect(driver.netParams.tcKeyFrameCounter).toStrictEqual(896723 + 1024);
             expect(driver.deviceTable.size).toStrictEqual(4);
-            expect(driver.deviceTable.get(1234n)).toStrictEqual({ address16: 1, rxOnWhenIdle: true, authorized: true });
-            expect(driver.deviceTable.get(12656887476334n)).toStrictEqual({ address16: 3457, rxOnWhenIdle: true, authorized: true });
-            expect(driver.deviceTable.get(12328965645634n)).toStrictEqual({ address16: 9674, rxOnWhenIdle: false, authorized: true });
-            expect(driver.deviceTable.get(234367481234n)).toStrictEqual({ address16: 54748, rxOnWhenIdle: true, authorized: false });
+            expect(driver.deviceTable.get(1234n)).toStrictEqual({ address16: 1, rxOnWhenIdle: true, authorized: true, neighbor: true });
+            expect(driver.deviceTable.get(12656887476334n)).toStrictEqual({ address16: 3457, rxOnWhenIdle: true, authorized: true, neighbor: true });
+            expect(driver.deviceTable.get(12328965645634n)).toStrictEqual({
+                address16: 9674,
+                rxOnWhenIdle: false,
+                authorized: true,
+                neighbor: false,
+            });
+            expect(driver.deviceTable.get(234367481234n)).toStrictEqual({ address16: 54748, rxOnWhenIdle: true, authorized: false, neighbor: true });
             expect(driver.address16ToAddress64.size).toStrictEqual(4);
             expect(driver.address16ToAddress64.get(1)).toStrictEqual(1234n);
             expect(driver.address16ToAddress64.get(3457)).toStrictEqual(12656887476334n);
@@ -608,6 +613,7 @@ describe("OT RCP Driver", () => {
                 address16: 0xa18f,
                 rxOnWhenIdle: true,
                 authorized: false,
+                neighbor: true,
             });
             driver.address16ToAddress64.set(0xa18f, source64);
 
@@ -708,6 +714,7 @@ describe("OT RCP Driver", () => {
                 address16: 0xa18f,
                 rxOnWhenIdle: true,
                 authorized: false,
+                neighbor: true,
             });
 
             driver.parser._transform(makeSpinelStreamRaw(102, NET2_DEVICE_ANNOUNCE_BCAST), "utf8", () => {});
@@ -741,6 +748,7 @@ describe("OT RCP Driver", () => {
                 address16: 0xa18f,
                 rxOnWhenIdle: true,
                 authorized: true,
+                neighbor: true,
             });
         });
 
