@@ -4259,9 +4259,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             offset += 1;
             state.writeUInt8(device.authorized ? 1 : 0, offset);
             offset += 1;
+            state.writeUInt8(device.neighbor ? 1 : 0, offset);
+            offset += 1;
 
             // reserved
-            offset += 512 - 12; // currently: 500
+            offset += 512 - 13; // currently: 499
         }
 
         await writeFile(this.savePath, state);
