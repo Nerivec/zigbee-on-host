@@ -63,7 +63,7 @@ import {
     ZigbeeNWKFrameType,
     type ZigbeeNWKHeader,
     type ZigbeeNWKLinkStatus,
-    type ZigbeeNWKManyToOne,
+    ZigbeeNWKManyToOne,
     type ZigbeeNWKMulticastControl,
     ZigbeeNWKMulticastMode,
     ZigbeeNWKRouteDiscovery,
@@ -353,34 +353,22 @@ export type NeighborTableEntry = {
 };
 
 /**
- * TODO
+ * List of all devices currently on the network.
  */
 export type DeviceTableEntry = {
     // address64: bigint; // mapped
     address16: number;
+    /** Indicates whether the device keeps its receiver on when idle */
     rxOnWhenIdle: boolean;
+    /** Indicates whether the device verified its key */
     authorized: boolean;
+    /** Indicates whether the device is a neighbor */
+    neighbor: boolean;
 };
 
-/**
- * TODO
- */
-export type RouteRecordTableEntry = {
-    /** The destination network address for this route record. uint16_t */
-    // networkAddress: number; // mapped
-    /** The count of relay nodes from concentrator to the destination. uint16_t */
-    // relayCount: number; // determined from path.length
-    /** The set of network addresses that represent the route in order from the concentrator to the destination. */
-    path: number[];
-};
-
-/**
- * see 05-3474-23 #???
- * TODO
- */
 export type SourceRouteTableEntry = {
-    relayIndex: number;
     relayAddresses: number[];
+    /** TODO: formula? */
     pathCost: number;
 };
 
@@ -656,13 +644,19 @@ const CONFIG_NWK_MAX_HOPS = CONFIG_NWK_MAX_DEPTH * 2;
 /** The total delivery time for a broadcast transmission to be delivered to all RxOnWhenIdle=TRUE devices in the network. (sec) */
 // const CONFIG_NWK_BCAST_DELIVERY_TIME = 9;
 /** The time between link status command frames (msec) */
-// const CONFIG_NWK_LINK_STATUS_PERIOD = 15000;
+const CONFIG_NWK_LINK_STATUS_PERIOD = 15000;
 /** Avoid synchronization with other nodes by randomizing `CONFIG_NWK_LINK_STATUS_PERIOD` with this (msec) */
-// const CONFIG_NWK_LINK_STATUS_JITTER = 1000;
+const CONFIG_NWK_LINK_STATUS_JITTER = 1000;
 /** The number of missed link status command frames before resetting the link costs to zero. */
 // const CONFIG_NWK_ROUTER_AGE_LIMIT = 3;
 /** This is an index into Table 3-54. It indicates the default timeout in minutes for any end device that does not negotiate a different timeout value. */
 // const CONFIG_NWK_END_DEVICE_TIMEOUT_DEFAULT = 8;
+/** The time in seconds between concentrator route discoveries. (msec) */
+const CONFIG_NWK_CONCENTRATOR_DISCOVERY_TIME = 60000;
+/** The hop count radius for concentrator route discoveries. */
+const CONFIG_NWK_CONCENTRATOR_RADIUS = CONFIG_NWK_MAX_HOPS;
+/** The number of failures that trigger an immediate concentrator route discoveries. */
+// const CONFIG_NWK_CONCENTRATOR_FORCE_DISCOVERY_FAILURES = 3; // TODO
 
 export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public readonly writer: OTRCPWriter;
@@ -706,6 +700,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     private networkUp: boolean;
 
+    private nwkLinkStatusTimeout: NodeJS.Timeout | undefined;
+    private manyToOneRouteRequestTimeout: NodeJS.Timeout | undefined;
+
     public readonly indirectTransmissions: Map<bigint, { func: () => Promise<void>; timestamp: number }[]>;
 
     //---- Trust Center (see 05-3474-R #4.7.1)
@@ -719,17 +716,13 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public readonly netParams: NetworkParameters;
     /** pre-computed hash of default TC link key for VERIFY_KEY. set by `loadState` */
     private tcVerifyKeyHash!: Buffer;
-    /** mapping by network16 */
-    public readonly neighborTable: Map<number, NeighborTableEntry>;
     /** Master table of all known devices on the network. mapping by network64 */
     public readonly deviceTable: Map<bigint, DeviceTableEntry>;
     /** Lookup synced with deviceTable, maps network address to IEEE address */
     public readonly address16ToAddress64: Map<number, bigint>;
     /** mapping by network16 */
-    public readonly sourceRouteTable: Map<number, SourceRouteTableEntry>;
+    public readonly sourceRouteTable: Map<number, SourceRouteTableEntry[]>;
     // TODO: possibility of a route/sourceRoute blacklist?
-    /** TOOD */
-    public readonly routeRecordTable: Map<number, RouteRecordTableEntry>;
 
     //---- APS
 
@@ -789,11 +782,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.netParams = netParams;
         this.tcVerifyKeyHash = Buffer.alloc(0); // set by `loadState`
 
-        this.neighborTable = new Map();
         this.deviceTable = new Map();
         this.address16ToAddress64 = new Map();
         this.sourceRouteTable = new Map();
-        this.routeRecordTable = new Map();
 
         //---- APS
         this.apsDeviceKeyPairSet = new Map();
@@ -928,6 +919,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // pre-emptive
         this.networkUp = false;
 
+        // TODO: clear all timeouts/intervals
+        clearTimeout(this.nwkLinkStatusTimeout);
+        clearTimeout(this.manyToOneRouteRequestTimeout);
+
         for (const [, waiter] of this.tidWaiters) {
             clearTimeout(waiter.timer);
             // waiter.reject(new Error("Driver stopping"));
@@ -948,7 +943,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     public async onFrame(buffer: Buffer): Promise<void> {
         const hdlcFrame = decodeHdlcFrame(buffer);
-        logger.debug(() => `<--- HDLC[length=${hdlcFrame.length}]`, NS);
+        // logger.debug(() => `<--- HDLC[length=${hdlcFrame.length}]`, NS);
         const spinelFrame = decodeSpinelFrame(hdlcFrame);
 
         if (spinelFrame.header.flg !== SPINEL_HEADER_FLG_SPINEL) {
@@ -1510,15 +1505,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         nwkDest64: bigint | undefined,
         nwkRadius: number,
     ): Promise<void> {
-        let relayIndex: number | undefined;
-        let relayAddresses: number[] | undefined;
         let nwkSecurityHeader: ZigbeeSecurityHeader | undefined;
-
-        if (this.sourceRouting) {
-            // TODO
-            relayIndex = 0;
-            relayAddresses = [];
-        }
 
         if (nwkSecurity) {
             nwkSecurityHeader = {
@@ -1544,6 +1531,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         );
 
         const source64 = nwkSource16 === ZigbeeConsts.COORDINATOR_ADDRESS ? this.netParams.eui64 : this.address16ToAddress64.get(nwkSource16);
+        const [relayIndex, relayAddresses] = this.findBestSourceRoute(nwkDest16, nwkDest64);
         const nwkFrame = encodeZigbeeNWKFrame(
             {
                 frameControl: {
@@ -1552,7 +1540,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
                     multicast: false,
                     security: nwkSecurity,
-                    sourceRoute: this.sourceRouting,
+                    sourceRoute: relayIndex !== undefined,
                     extendedDestination: nwkDest64 !== undefined,
                     extendedSource: source64 !== undefined,
                     endDeviceInitiator: false,
@@ -1732,7 +1720,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const options =
             (((manyToOne ? 1 : 0) << 3) & ZigbeeNWKConsts.CMD_ROUTE_OPTION_MANY_MASK) |
             (((hasDestination64 ? 1 : 0) << 5) & ZigbeeNWKConsts.CMD_ROUTE_OPTION_DEST_EXT);
-        const finalPayload = Buffer.alloc(1 + 1 + 1 + 2 + (hasDestination64 ? 8 : 0));
+        const finalPayload = Buffer.alloc(1 + 1 + 1 + 2 + 1 + (hasDestination64 ? 8 : 0));
         let offset = 0;
         finalPayload.writeUInt8(ZigbeeNWKCommandId.ROUTE_REQ, offset);
         offset += 1;
@@ -1742,7 +1730,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         offset += 1;
         finalPayload.writeUInt16LE(destination16, offset);
         offset += 2;
-        finalPayload.writeUInt8(1, offset); // pathCost TODO: proper init value?
+        finalPayload.writeUInt8(0, offset); // pathCost
         offset += 1;
 
         if (hasDestination64) {
@@ -1758,7 +1746,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
             ZigbeeConsts.BCAST_DEFAULT, // nwkDest16
             undefined, // nwkDest64
-            CONFIG_NWK_MAX_HOPS, // nwkRadius
+            CONFIG_NWK_CONCENTRATOR_RADIUS, // nwkRadius
         );
     }
 
@@ -1994,7 +1982,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #3.4.5
      */
-    public processZigbeeNWKRouteRecord(data: Buffer, offset: number, _macHeader: MACHeader, _nwkHeader: ZigbeeNWKHeader): number {
+    public processZigbeeNWKRouteRecord(data: Buffer, offset: number, _macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const relayCount = data.readUInt8(offset);
         offset += 1;
         const relays: number[] = [];
@@ -2007,7 +1995,27 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         }
 
         logger.debug(() => `<=== NWK ROUTE_RECORD[relays=${relays}]`, NS);
-        // TODO
+
+        const source16 =
+            nwkHeader.source16 === undefined
+                ? nwkHeader.source64 === undefined
+                    ? undefined
+                    : this.deviceTable.get(nwkHeader.source64)?.address16
+                : nwkHeader.source16;
+
+        if (source16 !== undefined) {
+            const entry: SourceRouteTableEntry = {
+                relayAddresses: relays,
+                pathCost: relayCount, // TODO: ?
+            };
+            const entries = this.sourceRouteTable.get(source16);
+
+            if (entries === undefined) {
+                this.sourceRouteTable.set(source16, [entry]);
+            } else {
+                entries.push(entry);
+            }
+        }
 
         return offset;
     }
@@ -2119,7 +2127,12 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
             return `<=== NWK LINK_STATUS[firstFrame=${firstFrame} lastFrame=${lastFrame} links=${linksStr}]`;
         }, NS);
-        // TODO
+
+        // TODO: NeighborTableEntry.age = 0 // max 0xff
+        // TODO: NeighborTableEntry.routerAge += 1 // max 0xffff
+        // TODO: NeighborTableEntry.routerConnectivity = formula
+        // TODO: NeighborTableEntry.routerNeighborSetDiversity = formula
+        // TODO: if NeighborTableEntry does not exist, create one with routerAge = 0 and routerConnectivity/routerNeighborSetDiversity as above
 
         return offset;
     }
@@ -2546,8 +2559,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         disableACKRequest = false,
     ): Promise<void> {
         let nwkSecurityHeader: ZigbeeSecurityHeader | undefined;
-        let relayIndex: number | undefined;
-        let relayAddresses: number[] | undefined;
 
         if (nwkSecurity) {
             nwkSecurityHeader = {
@@ -2563,12 +2574,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             };
         }
 
-        if (this.sourceRouting) {
-            // TODO
-            relayIndex = 0;
-            relayAddresses = [];
-        }
-
         const apsCounter = this.nextAPSCounter();
         const nwkSeqNum = this.nextNWKSeqNum();
         const macSeqNum = this.nextMACSeqNum();
@@ -2579,6 +2584,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             NS,
         );
 
+        const [relayIndex, relayAddresses] = this.findBestSourceRoute(nwkDest16, nwkDest64);
         const apsFrame = encodeZigbeeAPSFrame(
             {
                 frameControl: {
@@ -2604,7 +2610,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     discoverRoute: nwkDiscoverRoute,
                     multicast: false,
                     security: nwkSecurity,
-                    sourceRoute: this.sourceRouting,
+                    sourceRoute: relayIndex !== undefined,
                     extendedDestination: nwkDest64 !== undefined,
                     extendedSource: false,
                     endDeviceInitiator: false,
@@ -2682,6 +2688,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             };
         }
 
+        const [relayIndex, relayAddresses] = this.findBestSourceRoute(nwkDest16, nwkDest64);
         const apsFrame = encodeZigbeeAPSFrame(
             {
                 frameControl: {
@@ -2711,7 +2718,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     discoverRoute: nwkDiscoverRoute,
                     multicast: multicastControl !== undefined,
                     security: true,
-                    sourceRoute: this.sourceRouting, // TODO
+                    sourceRoute: relayIndex !== undefined,
                     extendedDestination: nwkDest64 !== undefined,
                     extendedSource: false,
                     endDeviceInitiator: false,
@@ -2721,8 +2728,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 source16: ZigbeeConsts.COORDINATOR_ADDRESS,
                 radius: this.decrementRadius(CONFIG_NWK_MAX_HOPS),
                 seqNum: nwkSeqNum,
-                // relayIndex,
-                // relayAddresses,
+                relayIndex,
+                relayAddresses,
                 multicastControl,
             },
             apsFrame,
@@ -2775,6 +2782,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             NS,
         );
 
+        const [relayIndex, relayAddresses] = this.findBestSourceRoute(nwkHeader.destination16, nwkHeader.destination64);
         const ackAPSFrame = encodeZigbeeAPSFrame(
             {
                 frameControl: {
@@ -2803,7 +2811,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
                     multicast: false,
                     security: true,
-                    sourceRoute: false, // TODO
+                    sourceRoute: relayIndex !== undefined,
                     extendedDestination: false,
                     extendedSource: false,
                     endDeviceInitiator: false,
@@ -2812,8 +2820,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 source16: nwkHeader.destination16,
                 radius: this.decrementRadius(nwkHeader.radius ?? CONFIG_NWK_MAX_HOPS),
                 seqNum: nwkHeader.seqNum,
-                // relayIndex,
-                // relayAddresses,
+                relayIndex,
+                relayAddresses,
             },
             ackAPSFrame,
             {
@@ -3834,6 +3842,36 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         logger.info("======== Network started ========", NS);
 
         this.networkUp = true;
+
+        // TODO: periodic/delayed actions
+        await this.sendPeriodicZigbeeNWKLinkStatus();
+        await this.sendPeriodicManyToOneRouteRequest();
+        // TODO: this.saveState() periodically
+    }
+
+    public async sendPeriodicZigbeeNWKLinkStatus(): Promise<void> {
+        clearTimeout(this.nwkLinkStatusTimeout);
+        // TODO: get links
+        await this.sendZigbeeNWKLinkStatus([]);
+
+        this.nwkLinkStatusTimeout = setTimeout(
+            async () => {
+                await this.sendPeriodicZigbeeNWKLinkStatus();
+            },
+            CONFIG_NWK_LINK_STATUS_PERIOD + Math.random() * CONFIG_NWK_LINK_STATUS_JITTER,
+        );
+    }
+
+    /**
+     * TODO: trigger manually upon receipt of a route failure
+     */
+    public async sendPeriodicManyToOneRouteRequest(): Promise<void> {
+        clearTimeout(this.manyToOneRouteRequestTimeout);
+        await this.sendZigbeeNWKRouteReq(ZigbeeNWKManyToOne.WITH_SOURCE_ROUTING, ZigbeeConsts.BCAST_DEFAULT);
+
+        this.manyToOneRouteRequestTimeout = setTimeout(async () => {
+            await this.sendPeriodicManyToOneRouteRequest();
+        }, CONFIG_NWK_CONCENTRATOR_DISCOVERY_TIME);
     }
 
     /**
@@ -3943,7 +3981,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     rxOnWhenIdle,
                     // on initial join success, device is considered joined but unauthorized after MAC Assoc / NWK Commissioning response is sent
                     authorized: false,
-                    // TODO
+                    neighbor: true, // TODO: parent === 0x0000
                 });
                 this.address16ToAddress64.set(newNetwork16, source64!);
 
@@ -3977,6 +4015,60 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 this.emit("DEVICE_LEFT", source16, source64);
             });
         }
+    }
+
+    private findBestSourceRoute(
+        destination16: number | undefined,
+        destination64: bigint | undefined,
+    ): [relayIndex: number | undefined, relayAddresses: number[] | undefined] {
+        if (!this.sourceRouting) {
+            return [undefined, undefined];
+        }
+
+        if (destination16 === undefined) {
+            if (destination64 === undefined) {
+                // TODO: invalid?
+                return [undefined, undefined];
+            }
+
+            const device = this.deviceTable.get(destination64);
+
+            if (device === undefined) {
+                // TODO: unknown?
+                return [undefined, undefined];
+            }
+
+            destination16 = device.address16;
+        }
+
+        const sourceRouteEntries = this.sourceRouteTable.get(destination16);
+
+        if (sourceRouteEntries === undefined) {
+            return [undefined, undefined];
+        }
+
+        if (sourceRouteEntries.length === 0) {
+            // cleanup
+            this.sourceRouteTable.delete(destination16);
+
+            return [undefined, undefined];
+        }
+
+        if (sourceRouteEntries.length > 1) {
+            // sort by lowest cost first, if more than one entry
+            // TODO: add property that keeps track of error count to further sort identical cost matches?
+            sourceRouteEntries.sort((a, b) => a.pathCost - b.pathCost);
+        }
+
+        const relays = sourceRouteEntries[0].relayAddresses;
+        const relayLastIndex = relays.length - 1;
+
+        // TODO: handle relay count === 0 (direct)? current logic will return undefined below and not use source routing
+        if (relayLastIndex > 0) {
+            return [relayLastIndex, relays];
+        }
+
+        return [undefined, undefined];
     }
 
     // TODO: interference detection (& optionally auto channel changing)
@@ -4218,14 +4310,17 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 offset += 1;
                 const authorized = Boolean(state.readUInt8(offset));
                 offset += 1;
+                const neighbor = Boolean(state.readUInt8(offset));
+                offset += 1;
 
                 // reserved
-                offset += 512 - 12; // currently: 500
+                offset += 512 - 13; // currently: 499
 
                 this.deviceTable.set(address64, {
                     address16,
                     rxOnWhenIdle,
                     authorized,
+                    neighbor,
                 });
                 this.address16ToAddress64.set(address16, address64);
 
