@@ -14,15 +14,11 @@ jobs:
         with:
           node-version-file: 'package.json'
 
-      - uses: biomejs/setup-biome@v2
-        with:
-          version: latest
-
       - run: npm ci
 
       - run: npm run build:prod
 
-      - run: biome ci
+      - run: npm run check:ci
 
   tests:
     strategy:
