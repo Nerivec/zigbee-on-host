@@ -757,7 +757,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.nwkSeqNum = 0; // start at 1
         this.apsCounter = 0; // start at 1
         this.zdoSeqNum = 0; // start at 1
-        this.sourceRouting = false; // TODO: true
+        this.sourceRouting = true;
         this.routeRequestId = 0; // start at 1
 
         this.networkUp = false;
@@ -2006,7 +2006,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         if (source16 !== undefined) {
             const entry: SourceRouteTableEntry = {
                 relayAddresses: relays,
-                pathCost: relayCount, // TODO: ?
+                pathCost: relayCount + 1, // TODO: ?
             };
             const entries = this.sourceRouteTable.get(source16);
 
@@ -2146,7 +2146,15 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * - outgoing cost contains value of outgoing cost from neighbor table
      */
     public async sendZigbeeNWKLinkStatus(links: ZigbeeNWKLinkStatus[]): Promise<void> {
-        logger.debug(() => `===> NWK LINK_STATUS[links=${links}]`, NS);
+        logger.debug(() => {
+            let linksStr = "";
+
+            for (const link of links) {
+                linksStr += `{${link.address}|in:${link.incomingCost}|out:${link.outgoingCost}}`;
+            }
+
+            return `===> NWK LINK_STATUS[links=${linksStr}]`;
+        }, NS);
         // TODO: check repeat logic
         const linkSize = links.length * 3;
         const maxLinksPayloadSize = ZigbeeNWKConsts.PAYLOAD_MIN_SIZE - 2; // 84 (- cmdId[1] - options[1])
@@ -3843,6 +3851,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
         this.networkUp = true;
 
+        await this.registerTimers();
+    }
+
+    public async registerTimers(): Promise<void> {
         // TODO: periodic/delayed actions
         await this.sendPeriodicZigbeeNWKLinkStatus();
         await this.sendPeriodicManyToOneRouteRequest();
@@ -3851,8 +3863,22 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     public async sendPeriodicZigbeeNWKLinkStatus(): Promise<void> {
         clearTimeout(this.nwkLinkStatusTimeout);
-        // TODO: get links
-        await this.sendZigbeeNWKLinkStatus([]);
+        const links: ZigbeeNWKLinkStatus[] = [];
+
+        for (const [device64, entry] of this.deviceTable.entries()) {
+            if (entry.neighbor) {
+                // TODO: proper cost values
+                const [, , pathCost] = this.findBestSourceRoute(entry.address16, device64);
+
+                links.push({
+                    address: entry.address16,
+                    incomingCost: pathCost ?? 0,
+                    outgoingCost: pathCost ?? 0,
+                });
+            }
+        }
+
+        await this.sendZigbeeNWKLinkStatus(links);
 
         this.nwkLinkStatusTimeout = setTimeout(
             async () => {
@@ -4020,22 +4046,22 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     private findBestSourceRoute(
         destination16: number | undefined,
         destination64: bigint | undefined,
-    ): [relayIndex: number | undefined, relayAddresses: number[] | undefined] {
+    ): [relayIndex: number | undefined, relayAddresses: number[] | undefined, pathCost: number | undefined] {
         if (!this.sourceRouting) {
-            return [undefined, undefined];
+            return [undefined, undefined, undefined];
         }
 
         if (destination16 === undefined) {
             if (destination64 === undefined) {
                 // TODO: invalid?
-                return [undefined, undefined];
+                return [undefined, undefined, undefined];
             }
 
             const device = this.deviceTable.get(destination64);
 
             if (device === undefined) {
                 // TODO: unknown?
-                return [undefined, undefined];
+                return [undefined, undefined, undefined];
             }
 
             destination16 = device.address16;
@@ -4044,14 +4070,14 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const sourceRouteEntries = this.sourceRouteTable.get(destination16);
 
         if (sourceRouteEntries === undefined) {
-            return [undefined, undefined];
+            return [undefined, undefined, undefined];
         }
 
         if (sourceRouteEntries.length === 0) {
             // cleanup
             this.sourceRouteTable.delete(destination16);
 
-            return [undefined, undefined];
+            return [undefined, undefined, undefined];
         }
 
         if (sourceRouteEntries.length > 1) {
@@ -4063,12 +4089,12 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const relays = sourceRouteEntries[0].relayAddresses;
         const relayLastIndex = relays.length - 1;
 
-        // TODO: handle relay count === 0 (direct)? current logic will return undefined below and not use source routing
-        if (relayLastIndex > 0) {
-            return [relayLastIndex, relays];
+        // TODO: handle `relayLastIndex === -1` (direct)? current logic will return undefined below and not use source routing
+        if (relayLastIndex >= 0) {
+            return [relayLastIndex, relays, sourceRouteEntries[0].pathCost];
         }
 
-        return [undefined, undefined];
+        return [undefined, undefined, sourceRouteEntries[0].pathCost];
     }
 
     // TODO: interference detection (& optionally auto channel changing)

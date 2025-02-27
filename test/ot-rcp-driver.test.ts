@@ -9,6 +9,7 @@ import { SPINEL_HEADER_FLG_SPINEL, encodeSpinelFrame } from "../src/spinel/spine
 import { SpinelStatus } from "../src/spinel/statuses";
 import { MACAssociationStatus, decodeMACFrameControl, decodeMACHeader } from "../src/zigbee/mac";
 import { ZigbeeConsts } from "../src/zigbee/zigbee";
+import { type ZigbeeNWKLinkStatus, ZigbeeNWKManyToOne } from "../src/zigbee/zigbee-nwk";
 import {
     A_CHANNEL,
     A_EUI64,
@@ -22,6 +23,11 @@ import {
     NET2_REQUEST_KEY_TC_FROM_DEVICE,
     NET2_TRANSPORT_KEY_NWK_FROM_COORD,
     NET2_VERIFY_KEY_TC_FROM_DEVICE,
+    NET3_COORD_EUI64_BIGINT,
+    NET3_EXTENDED_PAN_ID,
+    NET3_NETWORK_KEY,
+    NET3_PAN_ID,
+    NET3_ROUTE_RECORD,
     NETDEF_ACK_FRAME_FROM_COORD,
     NETDEF_ACK_FRAME_TO_COORD,
     NETDEF_EXTENDED_PAN_ID,
@@ -48,6 +54,7 @@ describe("OT RCP Driver", () => {
         return wiresharkSeqNum + 1;
     };
 
+    // biome-ignore lint/correctness/noUnusedVariables: local testing only
     const setupWireshark = (): void => {
         wiresharkSeqNum = 0; // start at 1
         wiresharkSocket = createSocket("udp4");
@@ -664,7 +671,6 @@ describe("OT RCP Driver", () => {
         });
 
         it("performs a join & authorize - ROUTER", async () => {
-            setupWireshark();
             // Expected flow (APS acks requested from device are skipped for brevity):
             // - NET2_BEACON_REQ_FROM_DEVICE
             // - NET2_BEACON_RESP_FROM_COORD
@@ -755,5 +761,155 @@ describe("OT RCP Driver", () => {
         // it("performs a join & authorize - END DEVICE", async () => {
         //     // TODO: with DATA req (indirect transmission)
         // });
+    });
+
+    describe("NET3", () => {
+        beforeEach(async () => {
+            driver = new OTRCPDriver(
+                {
+                    txChannel: A_CHANNEL,
+                    ccaBackoffAttempts: 1,
+                    ccaRetries: 4,
+                    enableCSMACA: true,
+                    headerUpdated: true,
+                    reTx: false,
+                    securityProcessed: true,
+                    txDelay: 0,
+                    txDelayBaseTime: 0,
+                    rxChannelAfterTxDone: A_CHANNEL,
+                },
+                {
+                    eui64: NET3_COORD_EUI64_BIGINT,
+                    panId: NET3_PAN_ID,
+                    extendedPANId: Buffer.from(NET3_EXTENDED_PAN_ID).readBigUInt64LE(0),
+                    channel: A_CHANNEL,
+                    nwkUpdateId: 0,
+                    txPower: 5,
+                    networkKey: Buffer.from(NET3_NETWORK_KEY),
+                    networkKeyFrameCounter: 0,
+                    networkKeySequenceNumber: 0,
+                    tcKey: Buffer.from(NETDEF_TC_KEY),
+                    tcKeyFrameCounter: 0,
+                },
+                SAVE_DIR,
+                true, // emitMACFrames
+            );
+            await driver.loadState();
+            driver.parser.on("data", driver.onFrame.bind(driver));
+            // joined device
+            driver.deviceTable.set(6685525477083214058n, { address16: 0x3ab1, rxOnWhenIdle: true, authorized: true, neighbor: true });
+            driver.address16ToAddress64.set(0x3ab1, 6685525477083214058n);
+            // not set on purpose to observe change from actual route record
+            // driver.sourceRouteTable.set(0x3ab1, [{relayAddresses: [], pathCost: 1}]);
+
+            // @ts-expect-error mock override
+            driver.networkUp = true;
+        });
+
+        afterEach(() => {
+            driver.deviceTable.clear();
+            driver.address16ToAddress64.clear();
+        });
+
+        it("registers timers", async () => {
+            const sendPeriodicZigbeeNWKLinkStatusSpy = vi.spyOn(driver, "sendPeriodicZigbeeNWKLinkStatus");
+            const sendPeriodicManyToOneRouteRequestSpy = vi.spyOn(driver, "sendPeriodicManyToOneRouteRequest");
+            const processZigbeeNWKRouteRecordSpy = vi.spyOn(driver, "processZigbeeNWKRouteRecord");
+            const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+            let linksSpy: ZigbeeNWKLinkStatus[] | undefined;
+            let manyToOneSpy: ZigbeeNWKManyToOne | undefined;
+            let destination16Spy: number | undefined;
+
+            vi.spyOn(driver, "sendZigbeeNWKLinkStatus").mockImplementationOnce(async (links) => {
+                linksSpy = links;
+                const p = driver.sendZigbeeNWKLinkStatus(links);
+                // LINK_STATUS => OK
+                driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+                await p;
+            });
+            vi.spyOn(driver, "sendZigbeeNWKRouteReq").mockImplementationOnce(async (manyToOne, destination16) => {
+                manyToOneSpy = manyToOne;
+                destination16Spy = destination16;
+                const p = driver.sendZigbeeNWKRouteReq(manyToOne, destination16);
+                // ROUTE_REQ => OK
+                driver.parser._transform(makeSpinelLastStatus(2), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+                await p;
+            });
+            await driver.registerTimers();
+
+            expect(linksSpy).toStrictEqual([{ address: 0x3ab1, incomingCost: 0, outgoingCost: 0 }]);
+            expect(manyToOneSpy).toStrictEqual(ZigbeeNWKManyToOne.WITH_SOURCE_ROUTING);
+            expect(destination16Spy).toStrictEqual(ZigbeeConsts.BCAST_DEFAULT);
+            expect(sendPeriodicZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(1);
+            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1);
+            expect(setTimeoutSpy).toHaveBeenCalledTimes(2 + 2 /* waiters */);
+
+            driver.parser._transform(makeSpinelStreamRaw(1, NET3_ROUTE_RECORD), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+            // ROUTE_RECORD => OK
+            driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(processZigbeeNWKRouteRecordSpy).toHaveBeenCalledTimes(1);
+
+            //--- SECOND TRIGGER
+
+            vi.spyOn(driver, "sendZigbeeNWKLinkStatus").mockImplementationOnce(async (links) => {
+                linksSpy = links;
+                const p = driver.sendZigbeeNWKLinkStatus(links);
+                // LINK_STATUS => OK
+                driver.parser._transform(makeSpinelLastStatus(3), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+                await p;
+            });
+            await vi.advanceTimersByTimeAsync(17000);
+
+            expect(sendPeriodicZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(2);
+            expect(linksSpy).toStrictEqual([{ address: 0x3ab1, incomingCost: 1, outgoingCost: 1 }]);
+
+            vi.spyOn(driver, "sendZigbeeNWKLinkStatus").mockImplementationOnce(async (links) => {
+                linksSpy = links;
+                const p = driver.sendZigbeeNWKLinkStatus(links);
+                // LINK_STATUS => OK
+                driver.parser._transform(makeSpinelLastStatus(4), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+                await p;
+            });
+            await vi.advanceTimersByTimeAsync(17000);
+
+            expect(sendPeriodicZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(3);
+            expect(linksSpy).toStrictEqual([{ address: 0x3ab1, incomingCost: 1, outgoingCost: 1 }]);
+
+            vi.spyOn(driver, "sendZigbeeNWKLinkStatus").mockImplementationOnce(async (links) => {
+                linksSpy = links;
+                const p = driver.sendZigbeeNWKLinkStatus(links);
+                // LINK_STATUS => OK
+                driver.parser._transform(makeSpinelLastStatus(5), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+                await p;
+            });
+            await vi.advanceTimersByTimeAsync(17000);
+
+            expect(sendPeriodicZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(4);
+            expect(linksSpy).toStrictEqual([{ address: 0x3ab1, incomingCost: 1, outgoingCost: 1 }]);
+
+            vi.spyOn(driver, "sendZigbeeNWKRouteReq").mockImplementationOnce(async (manyToOne, destination16) => {
+                manyToOneSpy = manyToOne;
+                destination16Spy = destination16;
+                const p = driver.sendZigbeeNWKRouteReq(manyToOne, destination16);
+                // ROUTE_REQ => OK
+                driver.parser._transform(makeSpinelLastStatus(6), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+                await p;
+            });
+            await vi.advanceTimersByTimeAsync(10000);
+            await vi.advanceTimersByTimeAsync(100); // flush
+
+            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(2);
+            expect(manyToOneSpy).toStrictEqual(ZigbeeNWKManyToOne.WITH_SOURCE_ROUTING);
+            expect(destination16Spy).toStrictEqual(ZigbeeConsts.BCAST_DEFAULT);
+        });
     });
 });
