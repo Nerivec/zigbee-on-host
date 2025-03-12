@@ -119,11 +119,11 @@ export const enum MACFrameType {
 /** Frame version definitions. */
 export const enum MACFrameVersion {
     /** conforming to the 802.15.4-2003 standard */
-    v2003 = 0,
+    V2003 = 0,
     /** conforming to the 802.15.4-2006 standard */
-    v2006 = 1,
+    V2006 = 1,
     /** conforming to the 802.15.4-2015 standard */
-    v2015 = 2,
+    V2015 = 2,
     RESERVED = 3,
 }
 
@@ -384,7 +384,7 @@ function decodeMACAuxSecHeader(data: Buffer, offset: number, frameControl: MACFr
     const securityLevel = securityControl & ZigbeeMACConsts.AUX_SEC_LEVEL_MASK;
     const keyIdMode = (securityControl & ZigbeeMACConsts.AUX_KEY_ID_MODE_MASK) >> ZigbeeMACConsts.AUX_KEY_ID_MODE_SHIFT;
 
-    if (frameControl.frameVersion === MACFrameVersion.v2015) {
+    if (frameControl.frameVersion === MACFrameVersion.V2015) {
         frameCounterSuppression = Boolean(securityControl & ZigbeeMACConsts.AUX_FRAME_COUNTER_SUPPRESSION_MASK);
         // TODO: correct??
         asn = (securityControl & ZigbeeMACConsts.AUX_ASN_IN_NONCE_MASK) >> 6;
@@ -694,7 +694,7 @@ export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACF
         throw new Error("Unsupported MAC frame: MULTIPURPOSE");
     }
 
-    if (frameControl.frameVersion === MACFrameVersion.v2003 || frameControl.frameVersion === MACFrameVersion.v2006) {
+    if (frameControl.frameVersion === MACFrameVersion.V2003 || frameControl.frameVersion === MACFrameVersion.V2006) {
         if (frameControl.destAddrMode !== MACFrameAddressMode.NONE && frameControl.sourceAddrMode !== MACFrameAddressMode.NONE) {
             // addressing information is present
             if (frameControl.panIdCompression) {
@@ -725,7 +725,7 @@ export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACF
                 throw new Error("Invalid MAC frame: invalid addressing");
             }
         }
-    } else if (frameControl.frameVersion === MACFrameVersion.v2015) {
+    } else if (frameControl.frameVersion === MACFrameVersion.V2015) {
         if (
             frameControl.frameType === MACFrameType.BEACON ||
             frameControl.frameType === MACFrameType.DATA ||
@@ -879,7 +879,7 @@ export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACF
 
     if (
         frameControl.securityEnabled &&
-        /*(frameControl.frameType === MACFrameType.MULTIPURPOSE || */ frameControl.frameVersion === MACFrameVersion.v2003
+        /*(frameControl.frameType === MACFrameType.MULTIPURPOSE || */ frameControl.frameVersion === MACFrameVersion.V2003
     ) {
         [auxSecHeader, offset] = decodeMACAuxSecHeader(data, offset, frameControl);
     }
@@ -892,8 +892,8 @@ export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACF
 
     if (
         /*frameControl.frameType !== MACFrameType.MULTIPURPOSE && */
-        frameControl.frameVersion === MACFrameVersion.v2003 ||
-        frameControl.frameVersion === MACFrameVersion.v2006
+        frameControl.frameVersion === MACFrameVersion.V2003 ||
+        frameControl.frameVersion === MACFrameVersion.V2006
     ) {
         if (frameControl.frameType === MACFrameType.BEACON) {
             [superframeSpec, offset] = decodeMACSuperframeSpec(data, offset);
@@ -916,7 +916,7 @@ export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACF
     if (
         frameControl.securityEnabled &&
         /*frameControl.frameType !== MACFrameType.MULTIPURPOSE && */
-        frameControl.frameVersion === MACFrameVersion.v2003
+        frameControl.frameVersion === MACFrameVersion.V2003
     ) {
         // auxSecHeader?.securityLevel = ???;
         const isEncrypted = auxSecHeader!.securityLevel! & 0x04;
@@ -1001,7 +1001,7 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
             throw new Error("Unsupported MAC frame: MULTIPURPOSE");
         }
 
-        if (header.frameControl.frameVersion === MACFrameVersion.v2003 || header.frameControl.frameVersion === MACFrameVersion.v2006) {
+        if (header.frameControl.frameVersion === MACFrameVersion.V2003 || header.frameControl.frameVersion === MACFrameVersion.V2006) {
             if (header.frameControl.destAddrMode !== MACFrameAddressMode.NONE && header.frameControl.sourceAddrMode !== MACFrameAddressMode.NONE) {
                 // addressing information is present
                 if (header.frameControl.panIdCompression) {
@@ -1041,7 +1041,7 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
                     throw new Error("Invalid MAC frame: invalid addressing");
                 }
             }
-        } else if (header.frameControl.frameVersion === MACFrameVersion.v2015) {
+        } else if (header.frameControl.frameVersion === MACFrameVersion.V2015) {
             if (
                 header.frameControl.frameType === MACFrameType.BEACON ||
                 header.frameControl.frameType === MACFrameType.DATA ||
@@ -1188,7 +1188,7 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
 
         if (
             header.frameControl.securityEnabled &&
-            /*(header.frameControl.frameType === MACFrameType.MULTIPURPOSE || */ header.frameControl.frameVersion === MACFrameVersion.v2003
+            /*(header.frameControl.frameType === MACFrameType.MULTIPURPOSE || */ header.frameControl.frameVersion === MACFrameVersion.V2003
         ) {
             throw new Error("Unsupported: securityEnabled");
             // [auxSecHeader, offset] = encodeMACAuxSecHeader(data, offset, header.frameControl);
@@ -1196,8 +1196,8 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
 
         if (
             /*header.frameControl.frameType !== MACFrameType.MULTIPURPOSE && */
-            header.frameControl.frameVersion === MACFrameVersion.v2003 ||
-            header.frameControl.frameVersion === MACFrameVersion.v2006
+            header.frameControl.frameVersion === MACFrameVersion.V2003 ||
+            header.frameControl.frameVersion === MACFrameVersion.V2006
         ) {
             if (header.frameControl.frameType === MACFrameType.BEACON) {
                 offset = encodeMACSuperframeSpec(data, offset, header);
@@ -1217,7 +1217,7 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
         if (
             header.frameControl.securityEnabled &&
             /*header.frameControl.frameType !== MACFrameType.MULTIPURPOSE && */
-            header.frameControl.frameVersion === MACFrameVersion.v2003
+            header.frameControl.frameVersion === MACFrameVersion.V2003
         ) {
             // auxSecHeader?.securityLevel = ???;
             const isEncrypted = auxSecHeader!.securityLevel! & 0x04;
@@ -1313,7 +1313,7 @@ export function encodeMACFrameZigbee(header: MACHeaderZigbee, payload: Buffer): 
     const data = Buffer.alloc(ZigbeeMACConsts.PAYLOAD_MAX_SAFE_SIZE); // TODO: optimize with max ZigBee header length
 
     // always transmit with v2003 (0) frame version @see D.6 Frame Version Value of 05-3474-23
-    header.frameControl.frameVersion = MACFrameVersion.v2003;
+    header.frameControl.frameVersion = MACFrameVersion.V2003;
 
     offset = encodeMACHeader(data, offset, header, true); // zigbee hotpath
 

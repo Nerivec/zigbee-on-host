@@ -60,7 +60,7 @@ export class MinimalAdapter {
         this.closing = false;
 
         if (sendMACToZEP) {
-            this.driver.on("MAC_FRAME", (payload, rssi) => {
+            this.driver.on("macFrame", (payload, rssi) => {
                 const wsZEPFrame = createWiresharkZEPFrame(this.driver.netParams.channel, 1, 0, rssi ?? 0, this.nextWiresharkSeqNum(), payload);
 
                 this.wiresharkSocket.send(wsZEPFrame, this.wiresharkPort, this.wiresharkAddress);
@@ -182,7 +182,7 @@ export class MinimalAdapter {
      * Handle port closing
      * @param err A boolean for Socket, an Error for serialport
      */
-    private async onPortClose(error: boolean | Error): Promise<void> {
+    private onPortClose(error: boolean | Error): void {
         if (error) {
             logger.error("Port closed unexpectedly.", NS);
         } else {
@@ -194,7 +194,7 @@ export class MinimalAdapter {
      * Handle port error
      * @param error
      */
-    private async onPortError(error: Error): Promise<void> {
+    private onPortError(error: Error): void {
         logger.error(`Port ${error}`, NS);
 
         throw new Error("Port error");
@@ -223,10 +223,10 @@ export class MinimalAdapter {
         // allow joins on start for 254 seconds
         this.driver.allowJoins(0xfe, true);
 
-        this.driver.on("FRAME", this.onFrame.bind(this));
-        this.driver.on("DEVICE_JOINED", this.onDeviceJoined.bind(this));
-        this.driver.on("DEVICE_REJOINED", this.onDeviceRejoined.bind(this));
-        this.driver.on("DEVICE_LEFT", this.onDeviceLeft.bind(this));
+        this.driver.on("frame", this.onFrame.bind(this));
+        this.driver.on("deviceJoined", this.onDeviceJoined.bind(this));
+        this.driver.on("deviceRejoined", this.onDeviceRejoined.bind(this));
+        this.driver.on("deviceLeft", this.onDeviceLeft.bind(this));
     }
 
     public async stop(): Promise<void> {

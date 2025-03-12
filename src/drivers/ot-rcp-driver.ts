@@ -97,12 +97,12 @@ import { OTRCPWriter } from "./ot-rcp-writer.js";
 const NS = "ot-rcp-driver";
 
 interface AdapterDriverEventMap {
-    MAC_FRAME: [payload: Buffer, rssi?: number];
-    FATAL_ERROR: [message: string];
-    FRAME: [sender16: number | undefined, sender64: bigint | undefined, apsHeader: ZigbeeAPSHeader, apsPayload: ZigbeeAPSPayload, rssi: number];
-    DEVICE_JOINED: [source16: number, source64: bigint];
-    DEVICE_REJOINED: [source16: number, source64: bigint];
-    DEVICE_LEFT: [source16: number, source64: bigint];
+    macFrame: [payload: Buffer, rssi?: number];
+    fatalError: [message: string];
+    frame: [sender16: number | undefined, sender64: bigint | undefined, apsHeader: ZigbeeAPSHeader, apsPayload: ZigbeeAPSPayload, rssi: number];
+    deviceJoined: [source16: number, source64: bigint];
+    deviceRejoined: [source16: number, source64: bigint];
+    deviceLeft: [source16: number, source64: bigint];
 }
 
 export enum InstallCodePolicy {
@@ -1012,7 +1012,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
         if (this.emitMACFrames) {
             setImmediate(() => {
-                this.emit("MAC_FRAME", payload, metadata?.rssi);
+                this.emit("macFrame", payload, metadata?.rssi);
             });
         }
 
@@ -1201,7 +1201,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
                 if (this.emitMACFrames) {
                     setImmediate(() => {
-                        this.emit("MAC_FRAME", payload);
+                        this.emit("macFrame", payload);
                     });
                 }
 
@@ -1269,7 +1269,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     seqNumSuppress: false,
                     iePresent: false,
                     destAddrMode: dest64 !== undefined ? MACFrameAddressMode.EXT : MACFrameAddressMode.SHORT,
-                    frameVersion: MACFrameVersion.v2003,
+                    frameVersion: MACFrameVersion.V2003,
                     sourceAddrMode: extSource ? MACFrameAddressMode.EXT : MACFrameAddressMode.SHORT,
                 },
                 sequenceNumber: macSeqNum,
@@ -1400,7 +1400,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     seqNumSuppress: false,
                     iePresent: false,
                     destAddrMode: MACFrameAddressMode.NONE,
-                    frameVersion: MACFrameVersion.v2003,
+                    frameVersion: MACFrameVersion.V2003,
                     sourceAddrMode: MACFrameAddressMode.SHORT,
                 },
                 sequenceNumber: macSeqNum,
@@ -1569,7 +1569,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     seqNumSuppress: false,
                     iePresent: false,
                     destAddrMode: MACFrameAddressMode.SHORT,
-                    frameVersion: MACFrameVersion.v2003,
+                    frameVersion: MACFrameVersion.V2003,
                     sourceAddrMode: MACFrameAddressMode.SHORT,
                 },
                 sequenceNumber: macSeqNum,
@@ -2088,7 +2088,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         );
 
         setImmediate(() => {
-            this.emit("DEVICE_REJOINED", newNetwork16, this.address16ToAddress64.get(newNetwork16)!);
+            this.emit("deviceRejoined", newNetwork16, this.address16ToAddress64.get(newNetwork16)!);
         });
     }
 
@@ -2535,7 +2535,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         payload.set(data.subarray(offset), gpdHeader.byteLength);
 
         setImmediate(() => {
-            this.emit("FRAME", nwkHeader.sourceId! & 0xffff, undefined, apsHeader, payload, rssi);
+            this.emit("frame", nwkHeader.sourceId! & 0xffff, undefined, apsHeader, payload, rssi);
         });
     }
 
@@ -2646,7 +2646,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     seqNumSuppress: false,
                     iePresent: false,
                     destAddrMode: MACFrameAddressMode.SHORT,
-                    frameVersion: MACFrameVersion.v2003,
+                    frameVersion: MACFrameVersion.V2003,
                     sourceAddrMode: MACFrameAddressMode.SHORT,
                 },
                 sequenceNumber: macSeqNum,
@@ -2765,7 +2765,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     seqNumSuppress: false,
                     iePresent: false,
                     destAddrMode: MACFrameAddressMode.SHORT,
-                    frameVersion: MACFrameVersion.v2003,
+                    frameVersion: MACFrameVersion.V2003,
                     sourceAddrMode: MACFrameAddressMode.SHORT,
                 },
                 sequenceNumber: macSeqNum,
@@ -2856,7 +2856,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     seqNumSuppress: false,
                     iePresent: false,
                     destAddrMode: MACFrameAddressMode.SHORT,
-                    frameVersion: MACFrameVersion.v2003,
+                    frameVersion: MACFrameVersion.V2003,
                     sourceAddrMode: MACFrameAddressMode.SHORT,
                 },
                 sequenceNumber: macHeader.sequenceNumber,
@@ -2911,7 +2911,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
                     setImmediate(() => {
                         // TODO: always lookup source64 if undef?
-                        this.emit("FRAME", nwkHeader.source16, nwkHeader.source64, apsHeader, data, rssi);
+                        this.emit("frame", nwkHeader.source16, nwkHeader.source64, apsHeader, data, rssi);
                     });
                 }
 
@@ -4038,7 +4038,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             logger.debug(() => `DEVICE_LEFT[source16=${source16} source64=${source64}]`, NS);
 
             setImmediate(() => {
-                this.emit("DEVICE_LEFT", source16, source64);
+                this.emit("deviceLeft", source16, source64);
             });
         }
     }
@@ -4192,7 +4192,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     // TODO: ideally, this shouldn't trigger (prevents early interview process from app) until AFTER authorized=true
                     setImmediate(() => {
                         // if device is authorized, it means it completed the TC link key update, so, a rejoin
-                        this.emit(device.authorized ? "DEVICE_REJOINED" : "DEVICE_JOINED", address16, address64);
+                        this.emit(device.authorized ? "deviceRejoined" : "deviceJoined", address16, address64);
                     });
 
                     return false;

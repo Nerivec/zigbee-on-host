@@ -60,7 +60,7 @@ describe("OT RCP Driver", () => {
         wiresharkSocket = createSocket("udp4");
         wiresharkSocket.bind(DEFAULT_ZEP_UDP_PORT);
 
-        driver.on("MAC_FRAME", (payload, rssi) => {
+        driver.on("macFrame", (payload, rssi) => {
             const wsZEPFrame = createWiresharkZEPFrame(driver.netParams.channel, 1, 0, rssi ?? 0, nextWiresharkSeqNum(), payload);
 
             wiresharkSocket?.send(wsZEPFrame, DEFAULT_ZEP_UDP_PORT, DEFAULT_WIRESHARK_IP);
@@ -124,7 +124,7 @@ describe("OT RCP Driver", () => {
     });
 
     describe("State management", () => {
-        beforeEach(async () => {
+        beforeEach(() => {
             driver = new OTRCPDriver(
                 {
                     txChannel: A_CHANNEL,
