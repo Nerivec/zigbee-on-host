@@ -449,7 +449,7 @@ describe("OT RCP Driver", () => {
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(1);
             expect(processZigbeeAPSCommandFrameSpy).toHaveBeenCalledTimes(0);
             expect(emitSpy).toHaveBeenCalledWith(
-                "FRAME",
+                "frame",
                 0xaa38,
                 undefined,
                 {
@@ -526,7 +526,7 @@ describe("OT RCP Driver", () => {
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
             expect(processZigbeeNWKGPCommandFrameSpy).toHaveBeenCalledTimes(1);
             expect(emitSpy).toHaveBeenCalledWith(
-                "FRAME",
+                "frame",
                 0x0155f47a & 0xffff,
                 undefined,
                 {
@@ -726,8 +726,8 @@ describe("OT RCP Driver", () => {
             driver.parser._transform(makeSpinelStreamRaw(102, NET2_DEVICE_ANNOUNCE_BCAST), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
-            expect(emitSpy).toHaveBeenCalledWith("DEVICE_JOINED", 0xa18f, 11871832136131022815n);
-            expect(emitSpy).toHaveBeenCalledWith("FRAME", 0xa18f, undefined, expect.any(Object), expect.any(Buffer), 0 /* rssi */);
+            expect(emitSpy).toHaveBeenCalledWith("deviceJoined", 0xa18f, 11871832136131022815n);
+            expect(emitSpy).toHaveBeenCalledWith("frame", 0xa18f, undefined, expect.any(Object), expect.any(Buffer), 0 /* rssi */);
 
             driver.parser._transform(makeSpinelStreamRaw(103, NET2_NODE_DESC_REQ_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
