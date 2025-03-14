@@ -17,7 +17,8 @@
         "check": "biome check --write .",
         "check:ci": "biome check .",
         "clean": "rm -rf dist *.tsbuildinfo",
-        "dev:cli": "node dist/dev/cli.js"
+        "dev:cli": "node dist/dev/cli.js",
+        "prepack": "npm run clean && npm run build:prod"
     },
     "repository": {
         "type": "git",
@@ -32,10 +33,10 @@
     "homepage": "https://github.com/Nerivec/zigbee-on-host#readme",
     "devDependencies": {
         "@biomejs/biome": "1.9.4",
-        "@types/node": "^22.13.4",
-        "@vitest/coverage-v8": "^3.0.6",
+        "@types/node": "^22.13.10",
+        "@vitest/coverage-v8": "^3.0.8",
         "serialport": "^13.0.0",
-        "typescript": "^5.7.3",
-        "vitest": "^3.0.6"
+        "typescript": "^5.8.2",
+        "vitest": "^3.0.8"
     }
 }
