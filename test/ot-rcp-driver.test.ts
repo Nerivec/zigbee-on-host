@@ -538,7 +538,7 @@ describe("OT RCP Driver", () => {
             expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
             expect(processZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1);
-            expect(sendZigbeeNWKRouteReplySpy).toHaveBeenCalledTimes(1);
+            expect(sendZigbeeNWKRouteReplySpy).toHaveBeenCalledTimes(0);
         });
 
         it("receives frame NETDEF_ZGP_COMMISSIONING", async () => {

@@ -55,7 +55,6 @@ import {
     decodeZigbeeAPSHeader,
     decodeZigbeeAPSPayload,
     encodeZigbeeAPSFrame,
-    encodeZigbeeAPSHeader,
 } from "../zigbee/zigbee-aps.js";
 import {
     ZigbeeNWKCommandId,
@@ -86,7 +85,6 @@ import {
     type ZigbeeSecurityHeader,
     ZigbeeSecurityLevel,
     convertMaskToChannels,
-    encodeZigbeeSecurityHeader,
     makeKeyedHash,
     makeKeyedHashByType,
     registerDefaultHashedKeys,
@@ -1047,7 +1045,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
             // TODO: process BEACON for PAN ID conflict detection?
             if (macFCF.frameType !== MACFrameType.CMD && macFCF.frameType !== MACFrameType.DATA) {
-                logger.debug(() => "<-~- MAC Ignoring frame with type not CMD/DATA", NS);
+                logger.debug(() => `<-~- MAC Ignoring frame with type not CMD/DATA (${macFCF.frameType})`, NS);
                 return;
             }
 
@@ -1738,15 +1736,17 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             NS,
         );
 
-        await this.sendZigbeeNWKRouteReply(
-            macHeader.destination16!,
-            nwkHeader.radius!,
-            id,
-            nwkHeader.source16!,
-            destination16,
-            nwkHeader.source64 ?? this.address16ToAddress64.get(nwkHeader.source16!),
-            destination64,
-        );
+        if (destination16 < ZigbeeConsts.BCAST_MIN) {
+            await this.sendZigbeeNWKRouteReply(
+                macHeader.destination16!,
+                nwkHeader.radius!,
+                id,
+                nwkHeader.source16!,
+                destination16,
+                nwkHeader.source64 ?? this.address16ToAddress64.get(nwkHeader.source16!),
+                destination64,
+            );
+        }
 
         return offset;
     }
@@ -3035,7 +3035,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 break;
             }
             case ZigbeeAPSCommandId.UPDATE_DEVICE: {
-                offset = this.processZigbeeAPSUpdateDevice(data, offset, macHeader, nwkHeader, apsHeader);
+                offset = await this.processZigbeeAPSUpdateDevice(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
             case ZigbeeAPSCommandId.REMOVE_DEVICE: {
@@ -3316,13 +3316,13 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #4.4.11.2
      */
-    public processZigbeeAPSUpdateDevice(
+    public async processZigbeeAPSUpdateDevice(
         data: Buffer,
         offset: number,
         _macHeader: MACHeader,
-        _nwkHeader: ZigbeeNWKHeader,
+        nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
-    ): number {
+    ): Promise<number> {
         const device64 = data.readBigUInt64LE(offset);
         offset += 8;
         // ZigBee 2006 and later
@@ -3335,6 +3335,65 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // const [tlvs, tlvsOutOffset] = decodeZigbeeAPSTLVs(data, offset);
 
         logger.debug(() => `<=== APS UPDATE_DEVICE[device64=${device64} device16=${device16} status=${status}]`, NS);
+
+        // 0x00 = Standard Device Secured Rejoin
+        // 0x01 = Standard Device Unsecured Join
+        // 0x02 = Device Left
+        // 0x03 = Standard Device Trust Center Rejoin
+        // 0x04 – 0x07 = Reserved
+        if (status === 0x01) {
+            await this.associate(device16, device64, 0x00 /* initial join */, 0x00, false, true /* was allowed by parent */);
+
+            const tApsCmdPayload = Buffer.alloc(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
+            let offset = 0;
+            tApsCmdPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
+            offset += 1;
+            tApsCmdPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK, offset);
+            offset += 1;
+            tApsCmdPayload.set(this.netParams.networkKey, offset);
+            offset += ZigbeeAPSConsts.CMD_KEY_LENGTH;
+            tApsCmdPayload.writeUInt8(this.netParams.networkKeySequenceNumber, offset);
+            offset += 1;
+            tApsCmdPayload.writeBigUInt64LE(device64, offset);
+            offset += 8;
+            tApsCmdPayload.writeBigUInt64LE(this.netParams.eui64, offset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
+            offset += 8;
+
+            const tApsCmdFrame = encodeZigbeeAPSFrame(
+                {
+                    frameControl: {
+                        frameType: ZigbeeAPSFrameType.CMD,
+                        deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                        ackFormat: false,
+                        security: true,
+                        ackRequest: false,
+                        extendedHeader: false,
+                    },
+                    counter: this.nextAPSCounter(),
+                },
+                tApsCmdPayload,
+                {
+                    control: {
+                        level: ZigbeeSecurityLevel.NONE,
+                        keyId: ZigbeeKeyType.TRANSPORT,
+                        nonce: true,
+                    },
+                    frameCounter: this.nextTCKeyFrameCounter(),
+                    source64: this.netParams.eui64,
+                    micLen: 4,
+                },
+                undefined, // use pre-hashed this.netParams.tcKey,
+            );
+
+            await this.sendZigbeeAPSTunnel(nwkHeader.source16!, device64, tApsCmdFrame);
+        } else if (status === 0x03) {
+            // rejoin
+            await this.associate(device16, device64, 0x01 /* rejoin */, 0x00, false, true /* was allowed by parent */);
+        } else if (status === 0x02) {
+            // left
+            // TODO: according to spec, this is "informative" only, should not take any action?
+            this.disassociate(device16, device64);
+        }
 
         return offset;
     }
@@ -3598,46 +3657,19 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      *
      * @param nwkDest16
      * @param destination64 SHALL be the 64-bit extended address of the device that is to receive the tunneled command
-     * @param tAPSHeader
-     * @param tApsCmdFrame SHALL be the APS command frame to be sent to the destination
-     * @param tAPSMIC
+     * @param tApsCmdFrame SHALL be the APS command payload to be sent to the destination
      */
-    public async sendZigbeeAPSTunnel(nwkDest16: number, destination64: bigint, tApsCmdFrame: Buffer, tAPSMIC: Buffer): Promise<void> {
+    public async sendZigbeeAPSTunnel(nwkDest16: number, destination64: bigint, tApsCmdFrame: Buffer): Promise<void> {
         logger.debug(() => `===> APS TUNNEL[destination64=${destination64}]`, NS);
 
-        const finalPayload = Buffer.alloc(28 + tApsCmdFrame.byteLength);
+        const finalPayload = Buffer.alloc(9 + tApsCmdFrame.byteLength);
         let offset = 0;
         finalPayload.writeUInt8(ZigbeeAPSCommandId.TUNNEL, offset);
         offset += 1;
         finalPayload.writeBigUInt64LE(destination64, offset);
         offset += 8;
-        // TODO ??
-        offset = encodeZigbeeAPSHeader(finalPayload, offset, {
-            frameControl: {
-                frameType: ZigbeeAPSFrameType.DATA,
-                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
-                ackFormat: false,
-                security: false,
-                ackRequest: false,
-                extendedHeader: false,
-            },
-            counter: 0, // TODO: ??
-        });
-        // SHALL indicate that a link key was used and SHALL include the extended nonce field.
-        offset = encodeZigbeeSecurityHeader(finalPayload, offset, {
-            control: {
-                level: ZigbeeSecurityLevel.NONE,
-                keyId: ZigbeeKeyType.LINK,
-                nonce: true,
-            },
-            frameCounter: 0, // TODO: ??
-            source64: this.netParams.eui64,
-            micLen: 4,
-        });
         finalPayload.set(tApsCmdFrame, offset);
         offset += tApsCmdFrame.byteLength;
-        finalPayload.set(tAPSMIC, offset);
-        offset += 4;
 
         await this.sendZigbeeAPSCommand(
             ZigbeeAPSCommandId.TUNNEL,
@@ -3976,7 +4008,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * @param source16
      * @param source64 Assumed valid if assocType === 0x00
-     * @param assocType
+     * @param assocType Type of association
+     * - 0x00 = MAC Association
+     * - 0x01 = Network Rejoin without Security
      * @param capabilities
      * @param denyOverride
      * @returns
@@ -3987,6 +4021,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         assocType: number,
         capabilities: number,
         denyOverride?: boolean,
+        allowOverride?: boolean,
     ): Promise<[status: MACAssociationStatus | number, newNetwork16: number]> {
         // 0xffff when not successful and should not be retried
         let newNetwork16 = source16;
@@ -3995,7 +4030,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         if (denyOverride) {
             newNetwork16 = 0xffff;
             status = MACAssociationStatus.PAN_ACCESS_DENIED;
-        } else {
+        } else if (!allowOverride) {
             if (assocType === 0x00) {
                 // initial join
                 if (this.trustCenterPolicies.allowJoins) {
@@ -4047,14 +4082,15 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
                 this.deviceTable.set(source64!, {
                     address16: newNetwork16,
-                    rxOnWhenIdle,
+                    rxOnWhenIdle, // TODO: only valid if not triggered by `processZigbeeAPSUpdateDevice`
                     // on initial join success, device is considered joined but unauthorized after MAC Assoc / NWK Commissioning response is sent
                     authorized: false,
                     neighbor: true, // TODO: parent === 0x0000
                 });
                 this.address16ToAddress64.set(newNetwork16, source64!);
 
-                if (!rxOnWhenIdle) {
+                // `processZigbeeAPSUpdateDevice` has no `capabilities` info, device is joined through router, so, no indirect tx for coordinator
+                if (!rxOnWhenIdle && capabilities !== 0x00) {
                     this.indirectTransmissions.set(source64!, []);
                 }
             } else if (assocType === 0x01) {
@@ -4253,8 +4289,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             }
         }
 
-        // increment and set the ZDO sequence number in outgoing payload
-        finalPayload[0] = this.nextZDOSeqNum();
+        // set the ZDO sequence number in outgoing payload same as incoming request
+        finalPayload[0] = data[0];
 
         logger.debug(() => `===> COORD_ZDO[seqNum=${finalPayload[0]} clusterId=${clusterId} nwkDest16=${nwkDest16} nwkDest64=${nwkDest64}]`, NS);
 
