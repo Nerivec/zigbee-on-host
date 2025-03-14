@@ -15,6 +15,8 @@ export const enum ZigbeeConsts {
     BCAST_RX_ON_WHEN_IDLE = 0xfffd,
     /** All devices in PAN (including sleepy end devices) */
     BCAST_SLEEPY = 0xffff,
+    /** The amount of time after which a broadcast is considered propagated throughout the network */
+    BCAST_TIME_WINDOW = 9000,
     /** The maximum amount of time that the MAC will hold a message for indirect transmission to a child. (7.68sec for ZigBee Pro) */
     MAC_INDIRECT_TRANSMISSION_TIMEOUT = 7680,
 
@@ -32,6 +34,7 @@ export const enum ZigbeeConsts {
     SIMPLE_DESCRIPTOR_REQUEST = 0x0004,
     ACTIVE_ENDPOINTS_REQUEST = 0x0005,
     END_DEVICE_ANNOUNCE = 0x0013,
+    NWK_UPDATE_REQUEST = 0x0038,
 
     //---- Green Power
     GP_ENDPOINT = 0xf2,
@@ -508,3 +511,29 @@ export function encryptZigbeePayload(
 
     return [encryptedPayload, authTag, offset];
 }
+
+/**
+ * Converts a channels array to a uint32 channel mask.
+ * @param channels
+ * @returns
+ */
+export const convertChannelsToMask = (channels: number[]): number => {
+    return channels.reduce((a, c) => a + (1 << c), 0);
+};
+
+/**
+ * Converts a uint32 channel mask to a channels array.
+ * @param mask
+ * @returns
+ */
+export const convertMaskToChannels = (mask: number): number[] => {
+    const channels: number[] = [];
+
+    for (const channel of [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]) {
+        if ((2 ** channel) & mask) {
+            channels.push(channel);
+        }
+    }
+
+    return channels;
+};

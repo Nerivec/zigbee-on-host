@@ -359,8 +359,8 @@ function encodeZigbeeNWKMulticastControl(data: Buffer, offset: number, multicast
 }
 
 export function decodeZigbeeNWKHeader(data: Buffer, offset: number, frameControl: ZigbeeNWKFrameControl): [ZigbeeNWKHeader, offset: number] {
-    let destination: number | undefined;
-    let source: number | undefined;
+    let destination16: number | undefined;
+    let source16: number | undefined;
     let radius: number | undefined;
     let seqNum: number | undefined;
     let destination64: bigint | undefined;
@@ -370,9 +370,9 @@ export function decodeZigbeeNWKHeader(data: Buffer, offset: number, frameControl
     let relayAddresses: number[] | undefined;
 
     if (frameControl.frameType !== ZigbeeNWKFrameType.INTERPAN) {
-        destination = data.readUInt16LE(offset);
+        destination16 = data.readUInt16LE(offset);
         offset += 2;
-        source = data.readUInt16LE(offset);
+        source16 = data.readUInt16LE(offset);
         offset += 2;
         radius = data.readUInt8(offset);
         offset += 1;
@@ -414,8 +414,8 @@ export function decodeZigbeeNWKHeader(data: Buffer, offset: number, frameControl
     return [
         {
             frameControl,
-            destination16: destination,
-            source16: source,
+            destination16,
+            source16,
             radius,
             seqNum,
             destination64,

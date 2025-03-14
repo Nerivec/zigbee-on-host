@@ -279,6 +279,23 @@ describe("OT RCP Driver", () => {
             expect(driver.indirectTransmissions.size).toStrictEqual(1);
             expect(driver.indirectTransmissions.get(12328965645634n)).toStrictEqual([]);
         });
+
+        it("sets node descriptor manufacturer code", async () => {
+            await driver.loadState();
+
+            expect(driver.configAttributes.nodeDescriptor).toStrictEqual(
+                Buffer.from([0, 0, 0, 0, 0, 64, 143, 255, 255, 255, 127, 0, 65, 44, 127, 0, 0]),
+            );
+
+            driver.setManufacturerCode(0x1234);
+
+            expect(driver.configAttributes.nodeDescriptor).toStrictEqual(
+                Buffer.from([0, 0, 0, 0, 0, 64, 143, 52, 18, 255, 127, 0, 65, 44, 127, 0, 0]),
+            );
+
+            // revert
+            driver.setManufacturerCode(0xffff);
+        });
     });
 
     describe("NETDEF", () => {

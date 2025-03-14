@@ -85,12 +85,13 @@ import {
     ZigbeeKeyType,
     type ZigbeeSecurityHeader,
     ZigbeeSecurityLevel,
+    convertMaskToChannels,
     encodeZigbeeSecurityHeader,
     makeKeyedHash,
     makeKeyedHashByType,
     registerDefaultHashedKeys,
 } from "../zigbee/zigbee.js";
-import { encodeCoordinatorDescriptors } from "./endpoints.js";
+import { encodeCoordinatorDescriptors } from "./descriptors.js";
 import { OTRCPParser } from "./ot-rcp-parser.js";
 import { OTRCPWriter } from "./ot-rcp-writer.js";
 
@@ -103,6 +104,12 @@ interface AdapterDriverEventMap {
     deviceJoined: [source16: number, source64: bigint];
     deviceRejoined: [source16: number, source64: bigint];
     deviceLeft: [source16: number, source64: bigint];
+}
+
+const enum SaveConsts {
+    NETWORK_DATA_SIZE = 1024,
+    DEVICE_DATA_SIZE = 512,
+    FRAME_COUNTER_JUMP_OFFSET = 1024,
 }
 
 export enum InstallCodePolicy {
@@ -504,7 +511,7 @@ export type APSDeviceKeyPairSet = {
  */
 export type ConfigurationAttributes = {
     /**
-     * NOTE: Pre-encoded as "sendable" ZDO response (see endpoints.ts for more details):
+     * NOTE: Pre-encoded as "sendable" ZDO response (see descriptors.ts for more details):
      */
     address: Buffer;
     /**
@@ -512,7 +519,7 @@ export type ConfigurationAttributes = {
      * The :Config_Node_Descriptor is either created when the application is first loaded or initialized with a commissioning tool prior to when the device begins operations in the network.
      * It is used for service discovery to describe node features to external inquiring devices.
      *
-     * NOTE: Pre-encoded as "sendable" ZDO response (see endpoints.ts for more details):
+     * NOTE: Pre-encoded as "sendable" ZDO response (see descriptors.ts for more details):
      * - Byte 1: sequence number
      * - Byte 2: status
      * - Byte 3-4: 0x0000 (coordinator nwk addr)
@@ -523,7 +530,7 @@ export type ConfigurationAttributes = {
      * The :Config_Power_Descriptor is either created when the application is first loaded or initialized with a commissioning tool prior to when the device begins operations in the network.
      * It is used for service discovery to describe node power features to external inquiring devices.
      *
-     * NOTE: Pre-encoded as "sendable" ZDO response (see endpoints.ts for more details):
+     * NOTE: Pre-encoded as "sendable" ZDO response (see descriptors.ts for more details):
      * - Byte 1: sequence number
      * - Byte 2: status
      * - Byte 3-4: 0x0000 (coordinator nwk addr)
@@ -534,14 +541,14 @@ export type ConfigurationAttributes = {
      * The :Config_Simple_Descriptors are created when the application is first loaded and are treated as “read-only.”
      * The Simple Descriptor are used for service discovery to describe interfacing features to external inquiring devices.
      *
-     * NOTE: Pre-encoded as "sendable" ZDO response (see endpoints.ts for more details):
+     * NOTE: Pre-encoded as "sendable" ZDO response (see descriptors.ts for more details):
      * - Byte 1: sequence number
      * - Byte 2: status
      * - Byte 3-4: 0x0000 (coordinator nwk addr)
      */
     simpleDescriptors: Buffer;
     /**
-     * NOTE: Pre-encoded as "sendable" ZDO response (see endpoints.ts for more details):
+     * NOTE: Pre-encoded as "sendable" ZDO response (see descriptors.ts for more details):
      */
     activeEndpoints: Buffer;
     /**
@@ -700,6 +707,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     private networkUp: boolean;
 
+    private pendingChangeChannel: NodeJS.Timeout | undefined;
     private nwkLinkStatusTimeout: NodeJS.Timeout | undefined;
     private manyToOneRouteRequestTimeout: NodeJS.Timeout | undefined;
 
@@ -920,6 +928,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.networkUp = false;
 
         // TODO: clear all timeouts/intervals
+        clearTimeout(this.pendingChangeChannel);
         clearTimeout(this.nwkLinkStatusTimeout);
         clearTimeout(this.manyToOneRouteRequestTimeout);
 
@@ -937,6 +946,18 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.saveState();
 
         logger.info("======== Driver stopped ========", NS);
+    }
+
+    /**
+     * Performs a software reset into bootloader.
+     * Will stop network if up.
+     */
+    public async resetIntoBootloader(): Promise<void> {
+        if (this.networkUp) {
+            await this.stop();
+        }
+
+        await this.sendCommand(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.BOOTLOADER]), false);
     }
 
     // #region HDLC/Spinel
@@ -1342,7 +1363,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             // TODO: proper routed `macDest16`
             await this.sendZigbeeAPSTransportKeyNWK(
                 newNetwork16,
-                newNetwork16,
                 this.netParams.networkKey,
                 this.netParams.networkKeySequenceNumber,
                 macHeader.source64!,
@@ -1498,7 +1518,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public async sendZigbeeNWKCommand(
         cmdId: ZigbeeNWKCommandId,
         finalPayload: Buffer,
-        macDest16: number,
         nwkSecurity: boolean,
         nwkSource16: number,
         nwkDest16: number,
@@ -1523,6 +1542,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
         const nwkSeqNum = this.nextNWKSeqNum();
         const macSeqNum = this.nextMACSeqNum();
+        const [relayIndex, relayAddresses] = this.findBestSourceRoute(nwkDest16, nwkDest64);
+        const macDest16 = nwkDest16 < ZigbeeConsts.BCAST_MIN ? (relayAddresses?.[relayIndex!] ?? nwkDest16) : ZigbeeMACConsts.BCAST_ADDR;
 
         logger.debug(
             () =>
@@ -1531,7 +1552,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         );
 
         const source64 = nwkSource16 === ZigbeeConsts.COORDINATOR_ADDRESS ? this.netParams.eui64 : this.address16ToAddress64.get(nwkSource16);
-        const [relayIndex, relayAddresses] = this.findBestSourceRoute(nwkDest16, nwkDest64);
         const nwkFrame = encodeZigbeeNWKFrame(
             {
                 frameControl: {
@@ -1741,7 +1761,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeNWKCommand(
             ZigbeeNWKCommandId.ROUTE_REQ,
             finalPayload,
-            ZigbeeMACConsts.BCAST_ADDR, // macDest16
             true, // nwkSecurity
             ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
             ZigbeeConsts.BCAST_DEFAULT, // nwkDest16
@@ -1853,7 +1872,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeNWKCommand(
             ZigbeeNWKCommandId.ROUTE_REPLY,
             finalPayload,
-            requestDest1stHop16, // macDest16
             true, // nwkSecurity
             ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
             requestDest1stHop16, // nwkDest16
@@ -1888,24 +1906,14 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #3.4.3
      *
-     * @param requestDest1stHop16
      * @param requestSource16
      * @param status
      * @param destination Destination address (only if status is LINK_FAILURE or ADDRESS_CONFLICT)
      * - in case of a routing failure, it SHALL contain the destination address from the data frame that encountered the failure
      * - in case of an address conflict, it SHALL contain the offending network address.
      */
-    public async sendZigbeeNWKStatus(
-        requestDest1stHop16: number,
-        requestSource16: number,
-        status: ZigbeeNWKStatus,
-        destination?: number,
-    ): Promise<void> {
-        logger.debug(
-            () =>
-                `===> NWK NWK_STATUS[requestDest1stHop16=${requestDest1stHop16} requestSource16=${requestSource16} status=${status} destination=${destination}]`,
-            NS,
-        );
+    public async sendZigbeeNWKStatus(requestSource16: number, status: ZigbeeNWKStatus, destination?: number): Promise<void> {
+        logger.debug(() => `===> NWK NWK_STATUS[requestSource16=${requestSource16} status=${status} destination=${destination}]`, NS);
         let finalPayload: Buffer;
 
         if (status === ZigbeeNWKStatus.LINK_FAILURE || status === ZigbeeNWKStatus.ADDRESS_CONFLICT) {
@@ -1920,11 +1928,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeNWKCommand(
             ZigbeeNWKCommandId.NWK_STATUS,
             finalPayload,
-            requestDest1stHop16, // macDest16
             true, // nwkSecurity
             ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
             requestSource16, // nwkDest16
-            requestDest1stHop16 === ZigbeeMACConsts.BCAST_ADDR ? undefined : this.address16ToAddress64.get(requestDest1stHop16), // nwkDest64
+            this.address16ToAddress64.get(requestSource16), // nwkDest64
             CONFIG_NWK_MAX_HOPS, // nwkRadius
         );
     }
@@ -1954,12 +1961,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * NOTE: `request` option always true
      * NOTE: `removeChildren` option should not be used (mesh disruption)
      *
-     * @param neighbor16
      * @param destination16
      * @param rejoin if true, the device that is leaving from its current parent will rejoin the network
      */
-    public async sendZigbeeNWKLeave(neighbor16: number, destination16: number, rejoin: boolean): Promise<void> {
-        logger.debug(() => `===> NWK LEAVE[neighbor16=${neighbor16} destination16=${destination16} rejoin=${rejoin}]`, NS);
+    public async sendZigbeeNWKLeave(destination16: number, rejoin: boolean): Promise<void> {
+        logger.debug(() => `===> NWK LEAVE[destination16=${destination16} rejoin=${rejoin}]`, NS);
 
         const options =
             (0 & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REMOVE_CHILDREN) |
@@ -1970,7 +1976,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeNWKCommand(
             ZigbeeNWKCommandId.LEAVE,
             finalPayload,
-            destination16 < ZigbeeConsts.BCAST_MIN ? neighbor16 : ZigbeeMACConsts.BCAST_ADDR, // macDest16
             true, // nwkSecurity
             ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
             destination16, // nwkDest16
@@ -2079,7 +2084,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeNWKCommand(
             ZigbeeNWKCommandId.REJOIN_RESP,
             finalPayload,
-            requestSource16, // macDest16
             true, // nwkSecurity TODO: ??
             ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
             requestSource16, // nwkDest16
@@ -2196,7 +2200,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             await this.sendZigbeeNWKCommand(
                 ZigbeeNWKCommandId.LINK_STATUS,
                 finalPayload,
-                ZigbeeMACConsts.BCAST_ADDR, // macDest16
                 true, // nwkSecurity
                 ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
                 ZigbeeConsts.BCAST_DEFAULT, // nwkDest16
@@ -2342,11 +2345,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeNWKCommand(
             ZigbeeNWKCommandId.ED_TIMEOUT_RESPONSE,
             finalPayload,
-            requestDest16, // macDest16
             true, // nwkSecurity
             ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
             requestDest16, // nwkDest16
-            this.address16ToAddress64.get(requestDest16), // nwkDest64 TODO: can `undefined`?
+            this.address16ToAddress64.get(requestDest16), // nwkDest64
             1, // nwkRadius
         );
     }
@@ -2390,7 +2392,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public async processZigbeeNWKCommissioningRequest(
         data: Buffer,
         offset: number,
-        macHeader: MACHeader,
+        _macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
     ): Promise<number> {
         // 0x00 Initial Join
@@ -2420,7 +2422,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         if (status === MACAssociationStatus.SUCCESS) {
             // TODO also for rejoin in case of nwk key change?
             await this.sendZigbeeAPSTransportKeyNWK(
-                macHeader.source16!,
                 nwkHeader.source16!,
                 this.netParams.networkKey,
                 this.netParams.networkKeySequenceNumber,
@@ -2477,7 +2478,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeNWKCommand(
             ZigbeeNWKCommandId.COMMISSIONING_RESPONSE,
             finalPayload,
-            requestSource16, // macDest16
             false, // nwkSecurity
             ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
             requestSource16, // nwkDest16
@@ -2557,7 +2557,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public async sendZigbeeAPSCommand(
         cmdId: ZigbeeAPSCommandId,
         finalPayload: Buffer,
-        macDest16: number,
         nwkDiscoverRoute: ZigbeeNWKRouteDiscovery,
         nwkSecurity: boolean,
         nwkDest16: number | undefined,
@@ -2585,6 +2584,23 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const apsCounter = this.nextAPSCounter();
         const nwkSeqNum = this.nextNWKSeqNum();
         const macSeqNum = this.nextMACSeqNum();
+        const [relayIndex, relayAddresses] = this.findBestSourceRoute(nwkDest16, nwkDest64);
+
+        if (nwkDest16 === undefined && nwkDest64 !== undefined) {
+            nwkDest16 = this.deviceTable.get(nwkDest64)?.address16;
+        }
+
+        if (nwkDest16 === undefined) {
+            logger.debug(
+                () =>
+                    `=x=> APS CMD[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) cmdId=${cmdId} macDest=${macDest16} nwkDest=${nwkDest16}:${nwkDest64} nwkDiscRoute=${nwkDiscoverRoute} nwkSec=${nwkSecurity} apsDelivery=${apsDeliveryMode} apsSec=${apsSecurityHeader !== undefined}]`,
+                NS,
+            );
+
+            throw new Error("Invalid APS CMD parameters: cannot determine destination");
+        }
+
+        const macDest16 = nwkDest16 < ZigbeeConsts.BCAST_MIN ? (relayAddresses?.[relayIndex!] ?? nwkDest16) : ZigbeeMACConsts.BCAST_ADDR;
 
         logger.debug(
             () =>
@@ -2592,7 +2608,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             NS,
         );
 
-        const [relayIndex, relayAddresses] = this.findBestSourceRoute(nwkDest16, nwkDest64);
         const apsFrame = encodeZigbeeAPSFrame(
             {
                 frameControl: {
@@ -2662,9 +2677,23 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendMACFrame(macSeqNum, macFrame, macDest16, undefined);
     }
 
+    /**
+     * Send a ZigBee APS DATA frame.
+     * @param finalPayload
+     * @param macDest16
+     * @param nwkDiscoverRoute
+     * @param nwkDest16
+     * @param nwkDest64
+     * @param apsDeliveryMode
+     * @param clusterId
+     * @param profileId
+     * @param destEndpoint
+     * @param sourceEndpoint
+     * @param group
+     * @returns The APS counter of the sent frame
+     */
     public async sendZigbeeAPSData(
         finalPayload: Buffer,
-        macDest16: number,
         nwkDiscoverRoute: ZigbeeNWKRouteDiscovery,
         nwkDest16: number | undefined,
         nwkDest64: bigint | undefined,
@@ -2678,6 +2707,23 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const apsCounter = this.nextAPSCounter();
         const nwkSeqNum = this.nextNWKSeqNum();
         const macSeqNum = this.nextMACSeqNum();
+        const [relayIndex, relayAddresses] = this.findBestSourceRoute(nwkDest16, nwkDest64);
+
+        if (nwkDest16 === undefined && nwkDest64 !== undefined) {
+            nwkDest16 = this.deviceTable.get(nwkDest64)?.address16;
+        }
+
+        if (nwkDest16 === undefined) {
+            logger.debug(
+                () =>
+                    `=x=> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) nwkDiscoverRoute=${nwkDiscoverRoute} nwkDest16=${nwkDest16} nwkDest64=${nwkDest64} apsDeliveryMode=${apsDeliveryMode}]`,
+                NS,
+            );
+
+            throw new Error("Invalid APS DATA parameters: cannot determine destination");
+        }
+
+        const macDest16 = nwkDest16 < ZigbeeConsts.BCAST_MIN ? (relayAddresses?.[relayIndex!] ?? nwkDest16) : ZigbeeMACConsts.BCAST_ADDR;
 
         logger.debug(
             () =>
@@ -2696,7 +2742,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             };
         }
 
-        const [relayIndex, relayAddresses] = this.findBestSourceRoute(nwkDest16, nwkDest64);
         const apsFrame = encodeZigbeeAPSFrame(
             {
                 frameControl: {
@@ -2790,7 +2835,24 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             NS,
         );
 
-        const [relayIndex, relayAddresses] = this.findBestSourceRoute(nwkHeader.destination16, nwkHeader.destination64);
+        let nwkDest16 = nwkHeader.source16;
+        const [relayIndex, relayAddresses] = this.findBestSourceRoute(nwkDest16, nwkHeader.source64);
+
+        if (nwkDest16 === undefined && nwkHeader.source64 !== undefined) {
+            nwkDest16 = this.deviceTable.get(nwkHeader.source64)?.address16;
+        }
+
+        if (nwkDest16 === undefined) {
+            logger.debug(
+                () =>
+                    `=x=> APS ACK[dest=${nwkHeader.source16} seqNum=${nwkHeader.seqNum} destEp=${apsHeader.sourceEndpoint} clusterId=${apsHeader.clusterId}]`,
+                NS,
+            );
+
+            throw new Error("Invalid APS ACK parameters: cannot determine destination");
+        }
+
+        const macDest16 = nwkDest16 < ZigbeeConsts.BCAST_MIN ? (relayAddresses?.[relayIndex!] ?? nwkDest16) : ZigbeeMACConsts.BCAST_ADDR;
         const ackAPSFrame = encodeZigbeeAPSFrame(
             {
                 frameControl: {
@@ -2861,9 +2923,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 },
                 sequenceNumber: macHeader.sequenceNumber,
                 destinationPANId: macHeader.destinationPANId,
-                destination16: macHeader.source16,
+                destination16: macDest16,
                 // sourcePANId: undefined, // panIdCompression=true
-                source16: macHeader.destination16,
+                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
                 fcs: 0,
             },
             ackNWKFrame,
@@ -2894,7 +2956,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 let processed = false;
 
                 if (apsHeader.profileId === ZigbeeConsts.ZDO_PROFILE_ID) {
-                    processed = await this.filterZDO(data, apsHeader.clusterId!, macHeader.source16!, nwkHeader.source16, nwkHeader.source64);
+                    processed = await this.filterZDO(data, apsHeader.clusterId!, nwkHeader.source16, nwkHeader.source64);
                 }
 
                 if (!processed) {
@@ -3058,12 +3120,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #4.4.11.1
      *
-     * @param macDest16
      * @param nwkDest16
      * @param key SHALL contain the link key that SHOULD be used for APS encryption
      * @param destination64 SHALL contain the address of the device which SHOULD use this link key
      */
-    public async sendZigbeeAPSTransportKeyTC(macDest16: number, nwkDest16: number, key: Buffer, destination64: bigint): Promise<void> {
+    public async sendZigbeeAPSTransportKeyTC(nwkDest16: number, key: Buffer, destination64: bigint): Promise<void> {
         // TODO: tunneling support `, tunnelDest?: bigint`
         //       If the TunnelCommand parameter is TRUE, an APS Tunnel Command SHALL be constructed as described in section 4.6.3.7.
         //       It SHALL then be sent to the device specified by the TunnelAddress parameter by issuing an NLDE-DATA.request primitive.
@@ -3089,7 +3150,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeAPSCommand(
             ZigbeeAPSCommandId.TRANSPORT_KEY,
             finalPayload,
-            macDest16, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             true, // nwkSecurity
             nwkDest16, // nwkDest16
@@ -3112,20 +3172,13 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #4.4.11.1 #4.4.11.1.3.2
      *
-     * @param macDest16
      * @param nwkDest16
      * @param key SHALL contain a network key
      * @param seqNum SHALL contain the sequence number associated with this network key
      * @param destination64 SHALL contain the address of the device which SHOULD use this network key
      * If the network key is sent to a broadcast address, the destination address subfield SHALL be set to the all-zero string and SHALL be ignored upon reception.
      */
-    public async sendZigbeeAPSTransportKeyNWK(
-        macDest16: number,
-        nwkDest16: number,
-        key: Buffer,
-        seqNum: number,
-        destination64: bigint,
-    ): Promise<void> {
+    public async sendZigbeeAPSTransportKeyNWK(nwkDest16: number, key: Buffer, seqNum: number, destination64: bigint): Promise<void> {
         // TODO: tunneling support `, tunnelDest?: bigint`
         logger.debug(() => `===> APS TRANSPORT_KEY_NWK[key=${key.toString("hex")} seqNum=${seqNum} destination64=${destination64}]`, NS);
 
@@ -3154,7 +3207,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // await this.sendZigbeeAPSCommand(
         //     ZigbeeAPSCommandId.TRANSPORT_KEY,
         //     finalPayload,
-        //     macDest16, // macDest16
         //     ZigbeeNWKRouteDiscovery.SUPPRESS,
         //     true, // nwkSecurity
         //     nwkDest16, // nwkDest16
@@ -3167,7 +3219,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeAPSCommand(
             ZigbeeAPSCommandId.TRANSPORT_KEY,
             finalPayload,
-            macDest16, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             false, // nwkSecurity
             nwkDest16, // nwkDest16
@@ -3191,19 +3242,12 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #4.4.11.1 #4.4.11.1.3.3
      *
-     * @param macDest16
      * @param nwkDest16
      * @param key SHALL contain a link key that is shared with the device identified in the partner address sub-field
      * @param partner SHALL contain the address of the other device that was sent this link key
      * @param initiatorFlag SHALL be set to 1 if the device receiving this packet requested this key. Otherwise, this sub-field SHALL be set to 0.
      */
-    public async sendZigbeeAPSTransportKeyAPP(
-        macDest16: number,
-        nwkDest16: number,
-        key: Buffer,
-        partner: bigint,
-        initiatorFlag: boolean,
-    ): Promise<void> {
+    public async sendZigbeeAPSTransportKeyAPP(nwkDest16: number, key: Buffer, partner: bigint, initiatorFlag: boolean): Promise<void> {
         // TODO: tunneling support `, tunnelDest?: bigint`
         logger.debug(() => `===> APS TRANSPORT_KEY_APP[key=${key.toString("hex")} partner=${partner} initiatorFlag=${initiatorFlag}]`, NS);
 
@@ -3226,7 +3270,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeAPSCommand(
             ZigbeeAPSCommandId.TRANSPORT_KEY,
             finalPayload,
-            macDest16, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             true, // nwkSecurity
             nwkDest16, // nwkDest16
@@ -3275,7 +3318,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #4.4.11.2
      *
-     * @param macDest16
      * @param nwkDest16 device that SHALL be sent the update information
      * @param device64 device whose status is being updated
      * @param device16 device whose status is being updated
@@ -3288,7 +3330,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * @param tlvs as relayed during Network Commissioning
      */
     public async sendZigbeeAPSUpdateDevice(
-        macDest16: number,
         nwkDest16: number,
         device64: bigint,
         device16: number,
@@ -3313,7 +3354,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeAPSCommand(
             ZigbeeAPSCommandId.UPDATE_DEVICE,
             finalPayload,
-            macDest16, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             true, // nwkSecurity
             nwkDest16, // nwkDest16
@@ -3344,11 +3384,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #4.4.11.3
      *
-     * @param macDest16
      * @param nwkDest16 parent
      * @param target64
      */
-    public async sendZigbeeAPSRemoveDevice(macDest16: number, nwkDest16: number, target64: bigint): Promise<void> {
+    public async sendZigbeeAPSRemoveDevice(nwkDest16: number, target64: bigint): Promise<void> {
         logger.debug(() => `===> APS REMOVE_DEVICE[target64=${target64}]`, NS);
 
         const finalPayload = Buffer.alloc(9);
@@ -3361,7 +3400,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeAPSCommand(
             ZigbeeAPSCommandId.REMOVE_DEVICE,
             finalPayload,
-            macDest16, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             true, // nwkSecurity
             nwkDest16, // nwkDest16
@@ -3377,7 +3415,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public async processZigbeeAPSRequestKey(
         data: Buffer,
         offset: number,
-        macHeader: MACHeader,
+        _macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
         apsHeader: ZigbeeAPSHeader,
     ): Promise<number> {
@@ -3406,7 +3444,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
                 if (this.trustCenterPolicies.allowAppKeyRequest === ApplicationKeyRequestPolicy.ALLOWED) {
                     await this.sendZigbeeAPSTransportKeyAPP(
-                        macHeader.source16!,
                         nwkHeader.source16!,
                         this.getOrGenerateAPPLinkKey(nwkHeader.source16!, partner),
                         partner,
@@ -3418,7 +3455,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 logger.debug(() => `<=== APS REQUEST_KEY[keyType=${keyType}]`, NS);
 
                 if (this.trustCenterPolicies.allowTCKeyRequest === TrustCenterKeyRequestPolicy.ALLOWED) {
-                    await this.sendZigbeeAPSTransportKeyTC(macHeader.source16!, nwkHeader.source16!, this.netParams.tcKey, device64);
+                    await this.sendZigbeeAPSTransportKeyTC(nwkHeader.source16!, this.netParams.tcKey, device64);
                 }
                 // TODO TrustCenterKeyRequestPolicy.ONLY_PROVISIONAL
                 //      this.apsDeviceKeyPairSet => find deviceAddress === this.deviceTable.get(nwkHeader.source).address64 => check provisional or drop msg
@@ -3433,7 +3470,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #4.4.11.4
      *
-     * @param macDest16
      * @param nwkDest16
      * @param keyType SHALL be set to the key being requested
      * - 0x02: App link key
@@ -3442,9 +3478,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * the partner address field SHALL contain the extended 64-bit address of the partner device that SHALL be sent the key.
      * Both the partner device and the device originating the request-key command will be sent the key.
      */
-    public async sendZigbeeAPSRequestKey(macDest16: number, nwkDest16: number, keyType: 0x02, partner64: bigint): Promise<void>;
-    public async sendZigbeeAPSRequestKey(macDest16: number, nwkDest16: number, keyType: 0x04): Promise<void>;
-    public async sendZigbeeAPSRequestKey(macDest16: number, nwkDest16: number, keyType: 0x02 | 0x04, partner64?: bigint): Promise<void> {
+    public async sendZigbeeAPSRequestKey(nwkDest16: number, keyType: 0x02, partner64: bigint): Promise<void>;
+    public async sendZigbeeAPSRequestKey(nwkDest16: number, keyType: 0x04): Promise<void>;
+    public async sendZigbeeAPSRequestKey(nwkDest16: number, keyType: 0x02 | 0x04, partner64?: bigint): Promise<void> {
         logger.debug(() => `===> APS REQUEST_KEY[keyType=${keyType} partner64=${partner64}]`, NS);
 
         const hasPartner64 = keyType === ZigbeeAPSConsts.CMD_KEY_APP_MASTER;
@@ -3463,7 +3499,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeAPSCommand(
             ZigbeeAPSCommandId.REQUEST_KEY,
             finalPayload,
-            macDest16, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             true, // nwkSecurity
             nwkDest16, // nwkDest16
@@ -3494,11 +3529,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #4.4.11.5
      *
-     * @param macDest16
      * @param nwkDest16
      * @param seqNum SHALL contain the sequence number identifying the network key to be made active.
      */
-    public async sendZigbeeAPSSwitchKey(macDest16: number, nwkDest16: number, seqNum: number): Promise<void> {
+    public async sendZigbeeAPSSwitchKey(nwkDest16: number, seqNum: number): Promise<void> {
         logger.debug(() => `===> APS SWITCH_KEY[seqNum=${seqNum}]`, NS);
 
         const finalPayload = Buffer.from([ZigbeeAPSCommandId.SWITCH_KEY, seqNum]);
@@ -3506,7 +3540,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeAPSCommand(
             ZigbeeAPSCommandId.SWITCH_KEY,
             finalPayload,
-            macDest16, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             true, // nwkSecurity
             nwkDest16, // nwkDest16
@@ -3539,20 +3572,13 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #4.4.11.6
      *
-     * @param macDest16
      * @param nwkDest16
      * @param destination64 SHALL be the 64-bit extended address of the device that is to receive the tunneled command
      * @param tAPSHeader
      * @param tApsCmdFrame SHALL be the APS command frame to be sent to the destination
      * @param tAPSMIC
      */
-    public async sendZigbeeAPSTunnel(
-        macDest16: number,
-        nwkDest16: number,
-        destination64: bigint,
-        tApsCmdFrame: Buffer,
-        tAPSMIC: Buffer,
-    ): Promise<void> {
+    public async sendZigbeeAPSTunnel(nwkDest16: number, destination64: bigint, tApsCmdFrame: Buffer, tAPSMIC: Buffer): Promise<void> {
         logger.debug(() => `===> APS TUNNEL[destination64=${destination64}]`, NS);
 
         const finalPayload = Buffer.alloc(28 + tApsCmdFrame.byteLength);
@@ -3592,7 +3618,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeAPSCommand(
             ZigbeeAPSCommandId.TUNNEL,
             finalPayload,
-            macDest16, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             true, // nwkSecurity
             nwkDest16, // nwkDest16
@@ -3626,12 +3651,12 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 // TODO: not valid if operating in distributed network
                 const status = this.tcVerifyKeyHash.equals(keyHash) ? 0x00 /* SUCCESS */ : 0xad; /* SECURITY_FAILURE */
 
-                await this.sendZigbeeAPSConfirmKey(macHeader.source16!, nwkHeader.source16!, status, keyType, source);
+                await this.sendZigbeeAPSConfirmKey(nwkHeader.source16!, status, keyType, source);
             } else if (keyType === ZigbeeAPSConsts.CMD_KEY_APP_MASTER) {
                 // this is illegal for TC
-                await this.sendZigbeeAPSConfirmKey(macHeader.source16!, nwkHeader.source16!, 0xa3 /* ILLEGAL_REQUEST */, keyType, source);
+                await this.sendZigbeeAPSConfirmKey(nwkHeader.source16!, 0xa3 /* ILLEGAL_REQUEST */, keyType, source);
             } else {
-                await this.sendZigbeeAPSConfirmKey(macHeader.source16!, nwkHeader.source16!, 0xaa /* NOT_SUPPORTED */, keyType, source);
+                await this.sendZigbeeAPSConfirmKey(nwkHeader.source16!, 0xaa /* NOT_SUPPORTED */, keyType, source);
             }
         }
 
@@ -3641,14 +3666,13 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #4.4.11.7
      *
-     * @param macDest16
      * @param nwkDest16
      * @param keyType type of key being verified
      * @param source64 SHALL be the 64-bit extended address of the partner device that the destination shares the link key with
      * @param hash outcome of executing the specialized keyed hash function specified in section B.1.4 using a key with the 1-octet string ‘0x03’ as the input string
      * The resulting value SHALL NOT be used as a key for encryption or decryption
      */
-    public async sendZigbeeAPSVerifyKey(macDest16: number, nwkDest16: number, keyType: number, source64: bigint, hash: Buffer): Promise<void> {
+    public async sendZigbeeAPSVerifyKey(nwkDest16: number, keyType: number, source64: bigint, hash: Buffer): Promise<void> {
         logger.debug(() => `===> APS VERIFY_KEY[keyType=${keyType} source64=${source64} hash=${hash.toString("hex")}]`, NS);
 
         const finalPayload = Buffer.alloc(26);
@@ -3665,7 +3689,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeAPSCommand(
             ZigbeeAPSCommandId.VERIFY_KEY,
             finalPayload,
-            macDest16, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             true, // nwkSecurity
             nwkDest16, // nwkDest16
@@ -3700,19 +3723,12 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #4.4.11.8
      *
-     * @param macDest16
      * @param nwkDest16
      * @param status 1-byte status code indicating the result of the operation. See Table 2.27
      * @param keyType the type of key being verified
      * @param destination64 SHALL be the 64-bit extended address of the source device of the Verify-Key message
      */
-    public async sendZigbeeAPSConfirmKey(
-        macDest16: number,
-        nwkDest16: number,
-        status: number,
-        keyType: number,
-        destination64: bigint,
-    ): Promise<void> {
+    public async sendZigbeeAPSConfirmKey(nwkDest16: number, status: number, keyType: number, destination64: bigint): Promise<void> {
         logger.debug(() => `===> APS CONFIRM_KEY[status=${status} keyType=${keyType} destination64=${destination64}]`, NS);
 
         const finalPayload = Buffer.alloc(11);
@@ -3729,7 +3745,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.sendZigbeeAPSCommand(
             ZigbeeAPSCommandId.CONFIRM_KEY,
             finalPayload,
-            macDest16, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             true, // nwkSecurity
             nwkDest16, // nwkDest16
@@ -4043,11 +4058,18 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         }
     }
 
+    /**
+     * Finds the best source route to the destination.
+     * Bails early if source routing is disabled, or destination16 is broadcast.
+     * @param destination16
+     * @param destination64
+     * @returns
+     */
     private findBestSourceRoute(
         destination16: number | undefined,
         destination64: bigint | undefined,
     ): [relayIndex: number | undefined, relayAddresses: number[] | undefined, pathCost: number | undefined] {
-        if (!this.sourceRouting) {
+        if (!this.sourceRouting || (destination16 !== undefined && destination16 >= ZigbeeConsts.BCAST_MIN)) {
             return [undefined, undefined, undefined];
         }
 
@@ -4108,13 +4130,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * @param nwkDest64
      * @returns True if a request was sent and no further processing is needed
      */
-    private async filterZDO(
-        data: Buffer,
-        clusterId: number,
-        macDest16: number,
-        nwkDest16: number | undefined,
-        nwkDest64: bigint | undefined,
-    ): Promise<boolean> {
+    private async filterZDO(data: Buffer, clusterId: number, nwkDest16: number | undefined, nwkDest64: bigint | undefined): Promise<boolean> {
         let finalPayload: Buffer;
 
         switch (clusterId) {
@@ -4210,15 +4226,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // increment and set the ZDO sequence number in outgoing payload
         finalPayload[0] = this.nextZDOSeqNum();
 
-        logger.debug(
-            () =>
-                `===> COORD_ZDO[seqNum=${finalPayload[0]} clusterId=${clusterId} macDest16=${macDest16} nwkDest16=${nwkDest16} nwkDest64=${nwkDest64}]`,
-            NS,
-        );
+        logger.debug(() => `===> COORD_ZDO[seqNum=${finalPayload[0]} clusterId=${clusterId} nwkDest16=${nwkDest16} nwkDest64=${nwkDest64}]`, NS);
 
         await this.sendZigbeeAPSData(
             finalPayload,
-            macDest16, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             nwkDest16, // nwkDest16
             nwkDest64, // nwkDest64
@@ -4238,13 +4249,13 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     // #region State Management
 
     /**
-     * Format is
-     * - network data: 1024 bytes
+     * Format is:
+     * - network data: ${SaveConsts.NETWORK_STATE_SIZE} bytes
      * - device count: 2 bytes
-     * - device data: 512 bytes * (device count)
+     * - device data: ${SaveConsts.DEVICE_STATE_SIZE} bytes * ${device count}
      */
     public async saveState(): Promise<void> {
-        const state = Buffer.alloc(1024 + 2 + this.deviceTable.size * 512);
+        const state = Buffer.alloc(SaveConsts.NETWORK_DATA_SIZE + 2 + this.deviceTable.size * SaveConsts.DEVICE_DATA_SIZE);
         let offset = 0;
 
         state.writeBigUInt64LE(this.netParams.eui64, offset);
@@ -4261,17 +4272,17 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         offset += 1;
         state.set(this.netParams.networkKey, offset);
         offset += ZigbeeConsts.SEC_KEYSIZE;
-        state.writeUInt32LE(this.netParams.networkKeyFrameCounter + 1024, offset); // TODO: deal with jumping
+        state.writeUInt32LE(this.netParams.networkKeyFrameCounter + SaveConsts.FRAME_COUNTER_JUMP_OFFSET, offset);
         offset += 4;
         state.writeUInt8(this.netParams.networkKeySequenceNumber, offset);
         offset += 1;
         state.set(this.netParams.tcKey, offset);
         offset += ZigbeeConsts.SEC_KEYSIZE;
-        state.writeUInt32LE(this.netParams.tcKeyFrameCounter + 1024, offset); // TODO: deal with jumping
+        state.writeUInt32LE(this.netParams.tcKeyFrameCounter + SaveConsts.FRAME_COUNTER_JUMP_OFFSET, offset);
         offset += 4;
 
         // reserved
-        offset += 1024 - offset; // currently: 962
+        offset += SaveConsts.NETWORK_DATA_SIZE - offset; // currently: 962
 
         state.writeUInt16LE(this.deviceTable.size, offset);
         offset += 2;
@@ -4289,12 +4300,16 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             offset += 1;
 
             // reserved
-            offset += 512 - 13; // currently: 499
+            offset += SaveConsts.DEVICE_DATA_SIZE - 13; // currently: 499
         }
 
         await writeFile(this.savePath, state);
     }
 
+    /**
+     * Load state from file system if exists, else save "initial" state.
+     * Afterwards, various keys are pre-hashed and descriptors pre-encoded.
+     */
     public async loadState(): Promise<void> {
         try {
             const state = await readFile(this.savePath);
@@ -4324,7 +4339,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             offset += 4;
 
             // reserved
-            offset += 1024 - offset; // currently: 962
+            offset += SaveConsts.NETWORK_DATA_SIZE - offset; // currently: 962
 
             const deviceCount = state.readUInt16LE(offset);
             offset += 2;
@@ -4342,7 +4357,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 offset += 1;
 
                 // reserved
-                offset += 512 - 13; // currently: 499
+                offset += SaveConsts.DEVICE_DATA_SIZE - 13; // currently: 499
 
                 this.deviceTable.set(address64, {
                     address16,
@@ -4380,24 +4395,48 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.configAttributes.activeEndpoints = activeEndpoints;
     }
 
+    /**
+     * Set the manufacturer code in the pre-encoded node descriptor
+     * @param code
+     */
+    public setManufacturerCode(code: number): void {
+        this.configAttributes.nodeDescriptor.writeUInt16LE(code, 7 /* static offset */);
+    }
+
     // #endregion
 
     // #region Wrappers
 
+    /**
+     * Wraps ZigBee APS DATA sending for ZDO.
+     * @param payload
+     * @param nwkDest16
+     * @param nwkDest64
+     * @param clusterId
+     * @returns The APS counter of the sent frame
+     */
     public async sendZDO(payload: Buffer, nwkDest16: number, nwkDest64: bigint | undefined, clusterId: number): Promise<number> {
         // increment and set the ZDO sequence number in outgoing payload
         payload[0] = this.nextZDOSeqNum();
-        const macDest16 = nwkDest16 < ZigbeeConsts.BCAST_MIN ? nwkDest16 : ZigbeeMACConsts.BCAST_ADDR; // TODO: from routing table
 
-        logger.debug(() => `===> ZDO[seqNum=${payload[0]} clusterId=${clusterId} macDest16=${macDest16} nwkDest=${nwkDest16}:${nwkDest64}]`, NS);
+        logger.debug(() => `===> ZDO[seqNum=${payload[0]} clusterId=${clusterId} nwkDest=${nwkDest16}:${nwkDest64}]`, NS);
+
+        if (clusterId === ZigbeeConsts.NWK_UPDATE_REQUEST && nwkDest16 >= ZigbeeConsts.BCAST_DEFAULT && payload[5] === 0xfe) {
+            // TODO: needs testing
+            this.netParams.channel = convertMaskToChannels(payload.readUInt32LE(1))[0];
+            this.netParams.nwkUpdateId = payload[6];
+
+            this.pendingChangeChannel = setTimeout(async () => {
+                await this.setProperty(writePropertyC(SpinelPropertyId.PHY_CHAN, this.netParams.channel));
+            }, ZigbeeConsts.BCAST_TIME_WINDOW);
+        }
 
         return await this.sendZigbeeAPSData(
             payload,
-            macDest16, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             nwkDest16, // nwkDest16
             nwkDest64, // nwkDest64
-            macDest16 === ZigbeeMACConsts.BCAST_ADDR ? ZigbeeAPSDeliveryMode.BCAST : ZigbeeAPSDeliveryMode.UNICAST, // apsDeliveryMode
+            nwkDest16 < ZigbeeConsts.BCAST_MIN ? ZigbeeAPSDeliveryMode.UNICAST : ZigbeeAPSDeliveryMode.BCAST, // apsDeliveryMode
             clusterId, // clusterId
             ZigbeeConsts.ZDO_PROFILE_ID, // profileId
             ZigbeeConsts.ZDO_ENDPOINT, // destEndpoint
@@ -4406,6 +4445,17 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         );
     }
 
+    /**
+     * Wraps ZigBee APS DATA sending for unicast.
+     * @param payload
+     * @param profileId
+     * @param clusterId
+     * @param dest16
+     * @param dest64
+     * @param destEp
+     * @param sourceEp
+     * @returns The APS counter of the sent frame
+     */
     public async sendUnicast(
         payload: Buffer,
         profileId: number,
@@ -4415,11 +4465,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         destEp: number,
         sourceEp: number,
     ): Promise<number> {
-        const macDest16 = dest16; // TODO: from routing
-
         return await this.sendZigbeeAPSData(
             payload,
-            macDest16, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             dest16, // nwkDest16
             dest64, // nwkDest64
@@ -4432,6 +4479,16 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         );
     }
 
+    /**
+     * Wraps ZigBee APS DATA sending for multicast.
+     * @param payload
+     * @param profileId
+     * @param clusterId
+     * @param dest16
+     * @param destEp
+     * @param sourceEp
+     * @returns The APS counter of the sent frame
+     */
     public async sendMulticast(
         payload: Buffer,
         profileId: number,
@@ -4442,7 +4499,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     ): Promise<number> {
         return await this.sendZigbeeAPSData(
             payload,
-            ZigbeeMACConsts.BCAST_ADDR, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             dest16, // nwkDest16
             undefined, // nwkDest64
@@ -4455,6 +4511,16 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         );
     }
 
+    /**
+     * Wraps ZigBee APS DATA sending for broadcast.
+     * @param payload
+     * @param profileId
+     * @param clusterId
+     * @param dest16
+     * @param destEp
+     * @param sourceEp
+     * @returns The APS counter of the sent frame
+     */
     public async sendBroadcast(
         payload: Buffer,
         profileId: number,
@@ -4465,7 +4531,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     ): Promise<number> {
         return await this.sendZigbeeAPSData(
             payload,
-            ZigbeeMACConsts.BCAST_ADDR, // macDest16
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             dest16, // nwkDest16
             undefined, // nwkDest64
