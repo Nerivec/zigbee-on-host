@@ -10,7 +10,7 @@ const MAC_CAPABILITIES =
     ((0 << 5) & 0x20) | // reserved2
     ((0 << 6) & 0x40) | // securityCapability
     ((1 << 7) & 0x80); // allocateAddress
-const MANUFACTURER_CODE = 0xffff;
+const MANUFACTURER_CODE = 0xc5a0; // CONNECTIVITY_STANDARDS_ALLIANCE
 const SERVER_MASK =
     (1 & 0x01) | // primaryTrustCenter
     ((0 << 1) & 0x02) | // backupTrustCenter
@@ -97,7 +97,7 @@ export function encodeCoordinatorDescriptors(eui64: bigint): [address: Buffer, n
     offset += 1;
     node.writeUInt16LE(MANUFACTURER_CODE, offset);
     offset += 2;
-    node.writeUInt8(0xff, offset);
+    node.writeUInt8(0x7f, offset);
     offset += 1;
     node.writeUInt16LE(ZigbeeMACConsts.FRAME_MAX_SIZE, offset);
     offset += 2;

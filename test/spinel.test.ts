@@ -20,7 +20,7 @@ describe("Spinel & HDLC", () => {
     const encodeHdlcFrameSpy = vi.spyOn(Hdlc, "encodeHdlcFrame");
 
     /** see https://datatracker.ietf.org/doc/html/draft-rquattle-spinel-unified#appendix-B.1 */
-    const PACKED_UINT21_TEST_VECTORS: [number, string][] = [
+    const packedUint21TestVectors: [number, string][] = [
         [0, "00"],
         [1, "01"],
         [127, "7f"],
@@ -33,7 +33,7 @@ describe("Spinel & HDLC", () => {
         [2097151, "ffff7f"],
     ];
 
-    for (const [dec, hex] of PACKED_UINT21_TEST_VECTORS) {
+    for (const [dec, hex] of packedUint21TestVectors) {
         it(`writes Packed Unsigned Integer: ${dec} => ${hex}`, () => {
             const buffer = Buffer.from("0ba124f50000000000", "hex");
             let offset = 4;
@@ -76,47 +76,47 @@ describe("Spinel & HDLC", () => {
     });
 
     /** see https://datatracker.ietf.org/doc/html/draft-rquattle-spinel-unified#appendix-B.2 */
-    const RESET_COMMAND_TEST_VECTOR_FRAME: SpinelFrame = {
+    const resetCommandTestVectorFrame: SpinelFrame = {
         header: { tid: 0, nli: 0, flg: 2 },
         commandId: SpinelCommandId.RESET,
         payload: Buffer.alloc(0),
     };
-    const RESET_COMMAND_TEST_VECTOR_HEX = "8001";
+    const resetCommandTestVectorHex = "8001";
     /** verified with code from https://github.com/openthread/openthread/tree/main/src/lib/hdlc */
-    const RESET_COMMAND_TEST_VECTOR_HDLC_HEX = "7e800102927e";
+    const resetCommandTestVectorHdlcHex = "7e800102927e";
 
     it("writes Reset Command to HDLC", () => {
-        const encFrame = encodeSpinelFrame(RESET_COMMAND_TEST_VECTOR_FRAME);
+        const encFrame = encodeSpinelFrame(resetCommandTestVectorFrame);
 
         expect(encFrame).toBeDefined();
         expect(encodeHdlcFrameSpy).toHaveBeenCalledTimes(1);
-        expect(encodeHdlcFrameSpy.mock.calls[0][0].toString("hex")).toStrictEqual(RESET_COMMAND_TEST_VECTOR_HEX);
+        expect(encodeHdlcFrameSpy.mock.calls[0][0].toString("hex")).toStrictEqual(resetCommandTestVectorHex);
         expect(encFrame.length).toStrictEqual(6);
-        expect(encFrame.data.subarray(0, encFrame.length)).toStrictEqual(Buffer.from(RESET_COMMAND_TEST_VECTOR_HDLC_HEX, "hex"));
+        expect(encFrame.data.subarray(0, encFrame.length)).toStrictEqual(Buffer.from(resetCommandTestVectorHdlcHex, "hex"));
         expect(encFrame.fcs).toStrictEqual(Hdlc.HDLC_GOOD_FCS);
     });
 
     /** see https://datatracker.ietf.org/doc/html/draft-rquattle-spinel-unified#appendix-B.3 */
-    const RESET_NOTIFICATION_TEST_VECTOR_FRAME: SpinelFrame = {
+    const resetNotificationTestVectorFrame: SpinelFrame = {
         header: { tid: 0, nli: 0, flg: 2 },
         commandId: SpinelCommandId.PROP_VALUE_IS,
         // these are technically packed uint21 but we know values are uint8, we can cheat
         payload: Buffer.from([SpinelPropertyId.LAST_STATUS, SpinelStatus.RESET_SOFTWARE]),
     };
-    const RESET_NOTIFICATION_TEST_VECTOR_HEX = "80060072";
+    const resetNotificationTestVectorHex = "80060072";
     /** verified with code from https://github.com/openthread/openthread/tree/main/src/lib/hdlc */
-    const RESET_NOTIFICATION_TEST_VECTOR_HDLC_HEX = "7e80060072fc577e";
+    const resetNotificationTestVectorHdlcHex = "7e80060072fc577e";
 
     it("reads Reset Notification from HDLC", () => {
-        const decHdlcFrame = Hdlc.decodeHdlcFrame(Buffer.from(RESET_NOTIFICATION_TEST_VECTOR_HDLC_HEX, "hex"));
+        const decHdlcFrame = Hdlc.decodeHdlcFrame(Buffer.from(resetNotificationTestVectorHdlcHex, "hex"));
 
-        expect(decHdlcFrame.length).toStrictEqual(RESET_NOTIFICATION_TEST_VECTOR_HEX.length / 2);
-        expect(decHdlcFrame.data.subarray(0, decHdlcFrame.length)).toStrictEqual(Buffer.from(RESET_NOTIFICATION_TEST_VECTOR_HEX, "hex"));
+        expect(decHdlcFrame.length).toStrictEqual(resetNotificationTestVectorHex.length / 2);
+        expect(decHdlcFrame.data.subarray(0, decHdlcFrame.length)).toStrictEqual(Buffer.from(resetNotificationTestVectorHex, "hex"));
         expect(decHdlcFrame.fcs).toStrictEqual(Hdlc.HDLC_GOOD_FCS);
 
         const decFrame = decodeSpinelFrame(decHdlcFrame);
 
-        expect(decFrame).toStrictEqual(RESET_NOTIFICATION_TEST_VECTOR_FRAME);
+        expect(decFrame).toStrictEqual(resetNotificationTestVectorFrame);
     });
 
     it("reads Spinel STREAM_RAW metadata", () => {

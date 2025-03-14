@@ -25,7 +25,15 @@
             "recommended": true,
             "style": {
                 "noNonNullAssertion": "off",
-                "noParameterAssign": "off"
+                "noParameterAssign": "off",
+                "useNamingConvention": {
+                    "level": "error",
+                    "options": {
+                        "strictCase": false,
+                        "requireAscii": true,
+                        "enumMemberCase": "CONSTANT_CASE"
+                    }
+                }
             },
             "correctness": {
                 "noUnusedImports": "error",
@@ -39,7 +47,8 @@
                 "noReExportAll": "error"
             },
             "suspicious": {
-                "noConstEnum": "off"
+                "noConstEnum": "off",
+                "useAwait": "error"
             }
         }
     },

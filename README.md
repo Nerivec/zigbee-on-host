@@ -39,23 +39,20 @@ Some quick guidelines to keep the codebase maintainable:
   - [ ] FULLENCR & auth tag checking codepaths
 - [x] Encoding/decoding of ZigBee NWK APS frames
 - [x] Network forming
-- [~] Network state saving (de facto backups)
-  - [ ] Deal with frame counters (avoiding too many writes, but preventing mismatch issues)
-  - [ ] Runtime changing of network parameters (ZDO channel, PAN ID...)
-- [~] Joining/Rejoining
+- [x] Network state saving (de facto backups)
+- [x] Joining/Rejoining
   - [x] APS TC link key update mechanism (global)
   - [x] Direct child router
   - [x] Direct child end device
-  - [ ] Nested device
+  - [x] Nested device
 - [x] Indirect transmission mechanism
   - _Crude implementation_
   - [ ] Deal with devices lying on `rxOnWhenIdle` property (bad firmware, resulting in transmission type mismatch)
 - [ ] Routing
-  - [ ] Source routing
+  - [x] Source routing
   - [?] Regular routing
-- [ ] Coordinator binding
 - [ ] InterPAN / Touchlink
-- [ ] LQI reporting in messages
+- [ ] LQI reporting in messages (currently showing RSSI - in dBm)
 - [ ] Install codes
 - [?] APS APP link keys
 - [ ] R23 (need reference sniffs...)
