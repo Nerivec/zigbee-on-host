@@ -887,6 +887,31 @@ export const NET2_ASSOC_REQ_FROM_DEVICE = Buffer.from([
 ]);
 
 /**
+ * IEEE 802.15.4 Command, Src: TelinkSemico_6d:9b:28:0f:df, Dst: 0x0000
+ *   Frame Control Field: 0xc863, Frame Type: Command, Acknowledge Request, PAN ID Compression, Destination Addressing Mode: Short/16-bit, Frame Version: IEEE Std 802.15.4-2003, Source Addressing Mode: Long/64-bit
+ *       .... .... .... .011 = Frame Type: Command (0x3)
+ *       .... .... .... 0... = Security Enabled: False
+ *       .... .... ...0 .... = Frame Pending: False
+ *       .... .... ..1. .... = Acknowledge Request: True
+ *       .... .... .1.. .... = PAN ID Compression: True
+ *       .... .... 0... .... = Reserved: False
+ *       .... ...0 .... .... = Sequence Number Suppression: False
+ *       .... ..0. .... .... = Information Elements Present: False
+ *       .... 10.. .... .... = Destination Addressing Mode: Short/16-bit (0x2)
+ *       ..00 .... .... .... = Frame Version: IEEE Std 802.15.4-2003 (0)
+ *       11.. .... .... .... = Source Addressing Mode: Long/64-bit (0x3)
+ *   Sequence Number: 117
+ *   Destination PAN: 0x1a64
+ *   Destination: 0x0000
+ *   Extended Source: TelinkSemico_6d:9b:28:0f:df (a4:c1:38:6d:9b:28:0f:df)
+ *   Command Identifier: Data Request (0x04)
+ */
+export const NET2_DATA_RQ_FROM_DEVICE = Buffer.from([
+    // crafted end FCS
+    0x63, 0xc8, 0x75, 0x64, 0x1a, 0x0, 0x0, 0xdf, 0xf, 0x28, 0x9b, 0x6d, 0x38, 0xc1, 0xa4, 0x4, 0xff, 0xff,
+]);
+
+/**
  * IEEE 802.15.4 Command, Src: SiliconLabor_ff:fe:05:99:f9, Dst: TelinkSemico_6d:9b:28:0f:df
  *   Frame Control Field: 0xcc63, Frame Type: Command, Acknowledge Request, PAN ID Compression, Destination Addressing Mode: Long/64-bit, Frame Version: IEEE Std 802.15.4-2003, Source Addressing Mode: Long/64-bit
  *       .... .... .... .011 = Frame Type: Command (0x3)

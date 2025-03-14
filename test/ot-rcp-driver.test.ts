@@ -16,6 +16,7 @@ import {
     NET2_ASSOC_REQ_FROM_DEVICE,
     NET2_BEACON_REQ_FROM_DEVICE,
     NET2_COORD_EUI64_BIGINT,
+    NET2_DATA_RQ_FROM_DEVICE,
     NET2_DEVICE_ANNOUNCE_BCAST,
     NET2_EXTENDED_PAN_ID,
     NET2_NODE_DESC_REQ_FROM_DEVICE,
@@ -296,13 +297,13 @@ describe("OT RCP Driver", () => {
             await driver.loadState();
 
             expect(driver.configAttributes.nodeDescriptor).toStrictEqual(
-                Buffer.from([0, 0, 0, 0, 0, 64, 143, 255, 255, 255, 127, 0, 65, 44, 127, 0, 0]),
+                Buffer.from([0, 0, 0, 0, 0, 64, 143, 160, 197, 127, 127, 0, 65, 44, 127, 0, 0]),
             );
 
             driver.setManufacturerCode(0x1234);
 
             expect(driver.configAttributes.nodeDescriptor).toStrictEqual(
-                Buffer.from([0, 0, 0, 0, 0, 64, 143, 52, 18, 255, 127, 0, 65, 44, 127, 0, 0]),
+                Buffer.from([0, 0, 0, 0, 0, 64, 143, 52, 18, 127, 127, 0, 65, 44, 127, 0, 0]),
             );
 
             // revert
@@ -526,6 +527,7 @@ describe("OT RCP Driver", () => {
             const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
             const processZigbeeNWKRouteReqSpy = vi.spyOn(driver, "processZigbeeNWKRouteReq");
+            const sendZigbeeNWKRouteReplySpy = vi.spyOn(driver, "sendZigbeeNWKRouteReply");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_MTORR_FRAME_FROM_COORD), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
@@ -536,6 +538,7 @@ describe("OT RCP Driver", () => {
             expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
             expect(processZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1);
+            expect(sendZigbeeNWKRouteReplySpy).toHaveBeenCalledTimes(1);
         });
 
         it("receives frame NETDEF_ZGP_COMMISSIONING", async () => {
@@ -673,6 +676,7 @@ describe("OT RCP Driver", () => {
             // - NET2_BEACON_REQ_FROM_DEVICE
             // - NET2_BEACON_RESP_FROM_COORD
             // - NET2_ASSOC_REQ_FROM_DEVICE
+            // - NET2_DATA_RQ_FROM_DEVICE
             // - NET2_ASSOC_RESP_FROM_COORD
             const sendMACFrameSpy = vi.spyOn(driver, "sendMACFrame");
             const sendMACAssocRspSpy = vi.spyOn(driver, "sendMACAssocRsp");
@@ -689,6 +693,8 @@ describe("OT RCP Driver", () => {
 
             driver.parser._transform(makeSpinelStreamRaw(101, NET2_ASSOC_REQ_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
+            driver.parser._transform(makeSpinelStreamRaw(102, NET2_DATA_RQ_FROM_DEVICE), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
             // ASSOC_RSP => OK
             driver.parser._transform(makeSpinelLastStatus(2), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
@@ -702,6 +708,7 @@ describe("OT RCP Driver", () => {
             // - NET2_BEACON_REQ_FROM_DEVICE
             // - NET2_BEACON_RESP_FROM_COORD
             // - NET2_ASSOC_REQ_FROM_DEVICE
+            // - NET2_DATA_RQ_FROM_DEVICE
             // - NET2_ASSOC_RESP_FROM_COORD
             // - NET2_TRANSPORT_KEY_NWK_FROM_COORD
             // - NET2_DEVICE_ANNOUNCE_BCAST
@@ -733,6 +740,8 @@ describe("OT RCP Driver", () => {
 
             driver.parser._transform(makeSpinelStreamRaw(101, NET2_ASSOC_REQ_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
+            driver.parser._transform(makeSpinelStreamRaw(102, NET2_DATA_RQ_FROM_DEVICE), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
             // ASSOC_RSP => OK
             driver.parser._transform(makeSpinelLastStatus(2), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
@@ -750,13 +759,13 @@ describe("OT RCP Driver", () => {
                 neighbor: true,
             });
 
-            driver.parser._transform(makeSpinelStreamRaw(102, NET2_DEVICE_ANNOUNCE_BCAST), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(103, NET2_DEVICE_ANNOUNCE_BCAST), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             expect(emitSpy).toHaveBeenCalledWith("deviceJoined", 0xa18f, 11871832136131022815n);
             expect(emitSpy).toHaveBeenCalledWith("frame", 0xa18f, undefined, expect.any(Object), expect.any(Buffer), 0 /* rssi */);
 
-            driver.parser._transform(makeSpinelStreamRaw(103, NET2_NODE_DESC_REQ_FROM_DEVICE), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(104, NET2_NODE_DESC_REQ_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // node desc APS ACK => OK
             driver.parser._transform(makeSpinelLastStatus(4), "utf8", () => {});
@@ -765,13 +774,13 @@ describe("OT RCP Driver", () => {
             driver.parser._transform(makeSpinelLastStatus(5), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
-            driver.parser._transform(makeSpinelStreamRaw(104, NET2_REQUEST_KEY_TC_FROM_DEVICE), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(105, NET2_REQUEST_KEY_TC_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // TRANSPORT_KEY TC => OK
             driver.parser._transform(makeSpinelLastStatus(6), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
-            driver.parser._transform(makeSpinelStreamRaw(105, NET2_VERIFY_KEY_TC_FROM_DEVICE), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(106, NET2_VERIFY_KEY_TC_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // CONFIRM_KEY => OK
             driver.parser._transform(makeSpinelLastStatus(7), "utf8", () => {});

@@ -104,6 +104,7 @@ interface AdapterDriverEventMap {
     deviceJoined: [source16: number, source64: bigint];
     deviceRejoined: [source16: number, source64: bigint];
     deviceLeft: [source16: number, source64: bigint];
+    deviceAuthorized: [source16: number, source64: bigint];
 }
 
 const enum SaveConsts {
@@ -711,6 +712,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     private nwkLinkStatusTimeout: NodeJS.Timeout | undefined;
     private manyToOneRouteRequestTimeout: NodeJS.Timeout | undefined;
 
+    /** Associations pending DATA_RQ from device */
+    public readonly pendingAssociations: Map<bigint, { func: () => Promise<void>; timestamp: number }>;
+    /** Indirect transmission for devices with rxOnWhenIdle set to false */
     public readonly indirectTransmissions: Map<bigint, { func: () => Promise<void>; timestamp: number }[]>;
 
     //---- Trust Center (see 05-3474-R #4.7.1)
@@ -769,6 +773,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.routeRequestId = 0; // start at 1
 
         this.networkUp = false;
+        this.pendingAssociations = new Map();
         this.indirectTransmissions = new Map();
 
         //---- Trust Center
@@ -1245,16 +1250,16 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 // if can't determine radio state, just send the packet
                 await func();
             } else {
-                const addrTX = this.indirectTransmissions.get(dest64);
+                const addrTXs = this.indirectTransmissions.get(dest64);
 
-                if (addrTX) {
-                    addrTX.push({
+                if (addrTXs) {
+                    addrTXs.push({
                         func,
                         timestamp: Date.now(),
                     });
 
                     logger.debug(
-                        () => `=|=> MAC[seqNum=${seqNum} dest16=${dest16} dest64=${dest64}] set for indirect transmission (count: ${addrTX.length})`,
+                        () => `=|=> MAC[seqNum=${seqNum} dest16=${dest16} dest64=${dest64}] set for indirect transmission (count: ${addrTXs.length})`,
                         NS,
                     );
                 } else {
@@ -1355,18 +1360,26 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
         logger.debug(() => `<=== MAC ASSOC_REQ[capabilities=${capabilities}]`, NS);
 
-        const [status, newNetwork16] = await this.associate(undefined, macHeader.source64!, 0x00 /* initial join */, capabilities);
+        if (macHeader.source64 === undefined) {
+            logger.debug(() => `<=x= MAC ASSOC_REQ[capabilities=${capabilities}] Invalid source64`, NS);
+        } else {
+            const [status, newNetwork16] = await this.associate(undefined, macHeader.source64, 0x00 /* initial join */, capabilities);
 
-        await this.sendMACAssocRsp(macHeader.source64!, newNetwork16, status);
+            this.pendingAssociations.set(macHeader.source64, {
+                func: async () => {
+                    await this.sendMACAssocRsp(macHeader.source64!, newNetwork16, status);
 
-        if (status === MACAssociationStatus.SUCCESS) {
-            // TODO: proper routed `macDest16`
-            await this.sendZigbeeAPSTransportKeyNWK(
-                newNetwork16,
-                this.netParams.networkKey,
-                this.netParams.networkKeySequenceNumber,
-                macHeader.source64!,
-            );
+                    if (status === MACAssociationStatus.SUCCESS) {
+                        await this.sendZigbeeAPSTransportKeyNWK(
+                            newNetwork16,
+                            this.netParams.networkKey,
+                            this.netParams.networkKeySequenceNumber,
+                            macHeader.source64!,
+                        );
+                    }
+                },
+                timestamp: Date.now(),
+            });
         }
 
         return offset;
@@ -1466,20 +1479,31 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         }
 
         if (addr !== undefined) {
-            const addrTXs = this.indirectTransmissions.get(addr);
+            const pendingAssoc = this.pendingAssociations.get(addr);
 
-            if (addrTXs !== undefined) {
-                let tx = addrTXs.shift();
+            if (pendingAssoc) {
+                if (pendingAssoc.timestamp + ZigbeeConsts.MAC_INDIRECT_TRANSMISSION_TIMEOUT > Date.now()) {
+                    await pendingAssoc.func();
+                }
 
-                // deal with expired tx by looking for first that isn't
-                do {
-                    if (tx !== undefined && tx.timestamp + ZigbeeConsts.MAC_INDIRECT_TRANSMISSION_TIMEOUT > Date.now()) {
-                        await tx.func();
-                        break;
-                    }
+                // always delete, ensures no stale
+                this.pendingAssociations.delete(addr);
+            } else {
+                const addrTXs = this.indirectTransmissions.get(addr);
 
-                    tx = addrTXs.shift();
-                } while (tx !== undefined);
+                if (addrTXs !== undefined) {
+                    let tx = addrTXs.shift();
+
+                    // deal with expired tx by looking for first that isn't
+                    do {
+                        if (tx !== undefined && tx.timestamp + ZigbeeConsts.MAC_INDIRECT_TRANSMISSION_TIMEOUT > Date.now()) {
+                            await tx.func();
+                            break;
+                        }
+
+                        tx = addrTXs.shift();
+                    } while (tx !== undefined);
+                }
             }
         }
 
@@ -1692,7 +1716,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #3.4.1
      */
-    public async processZigbeeNWKRouteReq(data: Buffer, offset: number, _macHeader: MACHeader, _nwkHeader: ZigbeeNWKHeader): Promise<number> {
+    public async processZigbeeNWKRouteReq(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
         const options = data.readUInt8(offset);
         offset += 1;
         const manyToOne = (options & ZigbeeNWKConsts.CMD_ROUTE_OPTION_MANY_MASK) >> 3; // ZigbeeNWKManyToOne
@@ -1714,15 +1738,15 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             NS,
         );
 
-        // await this.sendZigbeeNWKRouteReply(
-        //     macHeader.destination16!,
-        //     nwkHeader.radius!,
-        //     id,
-        //     nwkHeader.source16!,
-        //     destination16,
-        //     nwkHeader.source64 ?? this.address16ToAddress64.get(nwkHeader.source16!),
-        //     destination64,
-        // );
+        await this.sendZigbeeNWKRouteReply(
+            macHeader.destination16!,
+            nwkHeader.radius!,
+            id,
+            nwkHeader.source16!,
+            destination16,
+            nwkHeader.source64 ?? this.address16ToAddress64.get(nwkHeader.source16!),
+            destination64,
+        );
 
         return offset;
     }
@@ -3768,6 +3792,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // TODO: proper place?
         if (device !== undefined && device.authorized === false) {
             device.authorized = true;
+
+            setImmediate(() => {
+                this.emit("deviceAuthorized", device.address16, destination64);
+            });
         }
     }
 
