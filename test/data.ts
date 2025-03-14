@@ -1646,3 +1646,372 @@ export const NET3_ROUTE_RECORD = Buffer.from([
     0xde, 0xfb, 0xff, 0xff,
 ]);
 // #endregion
+
+// #region NET4
+
+//---- Uses NETDEF_*
+export const NET4_CHANNEL = 11;
+export const NET4_COORD_EUI64 = Buffer.from([0x10, 0xbe, 0x77, 0xfe, 0xff, 0x8d, 0x79, 0xe0]);
+export const NET4_COORD_EUI64_BIGINT = 16175115667303284240n;
+
+/**
+ * IEEE 802.15.4 Data, Src: 0x0000, Dst: Broadcast
+ *   Frame Control Field: 0x8841, Frame Type: Data, PAN ID Compression, Destination Addressing Mode: Short/16-bit, Frame Version: IEEE Std 802.15.4-2003, Source Addressing Mode: Short/16-bit
+ *       .... .... .... .001 = Frame Type: Data (0x1)
+ *       .... .... .... 0... = Security Enabled: False
+ *       .... .... ...0 .... = Frame Pending: False
+ *       .... .... ..0. .... = Acknowledge Request: False
+ *       .... .... .1.. .... = PAN ID Compression: True
+ *       .... .... 0... .... = Reserved: False
+ *       .... ...0 .... .... = Sequence Number Suppression: False
+ *       .... ..0. .... .... = Information Elements Present: False
+ *       .... 10.. .... .... = Destination Addressing Mode: Short/16-bit (0x2)
+ *       ..00 .... .... .... = Frame Version: IEEE Std 802.15.4-2003 (0)
+ *       10.. .... .... .... = Source Addressing Mode: Short/16-bit (0x2)
+ *   Sequence Number: 89
+ *   Destination PAN: 0x1a62
+ *   Destination: 0xffff
+ *   Source: 0x0000
+ *   [Extended Source: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)]
+ *   FCS: 0xb82a (Correct)
+ *
+ * ZigBee Network Layer Command, Dst: Broadcast, Src: 0x0000
+ *   Frame Control Field: 0x1209, Frame Type: Command, Discover Route: Suppress, Security, Extended Source Command
+ *       .... .... .... ..01 = Frame Type: Command (0x1)
+ *       .... .... ..00 10.. = Protocol Version: 2
+ *       .... .... 00.. .... = Discover Route: Suppress (0x0)
+ *       .... ...0 .... .... = Multicast: False
+ *       .... ..1. .... .... = Security: True
+ *       .... .0.. .... .... = Source Route: False
+ *       .... 0... .... .... = Destination: False
+ *       ...1 .... .... .... = Extended Source: True
+ *       ..0. .... .... .... = End Device Initiator: False
+ *   Destination: 0xfffc
+ *   Source: 0x0000
+ *   Radius: 30
+ *   Sequence Number: 96
+ *   Extended Source: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)
+ *   ZigBee Security Header
+ *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
+ *           .... .000 = Security Level: 0x0
+ *           ...0 1... = Key Id: Network Key (0x1)
+ *           ..1. .... = Extended Nonce: True
+ *           .0.. .... = Require Verified Frame Counter: 0x0
+ *       Frame Counter: 131074724
+ *       Extended Source: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)
+ *       Key Sequence Number: 0
+ *       Message Integrity Code: 50010fe8
+ *       [Key: 01030507090b0d0f00020406080a0c0d]
+ *   Command Frame: Route Request
+ *       Command Identifier: Route Request (0x01)
+ *       Command Options: 0x08, Many-to-One Discovery: With Source Routing
+ *           .0.. .... = Multicast: False
+ *           ..0. .... = Extended Destination: False
+ *           ...0 1... = Many-to-One Discovery: With Source Routing (0x1)
+ *       Route ID: 53
+ *       Destination: 0xfffc
+ *       Path Cost: 0
+ */
+export const NET4_MTORR_FROM_COORD = Buffer.from([
+    0x41, 0x88, 0x59, 0x62, 0x1a, 0xff, 0xff, 0x0, 0x0, 0x9, 0x12, 0xfc, 0xff, 0x0, 0x0, 0x1e, 0x60, 0x10, 0xbe, 0x77, 0xfe, 0xff, 0x8d, 0x79, 0xe0,
+    0x28, 0xa4, 0xa, 0xd0, 0x7, 0x10, 0xbe, 0x77, 0xfe, 0xff, 0x8d, 0x79, 0xe0, 0x0, 0x4f, 0x28, 0x76, 0xb, 0x33, 0xa3, 0x50, 0x1, 0xf, 0xe8, 0x2a,
+    0xb8,
+]);
+
+/**
+ * IEEE 802.15.4 Data, Src: 0x96ba, Dst: 0x0000
+ *   Frame Control Field: 0x8861, Frame Type: Data, Acknowledge Request, PAN ID Compression, Destination Addressing Mode: Short/16-bit, Frame Version: IEEE Std 802.15.4-2003, Source Addressing Mode: Short/16-bit
+ *       .... .... .... .001 = Frame Type: Data (0x1)
+ *       .... .... .... 0... = Security Enabled: False
+ *       .... .... ...0 .... = Frame Pending: False
+ *       .... .... ..1. .... = Acknowledge Request: True
+ *       .... .... .1.. .... = PAN ID Compression: True
+ *       .... .... 0... .... = Reserved: False
+ *       .... ...0 .... .... = Sequence Number Suppression: False
+ *       .... ..0. .... .... = Information Elements Present: False
+ *       .... 10.. .... .... = Destination Addressing Mode: Short/16-bit (0x2)
+ *       ..00 .... .... .... = Frame Version: IEEE Std 802.15.4-2003 (0)
+ *       10.. .... .... .... = Source Addressing Mode: Short/16-bit (0x2)
+ *   Sequence Number: 89
+ *   Destination PAN: 0x1a62
+ *   Destination: 0x0000
+ *   Source: 0x96ba
+ *   [Extended Source: SiliconLabor_ff:fe:a4:b9:73 (80:4b:50:ff:fe:a4:b9:73)]
+ *   FCS: 0x703e (Correct)
+ *
+ * ZigBee Network Layer Command, Dst: 0x0000, Src: 0x96ba
+ *   Frame Control Field: 0x1a09, Frame Type: Command, Discover Route: Suppress, Security, Destination, Extended Source Command
+ *       .... .... .... ..01 = Frame Type: Command (0x1)
+ *       .... .... ..00 10.. = Protocol Version: 2
+ *       .... .... 00.. .... = Discover Route: Suppress (0x0)
+ *       .... ...0 .... .... = Multicast: False
+ *       .... ..1. .... .... = Security: True
+ *       .... .0.. .... .... = Source Route: False
+ *       .... 1... .... .... = Destination: True
+ *       ...1 .... .... .... = Extended Source: True
+ *       ..0. .... .... .... = End Device Initiator: False
+ *   Destination: 0x0000
+ *   Source: 0x96ba
+ *   Radius: 30
+ *   Sequence Number: 142
+ *   Destination: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)
+ *   Extended Source: SiliconLabor_ff:fe:a4:b9:73 (80:4b:50:ff:fe:a4:b9:73)
+ *   ZigBee Security Header
+ *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
+ *           .... .000 = Security Level: 0x0
+ *           ...0 1... = Key Id: Network Key (0x1)
+ *           ..1. .... = Extended Nonce: True
+ *           .0.. .... = Require Verified Frame Counter: 0x0
+ *       Frame Counter: 62898289
+ *       Extended Source: SiliconLabor_ff:fe:a4:b9:73 (80:4b:50:ff:fe:a4:b9:73)
+ *       Key Sequence Number: 0
+ *       Message Integrity Code: 928be9ea
+ *       [Key: 01030507090b0d0f00020406080a0c0d]
+ *   Command Frame: Route Record
+ *       Command Identifier: Route Record (0x05)
+ *       Relay Count: 0
+ */
+export const NET4_ROUTE_RECORD_FROM_96BA_NO_RELAY = Buffer.from([
+    0x61, 0x88, 0x59, 0x62, 0x1a, 0x0, 0x0, 0xba, 0x96, 0x9, 0x1a, 0x0, 0x0, 0xba, 0x96, 0x1e, 0x8e, 0x10, 0xbe, 0x77, 0xfe, 0xff, 0x8d, 0x79, 0xe0,
+    0x73, 0xb9, 0xa4, 0xfe, 0xff, 0x50, 0x4b, 0x80, 0x28, 0x71, 0xc0, 0xbf, 0x3, 0x73, 0xb9, 0xa4, 0xfe, 0xff, 0x50, 0x4b, 0x80, 0x0, 0x8b, 0x21,
+    0x92, 0x8b, 0xe9, 0xea, 0x3e, 0x70,
+]);
+
+/**
+ * IEEE 802.15.4 Data, Src: 0x91d2, Dst: 0x0000
+ *   Frame Control Field: 0x8861, Frame Type: Data, Acknowledge Request, PAN ID Compression, Destination Addressing Mode: Short/16-bit, Frame Version: IEEE Std 802.15.4-2003, Source Addressing Mode: Short/16-bit
+ *       .... .... .... .001 = Frame Type: Data (0x1)
+ *       .... .... .... 0... = Security Enabled: False
+ *       .... .... ...0 .... = Frame Pending: False
+ *       .... .... ..1. .... = Acknowledge Request: True
+ *       .... .... .1.. .... = PAN ID Compression: True
+ *       .... .... 0... .... = Reserved: False
+ *       .... ...0 .... .... = Sequence Number Suppression: False
+ *       .... ..0. .... .... = Information Elements Present: False
+ *       .... 10.. .... .... = Destination Addressing Mode: Short/16-bit (0x2)
+ *       ..00 .... .... .... = Frame Version: IEEE Std 802.15.4-2003 (0)
+ *       10.. .... .... .... = Source Addressing Mode: Short/16-bit (0x2)
+ *   Sequence Number: 34
+ *   Destination PAN: 0x1a62
+ *   Destination: 0x0000
+ *   Source: 0x91d2
+ *   [Extended Source: SiliconLabor_ff:fe:d0:4a:58 (70:ac:08:ff:fe:d0:4a:58)]
+ *   FCS: 0xb06f (Correct)
+ *
+ * ZigBee Network Layer Command, Dst: 0x0000, Src: 0x91d2
+ *   Frame Control Field: 0x1a09, Frame Type: Command, Discover Route: Suppress, Security, Destination, Extended Source Command
+ *       .... .... .... ..01 = Frame Type: Command (0x1)
+ *       .... .... ..00 10.. = Protocol Version: 2
+ *       .... .... 00.. .... = Discover Route: Suppress (0x0)
+ *       .... ...0 .... .... = Multicast: False
+ *       .... ..1. .... .... = Security: True
+ *       .... .0.. .... .... = Source Route: False
+ *       .... 1... .... .... = Destination: True
+ *       ...1 .... .... .... = Extended Source: True
+ *       ..0. .... .... .... = End Device Initiator: False
+ *   Destination: 0x0000
+ *   Source: 0x91d2
+ *   Radius: 30
+ *   Sequence Number: 43
+ *   Destination: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)
+ *   Extended Source: SiliconLabor_ff:fe:d0:4a:58 (70:ac:08:ff:fe:d0:4a:58)
+ *   ZigBee Security Header
+ *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
+ *           .... .000 = Security Level: 0x0
+ *           ...0 1... = Key Id: Network Key (0x1)
+ *           ..1. .... = Extended Nonce: True
+ *           .0.. .... = Require Verified Frame Counter: 0x0
+ *       Frame Counter: 60089848
+ *       Extended Source: SiliconLabor_ff:fe:d0:4a:58 (70:ac:08:ff:fe:d0:4a:58)
+ *       Key Sequence Number: 0
+ *       Message Integrity Code: 8d4e6241
+ *       [Key: 01030507090b0d0f00020406080a0c0d]
+ *   Command Frame: Route Record
+ *       Command Identifier: Route Record (0x05)
+ *       Relay Count: 0
+ */
+export const NET4_ROUTE_RECORD_FROM_91D2_NO_RELAY = Buffer.from([
+    0x61, 0x88, 0x22, 0x62, 0x1a, 0x0, 0x0, 0xd2, 0x91, 0x9, 0x1a, 0x0, 0x0, 0xd2, 0x91, 0x1e, 0x2b, 0x10, 0xbe, 0x77, 0xfe, 0xff, 0x8d, 0x79, 0xe0,
+    0x58, 0x4a, 0xd0, 0xfe, 0xff, 0x8, 0xac, 0x70, 0x28, 0xf8, 0xe5, 0x94, 0x3, 0x58, 0x4a, 0xd0, 0xfe, 0xff, 0x8, 0xac, 0x70, 0x0, 0x7e, 0xda, 0x8d,
+    0x4e, 0x62, 0x41, 0x6f, 0xb0,
+]);
+
+/**
+ * IEEE 802.15.4 Data, Src: 0x96ba, Dst: 0x0000
+ *   Frame Control Field: 0x8861, Frame Type: Data, Acknowledge Request, PAN ID Compression, Destination Addressing Mode: Short/16-bit, Frame Version: IEEE Std 802.15.4-2003, Source Addressing Mode: Short/16-bit
+ *       .... .... .... .001 = Frame Type: Data (0x1)
+ *       .... .... .... 0... = Security Enabled: False
+ *       .... .... ...0 .... = Frame Pending: False
+ *       .... .... ..1. .... = Acknowledge Request: True
+ *       .... .... .1.. .... = PAN ID Compression: True
+ *       .... .... 0... .... = Reserved: False
+ *       .... ...0 .... .... = Sequence Number Suppression: False
+ *       .... ..0. .... .... = Information Elements Present: False
+ *       .... 10.. .... .... = Destination Addressing Mode: Short/16-bit (0x2)
+ *       ..00 .... .... .... = Frame Version: IEEE Std 802.15.4-2003 (0)
+ *       10.. .... .... .... = Source Addressing Mode: Short/16-bit (0x2)
+ *   Sequence Number: 101
+ *   Destination PAN: 0x1a62
+ *   Destination: 0x0000
+ *   Source: 0x96ba
+ *   [Extended Source: SiliconLabor_ff:fe:a4:b9:73 (80:4b:50:ff:fe:a4:b9:73)]
+ *   FCS: 0xe286 (Correct)
+ *
+ * ZigBee Network Layer Command, Dst: 0x0000, Src: 0x6887
+ *   Frame Control Field: 0x1a09, Frame Type: Command, Discover Route: Suppress, Security, Destination, Extended Source Command
+ *       .... .... .... ..01 = Frame Type: Command (0x1)
+ *       .... .... ..00 10.. = Protocol Version: 2
+ *       .... .... 00.. .... = Discover Route: Suppress (0x0)
+ *       .... ...0 .... .... = Multicast: False
+ *       .... ..1. .... .... = Security: True
+ *       .... .0.. .... .... = Source Route: False
+ *       .... 1... .... .... = Destination: True
+ *       ...1 .... .... .... = Extended Source: True
+ *       ..0. .... .... .... = End Device Initiator: False
+ *   Destination: 0x0000
+ *   Source: 0x6887
+ *   Radius: 30
+ *   Sequence Number: 109
+ *   Destination: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)
+ *   Extended Source: TexasInstrum_00:29:27:fd:8c (00:12:4b:00:29:27:fd:8c)
+ *   ZigBee Security Header
+ *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
+ *           .... .000 = Security Level: 0x0
+ *           ...0 1... = Key Id: Network Key (0x1)
+ *           ..1. .... = Extended Nonce: True
+ *           .0.. .... = Require Verified Frame Counter: 0x0
+ *       Frame Counter: 62898301
+ *       Extended Source: SiliconLabor_ff:fe:a4:b9:73 (80:4b:50:ff:fe:a4:b9:73)
+ *       Key Sequence Number: 0
+ *       Message Integrity Code: b740d277
+ *       [Key: 01030507090b0d0f00020406080a0c0d]
+ *   Command Frame: Route Record
+ *       Command Identifier: Route Record (0x05)
+ *       Relay Count: 1
+ *       Relay Device 1: 0x96ba
+ */
+export const NET4_ROUTE_RECORD_FROM_6887_RELAY_96BA = Buffer.from([
+    0x61, 0x88, 0x65, 0x62, 0x1a, 0x0, 0x0, 0xba, 0x96, 0x9, 0x1a, 0x0, 0x0, 0x87, 0x68, 0x1e, 0x6d, 0x10, 0xbe, 0x77, 0xfe, 0xff, 0x8d, 0x79, 0xe0,
+    0x8c, 0xfd, 0x27, 0x29, 0x0, 0x4b, 0x12, 0x0, 0x28, 0x7d, 0xc0, 0xbf, 0x3, 0x73, 0xb9, 0xa4, 0xfe, 0xff, 0x50, 0x4b, 0x80, 0x0, 0xa, 0xb6, 0xed,
+    0xe, 0xb7, 0x40, 0xd2, 0x77, 0x86, 0xe2,
+]);
+
+/**
+ * IEEE 802.15.4 Data, Src: 0x91d2, Dst: 0x0000
+ *   Frame Control Field: 0x8861, Frame Type: Data, Acknowledge Request, PAN ID Compression, Destination Addressing Mode: Short/16-bit, Frame Version: IEEE Std 802.15.4-2003, Source Addressing Mode: Short/16-bit
+ *       .... .... .... .001 = Frame Type: Data (0x1)
+ *       .... .... .... 0... = Security Enabled: False
+ *       .... .... ...0 .... = Frame Pending: False
+ *       .... .... ..1. .... = Acknowledge Request: True
+ *       .... .... .1.. .... = PAN ID Compression: True
+ *       .... .... 0... .... = Reserved: False
+ *       .... ...0 .... .... = Sequence Number Suppression: False
+ *       .... ..0. .... .... = Information Elements Present: False
+ *       .... 10.. .... .... = Destination Addressing Mode: Short/16-bit (0x2)
+ *       ..00 .... .... .... = Frame Version: IEEE Std 802.15.4-2003 (0)
+ *       10.. .... .... .... = Source Addressing Mode: Short/16-bit (0x2)
+ *   Sequence Number: 94
+ *   Destination PAN: 0x1a62
+ *   Destination: 0x0000
+ *   Source: 0x91d2
+ *   [Extended Source: SiliconLabor_ff:fe:d0:4a:58 (70:ac:08:ff:fe:d0:4a:58)]
+ *   FCS: 0x5950 (Correct)
+ *
+ * ZigBee Network Layer Command, Dst: 0x0000, Src: 0x9ed5
+ *   Frame Control Field: 0x1a09, Frame Type: Command, Discover Route: Suppress, Security, Destination, Extended Source Command
+ *       .... .... .... ..01 = Frame Type: Command (0x1)
+ *       .... .... ..00 10.. = Protocol Version: 2
+ *       .... .... 00.. .... = Discover Route: Suppress (0x0)
+ *       .... ...0 .... .... = Multicast: False
+ *       .... ..1. .... .... = Security: True
+ *       .... .0.. .... .... = Source Route: False
+ *       .... 1... .... .... = Destination: True
+ *       ...1 .... .... .... = Extended Source: True
+ *       ..0. .... .... .... = End Device Initiator: False
+ *   Destination: 0x0000
+ *   Source: 0x9ed5
+ *   Radius: 30
+ *   Sequence Number: 80
+ *   Destination: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)
+ *   Extended Source: TexasInstrum_00:25:49:f4:42 (00:12:4b:00:25:49:f4:42)
+ *   ZigBee Security Header
+ *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
+ *           .... .000 = Security Level: 0x0
+ *           ...0 1... = Key Id: Network Key (0x1)
+ *           ..1. .... = Extended Nonce: True
+ *           .0.. .... = Require Verified Frame Counter: 0x0
+ *       Frame Counter: 60089908
+ *       Extended Source: SiliconLabor_ff:fe:d0:4a:58 (70:ac:08:ff:fe:d0:4a:58)
+ *       Key Sequence Number: 0
+ *       Message Integrity Code: 41a9472e
+ *       [Key: 01030507090b0d0f00020406080a0c0d]
+ *   Command Frame: Route Record
+ *       Command Identifier: Route Record (0x05)
+ *       Relay Count: 1
+ *       Relay Device 1: 0x91d2
+ */
+export const NET4_ROUTE_RECORD_FROM_9ED5_RELAY_91D2 = Buffer.from([
+    0x61, 0x88, 0x5e, 0x62, 0x1a, 0x0, 0x0, 0xd2, 0x91, 0x9, 0x1a, 0x0, 0x0, 0xd5, 0x9e, 0x1e, 0x50, 0x10, 0xbe, 0x77, 0xfe, 0xff, 0x8d, 0x79, 0xe0,
+    0x42, 0xf4, 0x49, 0x25, 0x0, 0x4b, 0x12, 0x0, 0x28, 0x34, 0xe6, 0x94, 0x3, 0x58, 0x4a, 0xd0, 0xfe, 0xff, 0x8, 0xac, 0x70, 0x0, 0x4f, 0x3f, 0xce,
+    0x6a, 0x41, 0xa9, 0x47, 0x2e, 0x50, 0x59,
+]);
+
+/**
+ * IEEE 802.15.4 Data, Src: 0xcb47, Dst: 0x0000
+ *   Frame Control Field: 0x8861, Frame Type: Data, Acknowledge Request, PAN ID Compression, Destination Addressing Mode: Short/16-bit, Frame Version: IEEE Std 802.15.4-2003, Source Addressing Mode: Short/16-bit
+ *       .... .... .... .001 = Frame Type: Data (0x1)
+ *       .... .... .... 0... = Security Enabled: False
+ *       .... .... ...0 .... = Frame Pending: False
+ *       .... .... ..1. .... = Acknowledge Request: True
+ *       .... .... .1.. .... = PAN ID Compression: True
+ *       .... .... 0... .... = Reserved: False
+ *       .... ...0 .... .... = Sequence Number Suppression: False
+ *       .... ..0. .... .... = Information Elements Present: False
+ *       .... 10.. .... .... = Destination Addressing Mode: Short/16-bit (0x2)
+ *       ..00 .... .... .... = Frame Version: IEEE Std 802.15.4-2003 (0)
+ *       10.. .... .... .... = Source Addressing Mode: Short/16-bit (0x2)
+ *   Sequence Number: 113
+ *   Destination PAN: 0x1a62
+ *   Destination: 0x0000
+ *   Source: 0xcb47
+ *   [Extended Source: TexasInstrum_00:24:c2:e1:e1 (00:12:4b:00:24:c2:e1:e1)]
+ *   FCS: 0x2403 (Correct)
+ *
+ * ZigBee Network Layer Command, Dst: 0x0000, Src: 0x4b8e
+ *   Frame Control Field: 0x1209, Frame Type: Command, Discover Route: Suppress, Security, Extended Source Command
+ *       .... .... .... ..01 = Frame Type: Command (0x1)
+ *       .... .... ..00 10.. = Protocol Version: 2
+ *       .... .... 00.. .... = Discover Route: Suppress (0x0)
+ *       .... ...0 .... .... = Multicast: False
+ *       .... ..1. .... .... = Security: True
+ *       .... .0.. .... .... = Source Route: False
+ *       .... 0... .... .... = Destination: False
+ *       ...1 .... .... .... = Extended Source: True
+ *       ..0. .... .... .... = End Device Initiator: False
+ *   Destination: 0x0000
+ *   Source: 0x4b8e
+ *   Radius: 30
+ *   Sequence Number: 175
+ *   Extended Source: TexasInstrum_00:25:02:d0:3b (00:12:4b:00:25:02:d0:3b)
+ *   ZigBee Security Header
+ *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
+ *           .... .000 = Security Level: 0x0
+ *           ...0 1... = Key Id: Network Key (0x1)
+ *           ..1. .... = Extended Nonce: True
+ *           .0.. .... = Require Verified Frame Counter: 0x0
+ *       Frame Counter: 6658803
+ *       Extended Source: TexasInstrum_00:24:c2:e1:e1 (00:12:4b:00:24:c2:e1:e1)
+ *       Key Sequence Number: 0
+ *       Message Integrity Code: 9b85bbae
+ *       [Key: 01030507090b0d0f00020406080a0c0d]
+ *   Command Frame: Route Record
+ *       Command Identifier: Route Record (0x05)
+ *       Relay Count: 1
+ *       Relay Device 1: 0xcb47
+ */
+export const NET4_ROUTE_RECORD_FROM_4B8E_RELAY_CB47 = Buffer.from([
+    0x61, 0x88, 0x71, 0x62, 0x1a, 0x0, 0x0, 0x47, 0xcb, 0x9, 0x12, 0x0, 0x0, 0x8e, 0x4b, 0x1e, 0xaf, 0x3b, 0xd0, 0x2, 0x25, 0x0, 0x4b, 0x12, 0x0,
+    0x28, 0xf3, 0x9a, 0x65, 0x0, 0xe1, 0xe1, 0xc2, 0x24, 0x0, 0x4b, 0x12, 0x0, 0x0, 0x87, 0x14, 0x82, 0x7e, 0x9b, 0x85, 0xbb, 0xae, 0x3, 0x24,
+]);
+
+// #endregion

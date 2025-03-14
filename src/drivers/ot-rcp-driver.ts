@@ -1692,7 +1692,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #3.4.1
      */
-    public async processZigbeeNWKRouteReq(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
+    public async processZigbeeNWKRouteReq(data: Buffer, offset: number, _macHeader: MACHeader, _nwkHeader: ZigbeeNWKHeader): Promise<number> {
         const options = data.readUInt8(offset);
         offset += 1;
         const manyToOne = (options & ZigbeeNWKConsts.CMD_ROUTE_OPTION_MANY_MASK) >> 3; // ZigbeeNWKManyToOne
@@ -1714,15 +1714,15 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             NS,
         );
 
-        await this.sendZigbeeNWKRouteReply(
-            macHeader.destination16!,
-            nwkHeader.radius!,
-            id,
-            nwkHeader.source16!,
-            destination16,
-            nwkHeader.source64 ?? this.address16ToAddress64.get(nwkHeader.source16!),
-            destination64,
-        );
+        // await this.sendZigbeeNWKRouteReply(
+        //     macHeader.destination16!,
+        //     nwkHeader.radius!,
+        //     id,
+        //     nwkHeader.source16!,
+        //     destination16,
+        //     nwkHeader.source64 ?? this.address16ToAddress64.get(nwkHeader.source16!),
+        //     destination64,
+        // );
 
         return offset;
     }
@@ -4064,8 +4064,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * @param destination16
      * @param destination64
      * @returns
+     * - request invalid or source route unavailable: [undefined, undefined, undefined]
+     * - request valid and source route available and >=1 relay: [last index in relayAddresses, list of relay addresses, cost of the path]
+     * - request valid and source route available and 0 relay: [undefined, undefined, cost of the path]
      */
-    private findBestSourceRoute(
+    public findBestSourceRoute(
         destination16: number | undefined,
         destination64: bigint | undefined,
     ): [relayIndex: number | undefined, relayAddresses: number[] | undefined, pathCost: number | undefined] {
@@ -4111,7 +4114,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const relays = sourceRouteEntries[0].relayAddresses;
         const relayLastIndex = relays.length - 1;
 
-        // TODO: handle `relayLastIndex === -1` (direct)? current logic will return undefined below and not use source routing
         if (relayLastIndex >= 0) {
             return [relayLastIndex, relays, sourceRouteEntries[0].pathCost];
         }
