@@ -1,0 +1,31 @@
+name: Update dependencies
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+        contents: write
+        pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: 'package.json'
+
+      - run: npm ci
+
+      - run: npm update --save
+
+      - uses: peter-evans/create-pull-request@v7
+        with:
+            commit-message: 'fix(ignore): update dependencies'
+            branch: 'update-dependencies'
+            title: 'fix(ignore): update dependencies'
