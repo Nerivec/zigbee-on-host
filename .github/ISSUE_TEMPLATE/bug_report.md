@@ -2,7 +2,7 @@
 name: Bug report
 about: Create a report to help us improve
 title: ''
-labels: bug, enhancement
+labels: bug
 assignees: ''
 
 ---
@@ -12,10 +12,9 @@ A clear and concise description of what the bug is.
 
 **To Reproduce**
 Steps to reproduce the behavior:
-1. Turn on permit join on '....'
-2. Put device into pairing mode
-3. Wait for configure
-4. See error
+1. Do this
+2. Do that
+3. See error
 
 **Expected behavior**
 A clear and concise description of what you expected to happen.
