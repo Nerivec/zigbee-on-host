@@ -20,9 +20,10 @@ jobs:
         with:
           node-version-file: 'package.json'
 
-      - run: npm ci
-
       - run: npm update --save
+
+      # ensure proper format after previous cmd
+      - run: npm run check
 
       - uses: peter-evans/create-pull-request@v7
         with:
