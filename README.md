@@ -100,7 +100,7 @@ serial:
 Install dev dependencies and build:
 
 ```bash
-npm install
+npm ci
 npm run build
 ```
 
