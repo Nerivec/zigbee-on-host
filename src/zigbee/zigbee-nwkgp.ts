@@ -1,4 +1,4 @@
-import { ZigbeeConsts, aes128CcmStar } from "./zigbee.js";
+import { ZigbeeConsts, aes128CcmStar, computeAuthTag } from "./zigbee.js";
 
 /**
  * const enum with sole purpose of avoiding "magic numbers" in code for well-known values
@@ -48,9 +48,13 @@ export const enum ZigbeeNWKGPDirection {
 
 /** Security level values. */
 export const enum ZigbeeNWKGPSecurityLevel {
+    /** No Security  */
     NO = 0x00,
+    /** Reserved?  */
     ONELSB = 0x01,
+    /** 4 Byte Frame Counter and 4 Byte MIC */
     FULL = 0x02,
+    /** 4 Byte Frame Counter and 4 Byte MIC with encryption */
     FULLENCR = 0x03,
 }
 
@@ -170,6 +174,7 @@ export type ZigbeeNWKGPHeader = {
     frameControlExt?: ZigbeeNWKGPFrameControlExt;
     sourceId?: number;
     endpoint?: number;
+    /** (utility, not part of the spec) */
     micSize: 0 | 2 | 4;
     securityFrameCounter?: number;
     payloadLength: number;
@@ -402,16 +407,31 @@ export function decodeZigbeeNWKGPPayload(
     _frameControl: ZigbeeNWKGPFrameControl,
     header: ZigbeeNWKGPHeader,
 ): ZigbeeNWKGPPayload {
-    const cryptedPayload = data.subarray(offset, offset + header.payloadLength); // no MIC
+    let authTag: Buffer | undefined;
     let decryptedPayload: ZigbeeNWKGPPayload | undefined;
 
     if (header.frameControlExt?.securityLevel === ZigbeeNWKGPSecurityLevel.FULLENCR) {
         const nonce = makeGPNonce(header, macSource64);
-        [, decryptedPayload] = aes128CcmStar(header.micSize, decryptKey, nonce, cryptedPayload);
+        [authTag, decryptedPayload] = aes128CcmStar(header.micSize, decryptKey, nonce, data.subarray(offset));
 
-        // TODO mic/authTag?
+        const computedAuthTag = computeAuthTag(data.subarray(0, offset), header.micSize!, decryptKey, nonce, decryptedPayload);
+
+        if (!computedAuthTag.equals(authTag)) {
+            throw new Error("Auth tag mismatch while decrypting Zigbee NWK GP payload with FULLENCR security level");
+        }
+    } else if (header.frameControlExt?.securityLevel === ZigbeeNWKGPSecurityLevel.FULL) {
+        // TODO: Works against spec test vectors but not actual sniffed frame...
+        // const nonce = makeGPNonce(header, macSource64);
+        // [authTag] = aes128CcmStar(header.micSize, decryptKey, nonce, data.subarray(offset));
+        // const computedAuthTag = computeAuthTag(data.subarray(0, offset + header.payloadLength), header.micSize!, decryptKey, nonce, Buffer.alloc(0));
+
+        // if (!computedAuthTag.equals(authTag)) {
+        //     throw new Error("Auth tag mismatch while decrypting Zigbee NWK GP payload with FULL security level");
+        // }
+
+        decryptedPayload = data.subarray(offset, offset + header.payloadLength); // no MIC
     } else {
-        decryptedPayload = cryptedPayload;
+        decryptedPayload = data.subarray(offset, offset + header.payloadLength); // no MIC
 
         // TODO mic/authTag?
     }
@@ -436,24 +456,38 @@ export function encodeZigbeeNWKGPFrame(
 
     if (header.frameControlExt?.securityLevel === ZigbeeNWKGPSecurityLevel.FULLENCR) {
         const nonce = makeGPNonce(header, macSource64);
-        const [, encryptedPayload] = aes128CcmStar(header.micSize, decryptKey, nonce, payload);
+        const decryptedData = Buffer.alloc(payload.byteLength + header.micSize!); // payload + auth tag
+        decryptedData.set(payload, 0);
 
-        // TODO mic/authTag?
+        const computedAuthTag = computeAuthTag(data.subarray(0, offset), header.micSize!, decryptKey, nonce, payload);
+        decryptedData.set(computedAuthTag, payload.byteLength);
+
+        const [authTag, encryptedPayload] = aes128CcmStar(header.micSize!, decryptKey, nonce, decryptedData);
 
         data.set(encryptedPayload, offset);
         offset += encryptedPayload.byteLength;
+
+        data.set(authTag, offset); // at end
+        offset += header.micSize!;
+    } else if (header.frameControlExt?.securityLevel === ZigbeeNWKGPSecurityLevel.FULL) {
+        const nonce = makeGPNonce(header, macSource64);
+        const decryptedData = Buffer.alloc(payload.byteLength + header.micSize!); // payload + auth tag
+        decryptedData.set(payload, 0);
+
+        data.set(payload, offset);
+        offset += payload.byteLength;
+
+        const computedAuthTag = computeAuthTag(data.subarray(0, offset), header.micSize!, decryptKey, nonce, Buffer.alloc(0));
+        decryptedData.set(computedAuthTag, payload.byteLength);
+
+        const [authTag] = aes128CcmStar(header.micSize!, decryptKey, nonce, decryptedData);
+
+        data.set(authTag, offset); // at end
+        offset += header.micSize!;
     } else {
         data.set(payload, offset);
         offset += payload.byteLength;
     }
-
-    if (header.micSize === 2) {
-        data.writeUInt16LE(header.mic!, offset); // at end
-    } else if (header.micSize === 4) {
-        data.writeUInt32LE(header.mic!, offset); // at end
-    }
-
-    offset += header.micSize;
 
     return data.subarray(0, offset);
 }
