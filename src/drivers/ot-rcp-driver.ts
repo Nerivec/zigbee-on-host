@@ -695,7 +695,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /** If defined, indicates we're waiting for the property with the specific payload to come in */
     private resetWaiter: { timer: NodeJS.Timeout; resolve: (frame: SpinelFrame) => void } | undefined;
     /** TID currently being awaited */
-    private tidWaiters: Map<
+    private readonly tidWaiters: Map<
         number,
         {
             timer: NodeJS.Timeout;
