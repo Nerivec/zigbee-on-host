@@ -1024,6 +1024,8 @@ describe("OT RCP Driver", () => {
         });
 
         it("registers timers", async () => {
+            // creates a bottleneck with vitest & promises, noop it
+            vi.spyOn(driver, "savePeriodicState").mockImplementation(() => Promise.resolve());
             const sendPeriodicZigbeeNWKLinkStatusSpy = vi.spyOn(driver, "sendPeriodicZigbeeNWKLinkStatus");
             const sendPeriodicManyToOneRouteRequestSpy = vi.spyOn(driver, "sendPeriodicManyToOneRouteRequest");
             const processZigbeeNWKRouteRecordSpy = vi.spyOn(driver, "processZigbeeNWKRouteRecord");
@@ -1199,6 +1201,8 @@ describe("OT RCP Driver", () => {
         });
 
         it("handles source routing", async () => {
+            // creates a bottleneck with vitest & promises, noop it
+            vi.spyOn(driver, "savePeriodicState").mockImplementation(() => Promise.resolve());
             const sendPeriodicZigbeeNWKLinkStatusSpy = vi.spyOn(driver, "sendPeriodicZigbeeNWKLinkStatus");
             const sendPeriodicManyToOneRouteRequestSpy = vi.spyOn(driver, "sendPeriodicManyToOneRouteRequest");
             const processZigbeeNWKRouteRecordSpy = vi.spyOn(driver, "processZigbeeNWKRouteRecord");
