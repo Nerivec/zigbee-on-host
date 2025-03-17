@@ -658,12 +658,14 @@ const CONFIG_NWK_LINK_STATUS_JITTER = 1000;
 // const CONFIG_NWK_ROUTER_AGE_LIMIT = 3;
 /** This is an index into Table 3-54. It indicates the default timeout in minutes for any end device that does not negotiate a different timeout value. */
 // const CONFIG_NWK_END_DEVICE_TIMEOUT_DEFAULT = 8;
-/** The time in seconds between concentrator route discoveries. (msec) */
+/** The time between concentrator route discoveries. (msec) */
 const CONFIG_NWK_CONCENTRATOR_DISCOVERY_TIME = 60000;
 /** The hop count radius for concentrator route discoveries. */
 const CONFIG_NWK_CONCENTRATOR_RADIUS = CONFIG_NWK_MAX_HOPS;
 /** The number of failures that trigger an immediate concentrator route discoveries. */
 // const CONFIG_NWK_CONCENTRATOR_FORCE_DISCOVERY_FAILURES = 3; // TODO
+/** The time between state saving to disk. (msec) */
+const CONFIG_SAVE_STATE_TIME = 60000;
 
 export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public readonly writer: OTRCPWriter;
@@ -707,6 +709,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     private networkUp: boolean;
 
+    private saveStateTimeout: NodeJS.Timeout | undefined;
     private pendingChangeChannel: NodeJS.Timeout | undefined;
     private nwkLinkStatusTimeout: NodeJS.Timeout | undefined;
     private manyToOneRouteRequestTimeout: NodeJS.Timeout | undefined;
@@ -932,6 +935,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.networkUp = false;
 
         // TODO: clear all timeouts/intervals
+        clearTimeout(this.saveStateTimeout);
         clearTimeout(this.pendingChangeChannel);
         clearTimeout(this.nwkLinkStatusTimeout);
         clearTimeout(this.manyToOneRouteRequestTimeout);
@@ -1653,7 +1657,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 break;
             }
             case ZigbeeNWKCommandId.LEAVE: {
-                offset = this.processZigbeeNWKLeave(data, offset, macHeader, nwkHeader);
+                offset = await this.processZigbeeNWKLeave(data, offset, macHeader, nwkHeader);
                 break;
             }
             case ZigbeeNWKCommandId.ROUTE_RECORD: {
@@ -1964,7 +1968,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #3.4.4
      */
-    public processZigbeeNWKLeave(data: Buffer, offset: number, _macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
+    public async processZigbeeNWKLeave(data: Buffer, offset: number, _macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
         const options = data.readUInt8(offset);
         offset += 1;
         const removeChildren = Boolean(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REMOVE_CHILDREN);
@@ -1974,7 +1978,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         logger.debug(() => `<=== NWK LEAVE[removeChildren=${removeChildren} request=${request} rejoin=${rejoin}]`, NS);
 
         if (!rejoin && !request) {
-            this.disassociate(nwkHeader.source16, nwkHeader.source64);
+            await this.disassociate(nwkHeader.source16, nwkHeader.source64);
         }
 
         return offset;
@@ -3361,7 +3365,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         } else if (status === 0x02) {
             // left
             // TODO: according to spec, this is "informative" only, should not take any action?
-            this.disassociate(device16, device64);
+            await this.disassociate(device16, device64);
         }
 
         return offset;
@@ -3900,9 +3904,18 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     public async registerTimers(): Promise<void> {
         // TODO: periodic/delayed actions
+        await this.savePeriodicState();
         await this.sendPeriodicZigbeeNWKLinkStatus();
         await this.sendPeriodicManyToOneRouteRequest();
-        // TODO: this.saveState() periodically
+    }
+
+    public async savePeriodicState(): Promise<void> {
+        clearTimeout(this.saveStateTimeout);
+        await this.saveState();
+
+        this.saveStateTimeout = setTimeout(async () => {
+            await this.savePeriodicState();
+        }, CONFIG_SAVE_STATE_TIME);
     }
 
     public async sendPeriodicZigbeeNWKLinkStatus(): Promise<void> {
@@ -4062,6 +4075,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 if (!rxOnWhenIdle && capabilities !== 0x00) {
                     this.indirectTransmissions.set(source64!, []);
                 }
+
+                // force saving after device change
+                await this.savePeriodicState();
             } else if (assocType === 0x01) {
                 // TODO
             }
@@ -4070,7 +4086,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         return [status, newNetwork16];
     }
 
-    private disassociate(source16: number | undefined, source64: bigint | undefined): void {
+    private async disassociate(source16: number | undefined, source64: bigint | undefined): Promise<void> {
         if (source64 === undefined && source16 !== undefined) {
             source64 = this.address16ToAddress64.get(source16);
         } else if (source16 === undefined && source64 !== undefined) {
@@ -4088,6 +4104,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             setImmediate(() => {
                 this.emit("deviceLeft", source16, source64);
             });
+
+            // force saving after device change
+            await this.savePeriodicState();
         }
     }
 

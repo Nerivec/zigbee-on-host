@@ -796,6 +796,8 @@ describe("OT RCP Driver", () => {
             driver.allowJoins(0xfe, true);
 
             const emitSpy = vi.spyOn(driver, "emit");
+            // creates a bottleneck with vitest & promises, noop it
+            const savePeriodicStateSpy = vi.spyOn(driver, "savePeriodicState").mockImplementationOnce(() => Promise.resolve());
             const sendMACFrameSpy = vi.spyOn(driver, "sendMACFrame");
             const sendMACAssocRspSpy = vi.spyOn(driver, "sendMACAssocRsp");
             const sendZigbeeAPSTransportKeyNWKSpy = vi.spyOn(driver, "sendZigbeeAPSTransportKeyNWK");
@@ -825,6 +827,7 @@ describe("OT RCP Driver", () => {
             driver.parser._transform(makeSpinelLastStatus(3), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
+            expect(savePeriodicStateSpy).toHaveBeenCalledTimes(1);
             expect(sendMACAssocRspSpy).toHaveBeenCalledTimes(1);
             expect(sendMACAssocRspSpy).toHaveBeenCalledWith(11871832136131022815n, 0xa18f, MACAssociationStatus.SUCCESS);
             expect(sendZigbeeAPSTransportKeyNWKSpy).toHaveBeenCalledTimes(1);
@@ -950,13 +953,14 @@ describe("OT RCP Driver", () => {
                 await p;
             });
             await driver.registerTimers();
+            await vi.advanceTimersByTimeAsync(100); // flush
 
             expect(linksSpy).toStrictEqual([{ address: 0x3ab1, incomingCost: 0, outgoingCost: 0 }]);
             expect(manyToOneSpy).toStrictEqual(ZigbeeNWKManyToOne.WITH_SOURCE_ROUTING);
             expect(destination16Spy).toStrictEqual(ZigbeeConsts.BCAST_DEFAULT);
             expect(sendPeriodicZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(1);
             expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1);
-            expect(setTimeoutSpy).toHaveBeenCalledTimes(2 + 2 /* waiters */);
+            expect(setTimeoutSpy).toHaveBeenCalledTimes(3 + 2 /* waiters */);
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET3_ROUTE_RECORD), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
@@ -1022,6 +1026,9 @@ describe("OT RCP Driver", () => {
             expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(2);
             expect(manyToOneSpy).toStrictEqual(ZigbeeNWKManyToOne.WITH_SOURCE_ROUTING);
             expect(destination16Spy).toStrictEqual(ZigbeeConsts.BCAST_DEFAULT);
+            expect(setTimeoutSpy).toHaveBeenCalledTimes(7 + 6 /* waiters */);
+
+            await vi.runOnlyPendingTimersAsync(); // flush
         });
     });
 
@@ -1129,7 +1136,7 @@ describe("OT RCP Driver", () => {
             expect(destination16Spy).toStrictEqual(ZigbeeConsts.BCAST_DEFAULT);
             expect(sendPeriodicZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(1);
             expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1);
-            expect(setTimeoutSpy).toHaveBeenCalledTimes(2 + 2 /* waiters */);
+            expect(setTimeoutSpy).toHaveBeenCalledTimes(3 + 2 /* waiters */);
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_96BA_NO_RELAY), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
