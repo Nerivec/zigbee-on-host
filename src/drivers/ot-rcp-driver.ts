@@ -99,6 +99,7 @@ interface AdapterDriverEventMap {
     macFrame: [payload: Buffer, rssi?: number];
     fatalError: [message: string];
     frame: [sender16: number | undefined, sender64: bigint | undefined, apsHeader: ZigbeeAPSHeader, apsPayload: ZigbeeAPSPayload, rssi: number];
+    gpFrame: [cmdId: number, payload: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, rssi: number];
     deviceJoined: [source16: number, source64: bigint];
     deviceRejoined: [source16: number, source64: bigint];
     deviceLeft: [source16: number, source64: bigint];
@@ -1107,7 +1108,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                                 nwkGPHeader,
                             );
 
-                            this.processZigbeeNWKGPCommandFrame(nwkGPPayload, macHeader, nwkGPHeader, metadata?.rssi ?? 0);
+                            this.processZigbeeNWKGPDataFrame(nwkGPPayload, macHeader, nwkGPHeader, metadata?.rssi ?? 0);
                         } else {
                             logger.debug(`<-~- NWKGP Ignoring frame with type ${nwkGPHeader.frameControl.frameType}`, NS);
                             return;
@@ -2514,52 +2515,20 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     // #region Zigbee NWK GP layer
 
-    public processZigbeeNWKGPCommandFrame(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, rssi: number): void {
-        if (nwkHeader.sourceId === undefined) {
-            return;
-        }
-
+    public processZigbeeNWKGPDataFrame(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, rssi: number): void {
         let offset = 0;
         const cmdId = data.readUInt8(offset);
         offset += 1;
+        const framePayload = data.subarray(offset);
 
-        logger.debug(() => `<=== NWKGP CMD[cmdId=${cmdId} macSource=${macHeader.source16}:${macHeader.source64} sourceId=${nwkHeader.sourceId}]`, NS);
-
-        const apsHeader: ZigbeeAPSHeader = {
-            frameControl: {
-                frameType: ZigbeeAPSFrameType.CMD,
-                deliveryMode: macHeader.source16! < ZigbeeConsts.BCAST_MIN ? ZigbeeAPSDeliveryMode.UNICAST : ZigbeeAPSDeliveryMode.BCAST, // TODO: correct??
-                ackFormat: false,
-                security: false,
-                ackRequest: false,
-                extendedHeader: false,
-            },
-            profileId: ZigbeeConsts.GP_PROFILE_ID,
-            clusterId: ZigbeeConsts.GP_CLUSTER_ID,
-            sourceEndpoint: ZigbeeConsts.GP_ENDPOINT,
-            destEndpoint: ZigbeeConsts.GP_ENDPOINT,
-            group: ZigbeeConsts.GP_GROUP_ID,
-        };
-        // transform into a ZCL frame
-        // TODO: correct??
-        const gpdHeader = Buffer.alloc(15);
-        gpdHeader.writeUInt8(0b00000001, 0); // frameControl: FrameType.SPECIFIC + Direction.CLIENT_TO_SERVER + disableDefaultResponse=false
-        gpdHeader.writeUInt8(macHeader.sequenceNumber ?? 0, 1);
-        gpdHeader.writeUInt8(cmdId === 0xe0 ? ZigbeeConsts.GP_COMMISSIONING_NOTIFICATION : ZigbeeConsts.GP_NOTIFICATION, 2);
-        gpdHeader.writeUInt16LE(0, 3); // options, only srcID present
-        gpdHeader.writeUInt32LE(nwkHeader.sourceId, 5);
-        // omitted: gpdIEEEAddr (ieeeAddr)
-        // omitted: gpdEndpoint (uint8)
-        gpdHeader.writeUInt32LE(nwkHeader.securityFrameCounter ?? 0, 9);
-        gpdHeader.writeUInt8(cmdId, 13);
-        gpdHeader.writeUInt8(data.byteLength - offset, 14);
-
-        const payload = Buffer.alloc(gpdHeader.byteLength + data.byteLength - offset);
-        payload.set(gpdHeader, 0);
-        payload.set(data.subarray(offset), gpdHeader.byteLength);
+        logger.debug(
+            () =>
+                `<=== NWKGP[cmdId=${cmdId} destPANId=${macHeader.destinationPANId} dest64=${macHeader.destination64} sourceId=${nwkHeader.sourceId}]`,
+            NS,
+        );
 
         setImmediate(() => {
-            this.emit("frame", nwkHeader.sourceId! & 0xffff, undefined, apsHeader, payload, rssi);
+            this.emit("gpFrame", cmdId, framePayload, macHeader, nwkHeader, rssi);
         });
     }
 

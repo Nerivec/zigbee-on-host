@@ -1,3 +1,4 @@
+import { bench, describe } from "vitest";
 import {
     decodeMACFrameControl,
     decodeMACHeader,
@@ -5,12 +6,11 @@ import {
     decodeMACZigbeeBeacon,
     encodeMACFrame,
     encodeMACFrameZigbee,
-} from "src/zigbee/mac";
-import { decodeZigbeeAPSFrameControl, decodeZigbeeAPSHeader, decodeZigbeeAPSPayload, encodeZigbeeAPSFrame } from "src/zigbee/zigbee-aps";
-import { decodeZigbeeNWKFrameControl, decodeZigbeeNWKHeader, decodeZigbeeNWKPayload, encodeZigbeeNWKFrame } from "src/zigbee/zigbee-nwk";
-import { decodeZigbeeNWKGPFrameControl, decodeZigbeeNWKGPHeader, decodeZigbeeNWKGPPayload, encodeZigbeeNWKGPFrame } from "src/zigbee/zigbee-nwkgp";
-import { bench, describe } from "vitest";
+} from "../src/zigbee/mac";
 import { ZigbeeKeyType, makeKeyedHashByType, registerDefaultHashedKeys } from "../src/zigbee/zigbee";
+import { decodeZigbeeAPSFrameControl, decodeZigbeeAPSHeader, decodeZigbeeAPSPayload, encodeZigbeeAPSFrame } from "../src/zigbee/zigbee-aps";
+import { decodeZigbeeNWKFrameControl, decodeZigbeeNWKHeader, decodeZigbeeNWKPayload, encodeZigbeeNWKFrame } from "../src/zigbee/zigbee-nwk";
+import { decodeZigbeeNWKGPFrameControl, decodeZigbeeNWKGPHeader, decodeZigbeeNWKGPPayload, encodeZigbeeNWKGPFrame } from "../src/zigbee/zigbee-nwkgp";
 import {
     NET2_ASSOC_REQ_FROM_DEVICE,
     NET2_ASSOC_RESP_FROM_COORD,

@@ -36,7 +36,6 @@ Some quick guidelines to keep the codebase maintainable:
   - [ ] lacking reference sniffs for multicast (group)
 - [x] Encoding/decoding of ZigBee NWK GP frames
   - [ ] lacking reference sniffs, needs full re-check
-  - [ ] FULLENCR & auth tag checking codepaths
 - [x] Encoding/decoding of ZigBee NWK APS frames
 - [x] Network forming
 - [x] Network state saving (de facto backups)

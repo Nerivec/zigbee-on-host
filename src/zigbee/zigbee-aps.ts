@@ -52,8 +52,7 @@ export const enum ZigbeeAPSFrameType {
 
 export const enum ZigbeeAPSDeliveryMode {
     UNICAST = 0x00,
-    /** removed in Zigbee 2006 and later */
-    // INDIRECT = 0x01,
+    // INDIRECT = 0x01, /** removed in Zigbee 2006 and later */
     BCAST = 0x02,
     /** ZigBee 2006 and later */
     GROUP = 0x03,

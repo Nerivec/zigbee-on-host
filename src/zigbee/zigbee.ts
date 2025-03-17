@@ -41,8 +41,6 @@ export const enum ZigbeeConsts {
     GP_PROFILE_ID = 0xa1e0,
     GP_GROUP_ID = 0x0b84,
     GP_CLUSTER_ID = 0x0021,
-    GP_COMMISSIONING_NOTIFICATION = 4,
-    GP_NOTIFICATION = 0,
 
     //---- Touchlink
     TOUCHLINK_PROFILE_ID = 0xc05e,
