@@ -41,7 +41,7 @@ Some quick guidelines to keep the codebase maintainable:
 - [x] Encoding/decoding of ZigBee NWK APS frames
 - [x] Network forming
 - [x] Network state saving (de facto backups)
-- [x] Network state reset based on given network parameters
+- [x] Network state reset
 - [x] Joining/Rejoining
   - [x] APS TC link key update mechanism (global)
   - [x] Direct child router
