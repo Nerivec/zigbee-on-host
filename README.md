@@ -41,7 +41,7 @@ Some quick guidelines to keep the codebase maintainable:
 - [x] Encoding/decoding of ZigBee NWK APS frames
 - [x] Network forming
 - [x] Network state saving (de facto backups)
-- [ ] Network state reset based on given network parameters (avoid need for manual delete of `zoh.save` on config change)
+- [x] Network state reset based on given network parameters
 - [x] Joining/Rejoining
   - [x] APS TC link key update mechanism (global)
   - [x] Direct child router
@@ -89,7 +89,6 @@ serial:
 > ZigBee on Host saves the current state of the network in the file `zoh.save`. _It is similar to the NVRAM of an NCP coordinator._
 > This file contains everything needed to re-establish the network on start, hence, a `coordinator_backup.json` is never created.
 > For Zigbee2MQTT, this file is alongside the `database.db` in the `data` folder.
-> For now, if you want a clean re-forming of the network, you can just move/delete the `database.db`, `state.json`, `zoh.save`, and reset your `configuration.yaml` (otherwise it will use `zoh.save` to resume operation).
 
 > [!TIP]
 > The EUI64 (IEEE address) in the firmware of the coordinator is ignored in this mode. A static one is used instead (set by Zigbee2MQTT), allowing you to change coordinators at will on the same network (although you may encounter device-related troubles when radio specs vary wildly).
