@@ -48,6 +48,7 @@ import {
     NETDEF_TC_KEY,
     NETDEF_ZCL_FRAME_CMD_TO_COORD,
     NETDEF_ZGP_COMMISSIONING,
+    NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0,
 } from "./data";
 
 const SAVE_DIR = "temp";
@@ -568,18 +569,7 @@ describe("OT RCP Driver", () => {
                 sequenceNumber: 70,
                 destinationPANId: 0xffff,
                 destination16: 0xffff,
-                destination64: undefined,
                 sourcePANId: 0xffff,
-                source16: undefined,
-                source64: undefined,
-                auxSecHeader: undefined,
-                superframeSpec: undefined,
-                gtsInfo: undefined,
-                pendAddr: undefined,
-                commandId: undefined,
-                headerIE: undefined,
-                frameCounter: undefined,
-                keySeqCounter: undefined,
                 fcs: 0xffff,
             };
             const expectedNWKGPHeader: ZigbeeNWKGPHeader = {
@@ -589,13 +579,9 @@ describe("OT RCP Driver", () => {
                     autoCommissioning: false,
                     nwkFrameControlExtension: false,
                 },
-                frameControlExt: undefined,
                 sourceId: 0x0155f47a,
-                endpoint: undefined,
-                securityFrameCounter: undefined,
                 micSize: 0,
                 payloadLength: 52,
-                mic: undefined,
             };
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
@@ -614,6 +600,63 @@ describe("OT RCP Driver", () => {
                 expectedNWKGPHeader,
                 0,
             );
+        });
+
+        it("receives frame NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0", async () => {
+            const emitSpy = vi.spyOn(driver, "emit");
+            const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
+            const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
+            const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
+            const processZigbeeNWKGPDataFrameSpy = vi.spyOn(driver, "processZigbeeNWKGPDataFrame");
+
+            driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0), "utf8", () => {});
+            await vi.runOnlyPendingTimersAsync();
+
+            const expectedMACHeader: MACHeader = {
+                frameControl: {
+                    frameType: 0x1,
+                    securityEnabled: false,
+                    framePending: false,
+                    ackRequest: false,
+                    panIdCompression: false,
+                    seqNumSuppress: false,
+                    iePresent: false,
+                    destAddrMode: 0x2,
+                    frameVersion: 0,
+                    sourceAddrMode: 0x0,
+                },
+                sequenceNumber: 185,
+                destinationPANId: 0xffff,
+                destination16: 0xffff,
+                sourcePANId: 0xffff,
+                fcs: 0xffff,
+            };
+            const expectedNWKGPHeader: ZigbeeNWKGPHeader = {
+                frameControl: {
+                    frameType: 0x0,
+                    protocolVersion: 3,
+                    autoCommissioning: false,
+                    nwkFrameControlExtension: true,
+                },
+                frameControlExt: {
+                    appId: 0,
+                    direction: 0,
+                    rxAfterTx: false,
+                    securityKey: true,
+                    securityLevel: 2,
+                },
+                sourceId: 24221335,
+                securityFrameCounter: 185,
+                micSize: 4,
+                payloadLength: 1,
+                mic: 3523079166,
+            };
+
+            expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
+            expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
+            expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
+            expect(processZigbeeNWKGPDataFrameSpy).toHaveBeenCalledTimes(1);
+            expect(emitSpy).toHaveBeenCalledWith("gpFrame", 0x10, Buffer.from([]), expectedMACHeader, expectedNWKGPHeader, 0);
         });
     });
 
