@@ -1,10 +1,10 @@
 import { type Socket as DgramSocket, createSocket } from "node:dgram";
 import { Socket } from "node:net";
 import { SerialPort } from "serialport";
-import type { StreamRawConfig } from "src/spinel/spinel.js";
-import type { ZigbeeAPSHeader, ZigbeeAPSPayload } from "src/zigbee/zigbee-aps.js";
 import { type NetworkParameters, OTRCPDriver } from "../drivers/ot-rcp-driver.js";
+import type { StreamRawConfig } from "../spinel/spinel.js";
 import { logger } from "../utils/logger.js";
+import type { ZigbeeAPSHeader, ZigbeeAPSPayload } from "../zigbee/zigbee-aps.js";
 import { DEFAULT_WIRESHARK_IP, DEFAULT_ZEP_UDP_PORT, createWiresharkZEPFrame } from "./wireshark.js";
 
 const NS = "minimal-adapter";

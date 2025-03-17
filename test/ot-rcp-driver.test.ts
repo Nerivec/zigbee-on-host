@@ -7,9 +7,10 @@ import { SpinelCommandId } from "../src/spinel/commands";
 import { SpinelPropertyId } from "../src/spinel/properties";
 import { SPINEL_HEADER_FLG_SPINEL, encodeSpinelFrame } from "../src/spinel/spinel";
 import { SpinelStatus } from "../src/spinel/statuses";
-import { MACAssociationStatus, decodeMACFrameControl, decodeMACHeader } from "../src/zigbee/mac";
+import { MACAssociationStatus, type MACHeader, decodeMACFrameControl, decodeMACHeader } from "../src/zigbee/mac";
 import { ZigbeeConsts } from "../src/zigbee/zigbee";
 import { type ZigbeeNWKLinkStatus, ZigbeeNWKManyToOne, ZigbeeNWKStatus } from "../src/zigbee/zigbee-nwk";
+import type { ZigbeeNWKGPHeader } from "../src/zigbee/zigbee-nwkgp";
 import {
     A_CHANNEL,
     A_EUI64,
@@ -546,40 +547,72 @@ describe("OT RCP Driver", () => {
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
             const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
-            const processZigbeeNWKGPCommandFrameSpy = vi.spyOn(driver, "processZigbeeNWKGPCommandFrame");
+            const processZigbeeNWKGPDataFrameSpy = vi.spyOn(driver, "processZigbeeNWKGPDataFrame");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ZGP_COMMISSIONING), "utf8", () => {});
             await vi.runOnlyPendingTimersAsync();
 
+            const expectedMACHeader: MACHeader = {
+                frameControl: {
+                    frameType: 0x1,
+                    securityEnabled: false,
+                    framePending: false,
+                    ackRequest: false,
+                    panIdCompression: false,
+                    seqNumSuppress: false,
+                    iePresent: false,
+                    destAddrMode: 0x2,
+                    frameVersion: 0,
+                    sourceAddrMode: 0x0,
+                },
+                sequenceNumber: 70,
+                destinationPANId: 0xffff,
+                destination16: 0xffff,
+                destination64: undefined,
+                sourcePANId: 0xffff,
+                source16: undefined,
+                source64: undefined,
+                auxSecHeader: undefined,
+                superframeSpec: undefined,
+                gtsInfo: undefined,
+                pendAddr: undefined,
+                commandId: undefined,
+                headerIE: undefined,
+                frameCounter: undefined,
+                keySeqCounter: undefined,
+                fcs: 0xffff,
+            };
+            const expectedNWKGPHeader: ZigbeeNWKGPHeader = {
+                frameControl: {
+                    frameType: 0x0,
+                    protocolVersion: 3,
+                    autoCommissioning: false,
+                    nwkFrameControlExtension: false,
+                },
+                frameControlExt: undefined,
+                sourceId: 0x0155f47a,
+                endpoint: undefined,
+                securityFrameCounter: undefined,
+                micSize: 0,
+                payloadLength: 52,
+                mic: undefined,
+            };
+
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
             expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
-            expect(processZigbeeNWKGPCommandFrameSpy).toHaveBeenCalledTimes(1);
+            expect(processZigbeeNWKGPDataFrameSpy).toHaveBeenCalledTimes(1);
             expect(emitSpy).toHaveBeenCalledWith(
-                "frame",
-                0x0155f47a & 0xffff,
-                undefined,
-                {
-                    frameControl: {
-                        frameType: 0x1,
-                        deliveryMode: 0x2,
-                        ackFormat: false,
-                        security: false,
-                        ackRequest: false,
-                        extendedHeader: false,
-                    },
-                    group: ZigbeeConsts.GP_GROUP_ID,
-                    profileId: ZigbeeConsts.GP_PROFILE_ID,
-                    clusterId: ZigbeeConsts.GP_CLUSTER_ID,
-                    destEndpoint: ZigbeeConsts.GP_ENDPOINT,
-                    sourceEndpoint: ZigbeeConsts.GP_ENDPOINT,
-                },
+                "gpFrame",
+                0xe0,
                 Buffer.from([
-                    1, 70, 4, 0, 0, 122, 244, 85, 1, 0, 0, 0, 0, 0xe0, 51, 0x2, 0x85, 0xf2, 0xc9, 0x25, 0x82, 0x1d, 0xf4, 0x6f, 0x45, 0x8c, 0xf0,
-                    0xe6, 0x37, 0xaa, 0xc3, 0xba, 0xb6, 0xaa, 0x45, 0x83, 0x1a, 0x11, 0x46, 0x23, 0x0, 0x0, 0x4, 0x16, 0x10, 0x11, 0x22, 0x23, 0x18,
-                    0x19, 0x14, 0x15, 0x12, 0x13, 0x64, 0x65, 0x62, 0x63, 0x1e, 0x1f, 0x1c, 0x1d, 0x1a, 0x1b, 0x16, 0x17,
+                    0x2, 0x85, 0xf2, 0xc9, 0x25, 0x82, 0x1d, 0xf4, 0x6f, 0x45, 0x8c, 0xf0, 0xe6, 0x37, 0xaa, 0xc3, 0xba, 0xb6, 0xaa, 0x45, 0x83, 0x1a,
+                    0x11, 0x46, 0x23, 0x0, 0x0, 0x4, 0x16, 0x10, 0x11, 0x22, 0x23, 0x18, 0x19, 0x14, 0x15, 0x12, 0x13, 0x64, 0x65, 0x62, 0x63, 0x1e,
+                    0x1f, 0x1c, 0x1d, 0x1a, 0x1b, 0x16, 0x17,
                 ]),
-                0, // rssi
+                expectedMACHeader,
+                expectedNWKGPHeader,
+                0,
             );
         });
     });
