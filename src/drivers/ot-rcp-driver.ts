@@ -4354,7 +4354,37 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             offset += 1;
 
             // reserved
-            offset += SaveConsts.DEVICE_DATA_SIZE - 13; // currently: 499
+            offset += 64 - 13; // currently: 51
+
+            const sourceRouteEntries = this.sourceRouteTable.get(device.address16);
+            const sourceRouteEntryCount = sourceRouteEntries?.length ?? 0;
+            let sourceRouteTableSize = 0;
+
+            state.writeUInt8(sourceRouteEntryCount, offset);
+            offset += 1;
+
+            if (sourceRouteEntries) {
+                for (const sourceRouteEntry of sourceRouteEntries) {
+                    sourceRouteTableSize += 2 + sourceRouteEntry.relayAddresses.length * 2;
+
+                    if (64 + 1 + sourceRouteTableSize > SaveConsts.DEVICE_DATA_SIZE) {
+                        throw new Error("Save size overflow");
+                    }
+
+                    state.writeUInt8(sourceRouteEntry.pathCost, offset);
+                    offset += 1;
+                    state.writeUInt8(sourceRouteEntry.relayAddresses.length, offset);
+                    offset += 1;
+
+                    for (const relayAddress of sourceRouteEntry.relayAddresses) {
+                        state.writeUInt16LE(relayAddress, offset);
+                        offset += 2;
+                    }
+                }
+            }
+
+            // reserved
+            offset += SaveConsts.DEVICE_DATA_SIZE - 64 - 1 - sourceRouteTableSize;
         }
 
         await writeFile(this.savePath, state);
@@ -4411,7 +4441,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 offset += 1;
 
                 // reserved
-                offset += SaveConsts.DEVICE_DATA_SIZE - 13; // currently: 499
+                offset += 64 - 13; // currently: 51
 
                 this.deviceTable.set(address64, {
                     address16,
@@ -4424,6 +4454,35 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 if (!rxOnWhenIdle) {
                     this.indirectTransmissions.set(address64, []);
                 }
+
+                let sourceRouteTableSize = 0;
+                const sourceRouteEntryCount = state.readUInt8(offset);
+                offset += 1;
+
+                if (sourceRouteEntryCount > 0) {
+                    const sourceRouteEntries: SourceRouteTableEntry[] = [];
+
+                    for (let i = 0; i < sourceRouteEntryCount; i++) {
+                        const pathCost = state.readUInt8(offset);
+                        offset += 1;
+                        const relayAddressCount = state.readUInt8(offset);
+                        offset += 1;
+                        const relayAddresses: number[] = [];
+                        sourceRouteTableSize += 2 + relayAddressCount * 2;
+
+                        for (let j = 0; j < relayAddressCount; j++) {
+                            relayAddresses.push(state.readUInt16LE(offset));
+                            offset += 2;
+                        }
+
+                        sourceRouteEntries.push({ pathCost, relayAddresses });
+                    }
+
+                    this.sourceRouteTable.set(address16, sourceRouteEntries);
+                }
+
+                // reserved
+                offset += SaveConsts.DEVICE_DATA_SIZE - 64 - 1 - sourceRouteTableSize;
             }
         } catch {
             // `this.savePath` does not exist, using constructor-given network params, do initial save
@@ -4479,6 +4538,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             // TODO: needs testing
             this.netParams.channel = convertMaskToChannels(payload.readUInt32LE(1))[0];
             this.netParams.nwkUpdateId = payload[6];
+
+            // force saving after net params change
+            await this.savePeriodicState();
 
             this.pendingChangeChannel = setTimeout(async () => {
                 await this.setProperty(writePropertyC(SpinelPropertyId.PHY_CHAN, this.netParams.channel));

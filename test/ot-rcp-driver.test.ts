@@ -2,7 +2,7 @@ import { type Socket, createSocket } from "node:dgram";
 import { rmSync } from "node:fs";
 import { type MockInstance, afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_WIRESHARK_IP, DEFAULT_ZEP_UDP_PORT, createWiresharkZEPFrame } from "../src/dev/wireshark";
-import { OTRCPDriver } from "../src/drivers/ot-rcp-driver";
+import { OTRCPDriver, type SourceRouteTableEntry } from "../src/drivers/ot-rcp-driver";
 import { SpinelCommandId } from "../src/spinel/commands";
 import { SpinelPropertyId } from "../src/spinel/properties";
 import { SPINEL_HEADER_FLG_SPINEL, encodeSpinelFrame } from "../src/spinel/spinel";
@@ -240,6 +240,12 @@ describe("OT RCP Driver", () => {
             driver.deviceTable.set(12656887476334n, { address16: 3457, rxOnWhenIdle: true, authorized: true, neighbor: true });
             driver.deviceTable.set(12328965645634n, { address16: 9674, rxOnWhenIdle: false, authorized: true, neighbor: false });
             driver.deviceTable.set(234367481234n, { address16: 54748, rxOnWhenIdle: true, authorized: false, neighbor: true });
+            driver.sourceRouteTable.set(1, [
+                { pathCost: 1, relayAddresses: [] },
+                { pathCost: 2, relayAddresses: [3457] },
+            ]);
+            driver.sourceRouteTable.set(3457, []);
+            driver.sourceRouteTable.set(9674, [{ pathCost: 3, relayAddresses: [3457, 65348] }]);
 
             await driver.saveState();
 
@@ -258,6 +264,7 @@ describe("OT RCP Driver", () => {
             driver.deviceTable.clear();
             driver.address16ToAddress64.clear();
             driver.indirectTransmissions.clear();
+            driver.sourceRouteTable.clear();
 
             await driver.loadState();
 
@@ -293,6 +300,38 @@ describe("OT RCP Driver", () => {
             expect(driver.address16ToAddress64.get(54748)).toStrictEqual(234367481234n);
             expect(driver.indirectTransmissions.size).toStrictEqual(1);
             expect(driver.indirectTransmissions.get(12328965645634n)).toStrictEqual([]);
+            expect(driver.sourceRouteTable.size).toStrictEqual(2);
+            expect(driver.sourceRouteTable.get(1)).toStrictEqual([
+                { pathCost: 1, relayAddresses: [] },
+                { pathCost: 2, relayAddresses: [3457] },
+            ]);
+            expect(driver.sourceRouteTable.get(9674)).toStrictEqual([{ pathCost: 3, relayAddresses: [3457, 65348] }]);
+        });
+
+        it("throws when source route table too large for device", async () => {
+            driver.netParams.eui64 = 1n;
+            driver.netParams.panId = 0x4356;
+            driver.netParams.extendedPANId = 893489346n;
+            driver.netParams.channel = 25;
+            driver.netParams.nwkUpdateId = 1;
+            driver.netParams.txPower = 15;
+            driver.netParams.networkKey = Buffer.from([
+                0x11, 0x29, 0x22, 0x18, 0x13, 0x27, 0x24, 0x16, 0x12, 0x34, 0x56, 0x78, 0x90, 0x98, 0x76, 0x54,
+            ]);
+            driver.netParams.networkKeyFrameCounter = 235568765;
+            driver.netParams.networkKeySequenceNumber = 1;
+            driver.netParams.tcKey = Buffer.from([0x51, 0x69, 0x62, 0x58, 0x53, 0x67, 0x64, 0x56, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
+            driver.netParams.tcKeyFrameCounter = 896723;
+            driver.deviceTable.set(1234n, { address16: 1, rxOnWhenIdle: true, authorized: true, neighbor: true });
+            const sourceRouteTableEntries: SourceRouteTableEntry[] = [];
+
+            for (let i = 0; i < 255; i++) {
+                sourceRouteTableEntries.push({ pathCost: Math.floor(Math.random() * 10), relayAddresses: [1, 2, 3, 4, 5] });
+            }
+
+            driver.sourceRouteTable.set(1, sourceRouteTableEntries);
+
+            await expect(driver.saveState()).rejects.toThrow("Save size overflow");
         });
 
         it("sets node descriptor manufacturer code", async () => {
