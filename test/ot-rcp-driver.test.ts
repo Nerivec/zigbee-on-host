@@ -1,5 +1,6 @@
 import { type Socket, createSocket } from "node:dgram";
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { type MockInstance, afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_WIRESHARK_IP, DEFAULT_ZEP_UDP_PORT, createWiresharkZEPFrame } from "../src/dev/wireshark";
 import { OTRCPDriver, type SourceRouteTableEntry } from "../src/drivers/ot-rcp-driver";
@@ -138,7 +139,7 @@ describe("OT RCP Driver", () => {
         await endWireshark();
     });
 
-    describe("State management", () => {
+    describe("State/Network management", () => {
         beforeEach(() => {
             driver = new OTRCPDriver(
                 {
@@ -176,10 +177,7 @@ describe("OT RCP Driver", () => {
             driver.networkUp = true;
         });
 
-        afterEach(() => {
-            driver.deviceTable.clear();
-            driver.address16ToAddress64.clear();
-        });
+        afterEach(async () => {});
 
         it("handles loading with given network params - first start", async () => {
             const saveStateSpy = vi.spyOn(driver, "saveState");
@@ -187,6 +185,21 @@ describe("OT RCP Driver", () => {
             await driver.loadState();
 
             expect(saveStateSpy).toHaveBeenCalledTimes(1);
+
+            expect(driver.netParams.eui64).toStrictEqual(Buffer.from(A_EUI64).readBigUInt64LE(0));
+            expect(driver.netParams.panId).toStrictEqual(NETDEF_PAN_ID);
+            expect(driver.netParams.extendedPANId).toStrictEqual(Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0));
+            expect(driver.netParams.channel).toStrictEqual(A_CHANNEL);
+            expect(driver.netParams.nwkUpdateId).toStrictEqual(0);
+            expect(driver.netParams.txPower).toStrictEqual(10);
+            expect(driver.netParams.networkKey).toStrictEqual(Buffer.from(NETDEF_NETWORK_KEY));
+            expect(driver.netParams.networkKeyFrameCounter).toStrictEqual(0);
+            expect(driver.netParams.networkKeySequenceNumber).toStrictEqual(0);
+            expect(driver.netParams.tcKey).toStrictEqual(Buffer.from(NETDEF_TC_KEY));
+            expect(driver.netParams.tcKeyFrameCounter).toStrictEqual(0);
+            expect(driver.deviceTable.size).toStrictEqual(0);
+            expect(driver.address16ToAddress64.size).toStrictEqual(0);
+            expect(driver.indirectTransmissions.size).toStrictEqual(0);
 
             // reset manually
             driver.netParams.eui64 = 0n;
@@ -308,6 +321,26 @@ describe("OT RCP Driver", () => {
             expect(driver.sourceRouteTable.get(9674)).toStrictEqual([{ pathCost: 3, relayAddresses: [3457, 65348] }]);
         });
 
+        it("loads given network params when invalid state file", async () => {
+            await writeFile(driver.savePath, Buffer.alloc(1));
+            await driver.loadState();
+
+            expect(driver.netParams.eui64).toStrictEqual(Buffer.from(A_EUI64).readBigUInt64LE(0));
+            expect(driver.netParams.panId).toStrictEqual(NETDEF_PAN_ID);
+            expect(driver.netParams.extendedPANId).toStrictEqual(Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0));
+            expect(driver.netParams.channel).toStrictEqual(A_CHANNEL);
+            expect(driver.netParams.nwkUpdateId).toStrictEqual(0);
+            expect(driver.netParams.txPower).toStrictEqual(10);
+            expect(driver.netParams.networkKey).toStrictEqual(Buffer.from(NETDEF_NETWORK_KEY));
+            expect(driver.netParams.networkKeyFrameCounter).toStrictEqual(0);
+            expect(driver.netParams.networkKeySequenceNumber).toStrictEqual(0);
+            expect(driver.netParams.tcKey).toStrictEqual(Buffer.from(NETDEF_TC_KEY));
+            expect(driver.netParams.tcKeyFrameCounter).toStrictEqual(0);
+            expect(driver.deviceTable.size).toStrictEqual(0);
+            expect(driver.address16ToAddress64.size).toStrictEqual(0);
+            expect(driver.indirectTransmissions.size).toStrictEqual(0);
+        });
+
         it("throws when source route table too large for device", async () => {
             driver.netParams.eui64 = 1n;
             driver.netParams.panId = 0x4356;
@@ -332,6 +365,37 @@ describe("OT RCP Driver", () => {
             driver.sourceRouteTable.set(1, sourceRouteTableEntries);
 
             await expect(driver.saveState()).rejects.toThrow("Save size overflow");
+        });
+
+        it("resets network", async () => {
+            await writeFile(driver.savePath, Buffer.alloc(1));
+            await driver.resetNetwork();
+
+            expect(existsSync(driver.savePath)).toStrictEqual(false);
+        });
+
+        it("throw when trying to reset network after state already loaded", async () => {
+            // no-op
+            vi.spyOn(driver, "setProperty").mockImplementation(() => Promise.resolve([0, Buffer.alloc(0)]));
+            vi.spyOn(driver, "registerTimers").mockImplementation(() => Promise.resolve());
+
+            await driver.loadState(); // mock shallow start
+            await expect(driver.resetNetwork()).rejects.toThrow("Cannot reset network after state already loaded");
+        });
+
+        it("forms network", async () => {
+            // no-op
+            vi.spyOn(driver, "setProperty").mockImplementation(() => Promise.resolve([0, Buffer.alloc(0)]));
+            vi.spyOn(driver, "registerTimers").mockImplementation(() => Promise.resolve());
+
+            await driver.loadState(); // mock shallow start
+            await driver.formNetwork();
+
+            expect(driver.isNetworkUp()).toStrictEqual(true);
+        });
+
+        it("throws when trying to form network before state is loaded", async () => {
+            await expect(driver.formNetwork()).rejects.toThrow("Cannot form network before state is loaded");
         });
 
         it("sets node descriptor manufacturer code", async () => {
@@ -571,8 +635,6 @@ describe("OT RCP Driver", () => {
             const sendZigbeeNWKRouteReplySpy = vi.spyOn(driver, "sendZigbeeNWKRouteReply");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_MTORR_FRAME_FROM_COORD), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-            driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);

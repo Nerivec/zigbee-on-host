@@ -1,7 +1,7 @@
 import EventEmitter from "node:events";
 
 import { existsSync, mkdirSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SpinelCommandId } from "../spinel/commands.js";
 import { HDLC_TX_CHUNK_SIZE, type HdlcFrame, HdlcReservedByte, decodeHdlcFrame } from "../spinel/hdlc.js";
@@ -707,6 +707,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         }
     >;
 
+    private stateLoaded: boolean;
     private networkUp: boolean;
 
     private saveStateTimeout: NodeJS.Timeout | undefined;
@@ -727,7 +728,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     //---- NWK
 
-    public readonly netParams: NetworkParameters;
+    public netParams: NetworkParameters;
     /** pre-computed hash of default TC link key for VERIFY_KEY. set by `loadState` */
     private tcVerifyKeyHash!: Buffer;
     /** Master table of all known devices on the network. mapping by network64 */
@@ -774,6 +775,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.sourceRouting = true;
         this.routeRequestId = 0; // start at 1
 
+        this.stateLoaded = false;
         this.networkUp = false;
         this.pendingAssociations = new Map();
         this.indirectTransmissions = new Map();
@@ -876,7 +878,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     // #endregion
 
     /**
+     * Get the basic info from the RCP firmware and reset it.
      * @see https://datatracker.ietf.org/doc/html/draft-rquattle-spinel-unified#appendix-C.1
+     *
+     * Should be called before `formNetwork` but after `resetNetwork` (if needed)
      */
     public async start(): Promise<void> {
         logger.info("======== Driver starting ========", NS);
@@ -3875,8 +3880,21 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         return this.netParams.tcKey;
     }
 
+    public isNetworkUp(): boolean {
+        return this.networkUp;
+    }
+
+    /**
+     * Set the Spinel properties required to start a MAC 802.15.4 network.
+     *
+     * Should be called after `start`.
+     */
     public async formNetwork(): Promise<void> {
         logger.info("======== Network starting ========", NS);
+
+        if (!this.stateLoaded) {
+            throw new Error("Cannot form network before state is loaded");
+        }
 
         // TODO: sanity checks?
         await this.setProperty(writePropertyb(SpinelPropertyId.PHY_ENABLED, true));
@@ -3900,6 +3918,29 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.networkUp = true;
 
         await this.registerTimers();
+    }
+
+    /**
+     * Remove the current state file and clear all related tables.
+     *
+     * Will throw if state already loaded (should be called before `start`).
+     */
+    public async resetNetwork(): Promise<void> {
+        logger.info("======== Network resetting ========", NS);
+
+        if (this.stateLoaded) {
+            throw new Error("Cannot reset network after state already loaded");
+        }
+
+        // remove `zoh.save`
+        await rm(this.savePath, { force: true });
+
+        this.deviceTable.clear();
+        this.address16ToAddress64.clear();
+        this.indirectTransmissions.clear();
+        this.sourceRouteTable.clear();
+
+        logger.info("======== Network reset ========", NS);
     }
 
     public async registerTimers(): Promise<void> {
@@ -4336,7 +4377,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         offset += 4;
 
         // reserved
-        offset += SaveConsts.NETWORK_DATA_SIZE - offset; // currently: 962
+        offset = SaveConsts.NETWORK_DATA_SIZE;
 
         state.writeUInt16LE(this.deviceTable.size, offset);
         offset += 2;
@@ -4395,35 +4436,20 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * Afterwards, various keys are pre-hashed and descriptors pre-encoded.
      */
     public async loadState(): Promise<void> {
+        // pre-emptive
+        this.stateLoaded = true;
+
         try {
             const state = await readFile(this.savePath);
-            let offset = 0;
 
-            this.netParams.eui64 = state.readBigUInt64LE(offset);
-            offset += 8;
-            this.netParams.panId = state.readUInt16LE(offset);
-            offset += 2;
-            this.netParams.extendedPANId = state.readBigUInt64LE(offset);
-            offset += 8;
-            this.netParams.channel = state.readUInt8(offset);
-            offset += 1;
-            this.netParams.nwkUpdateId = state.readUInt8(offset);
-            offset += 1;
-            this.netParams.txPower = state.readInt8(offset);
-            offset += 1;
-            this.netParams.networkKey = state.subarray(offset, offset + ZigbeeConsts.SEC_KEYSIZE);
-            offset += ZigbeeConsts.SEC_KEYSIZE;
-            this.netParams.networkKeyFrameCounter = state.readUInt32LE(offset);
-            offset += 4;
-            this.netParams.networkKeySequenceNumber = state.readUInt8(offset);
-            offset += 1;
-            this.netParams.tcKey = state.subarray(offset, offset + ZigbeeConsts.SEC_KEYSIZE);
-            offset += ZigbeeConsts.SEC_KEYSIZE;
-            this.netParams.tcKeyFrameCounter = state.readUInt32LE(offset);
-            offset += 4;
+            if (state.byteLength < SaveConsts.NETWORK_DATA_SIZE) {
+                throw new Error("Invalid save state size");
+            }
+
+            this.netParams = await this.readNetworkState(state);
 
             // reserved
-            offset += SaveConsts.NETWORK_DATA_SIZE - offset; // currently: 962
+            let offset = SaveConsts.NETWORK_DATA_SIZE;
 
             const deviceCount = state.readUInt16LE(offset);
             offset += 2;
@@ -4506,6 +4532,59 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.configAttributes.powerDescriptor = powerDescriptor;
         this.configAttributes.simpleDescriptors = simpleDescriptors;
         this.configAttributes.activeEndpoints = activeEndpoints;
+    }
+
+    /**
+     * Read the current network state in the save file, if any present.
+     * @param readState Optional. For use in places where the state file has already been read.
+     * @returns
+     */
+    public async readNetworkState(readState: Buffer): Promise<NetworkParameters>;
+    public async readNetworkState(): Promise<NetworkParameters | undefined>;
+    public async readNetworkState(readState?: Buffer): Promise<NetworkParameters | undefined> {
+        try {
+            const state = readState ?? (await readFile(this.savePath));
+            let offset = 0;
+
+            const eui64 = state.readBigUInt64LE(offset);
+            offset += 8;
+            const panId = state.readUInt16LE(offset);
+            offset += 2;
+            const extendedPANId = state.readBigUInt64LE(offset);
+            offset += 8;
+            const channel = state.readUInt8(offset);
+            offset += 1;
+            const nwkUpdateId = state.readUInt8(offset);
+            offset += 1;
+            const txPower = state.readInt8(offset);
+            offset += 1;
+            const networkKey = state.subarray(offset, offset + ZigbeeConsts.SEC_KEYSIZE);
+            offset += ZigbeeConsts.SEC_KEYSIZE;
+            const networkKeyFrameCounter = state.readUInt32LE(offset);
+            offset += 4;
+            const networkKeySequenceNumber = state.readUInt8(offset);
+            offset += 1;
+            const tcKey = state.subarray(offset, offset + ZigbeeConsts.SEC_KEYSIZE);
+            offset += ZigbeeConsts.SEC_KEYSIZE;
+            const tcKeyFrameCounter = state.readUInt32LE(offset);
+            offset += 4;
+
+            return {
+                eui64,
+                panId,
+                extendedPANId,
+                channel,
+                nwkUpdateId,
+                txPower,
+                networkKey,
+                networkKeyFrameCounter,
+                networkKeySequenceNumber,
+                tcKey,
+                tcKeyFrameCounter,
+            };
+        } catch {
+            /* empty */
+        }
     }
 
     /**
