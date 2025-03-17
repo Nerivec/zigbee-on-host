@@ -1,5 +1,7 @@
 # ZigBee on Host
 
+[![Version](https://img.shields.io/npm/v/zigbee-on-host.svg)](https://npmjs.org/package/zigbee-on-host)
+
 Open Source ZigBee stack designed to run on a host and communicate with a radio co-processor (RCP).
 
 Current implementation aims for compatibility with OpenThread RCP firmware. That base provides compatibility with any chip manufacturer that supports it (Silabs, TI, etc.) with the only requirements being proper implementation of the STREAM_RAW mechanism of the Spinel protocol (which allows to send raw 802.15.4 frames, including... ZigBee!) and hardware MAC ACKing (much faster).
