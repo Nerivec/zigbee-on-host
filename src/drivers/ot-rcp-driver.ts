@@ -1376,7 +1376,13 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         if (macHeader.source64 === undefined) {
             logger.debug(() => `<=x= MAC ASSOC_REQ[capabilities=${capabilities}] Invalid source64`, NS);
         } else {
-            const [status, newNetwork16] = await this.associate(undefined, macHeader.source64, 0x00 /* initial join */, capabilities);
+            const [status, newNetwork16] = await this.associate(
+                undefined,
+                macHeader.source64,
+                true /* initial join */,
+                capabilities,
+                true /* neighbor */,
+            );
 
             this.pendingAssociations.set(macHeader.source64, {
                 func: async () => {
@@ -2070,7 +2076,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * 05-3474-R #3.4.6
      * Optional
      */
-    public async processZigbeeNWKRejoinReq(data: Buffer, offset: number, _macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
+    public async processZigbeeNWKRejoinReq(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
         const capabilities = data.readUInt8(offset);
         offset += 1;
 
@@ -2079,7 +2085,13 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // XXX: if !header.frameControl.security => Trust Center Rejoin
         //      => Unsecured Packets at the network layer claiming to be from existing neighbors (coordinators, routers or end devices) must not rewrite legitimate data in the nwkNeighborTable.
         //      send NWK key again in that case?
-        const [status, newNetwork16] = await this.associate(nwkHeader.source16!, nwkHeader.source64, 0x01 /* rejoin */, capabilities);
+        const [status, newNetwork16] = await this.associate(
+            nwkHeader.source16!,
+            nwkHeader.source64,
+            false /* rejoin */,
+            capabilities,
+            macHeader.source16 === nwkHeader.source16,
+        );
 
         await this.sendZigbeeNWKRejoinResp(nwkHeader.source16!, newNetwork16, status);
 
@@ -2431,7 +2443,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public async processZigbeeNWKCommissioningRequest(
         data: Buffer,
         offset: number,
-        _macHeader: MACHeader,
+        macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
     ): Promise<number> {
         // 0x00 Initial Join
@@ -2451,8 +2463,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const [status, newNetwork16] = await this.associate(
             nwkHeader.source16!,
             nwkHeader.source64,
-            assocType,
+            assocType === 0x00 /* initial join */,
             capabilities,
+            macHeader.source16 === nwkHeader.source16,
             nwkHeader.frameControl.security /* deny if true */,
         );
 
@@ -3317,7 +3330,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // TODO
         // const [tlvs, tlvsOutOffset] = decodeZigbeeAPSTLVs(data, offset);
 
-        logger.debug(() => `<=== APS UPDATE_DEVICE[device64=${device64} device16=${device16} status=${status}]`, NS);
+        logger.debug(() => `<=== APS UPDATE_DEVICE[device64=${device64} device16=${device16} status=${status} source16=${nwkHeader.source16}]`, NS);
 
         // 0x00 = Standard Device Secured Rejoin
         // 0x01 = Standard Device Unsecured Join
@@ -3325,7 +3338,15 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // 0x03 = Standard Device Trust Center Rejoin
         // 0x04 – 0x07 = Reserved
         if (status === 0x01) {
-            await this.associate(device16, device64, 0x00 /* initial join */, 0x00, false, true /* was allowed by parent */);
+            await this.associate(
+                device16,
+                device64,
+                true /* initial join */,
+                0x00,
+                false /* not neighbor */,
+                false,
+                true /* was allowed by parent */,
+            );
 
             const tApsCmdPayload = Buffer.alloc(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
             let offset = 0;
@@ -3371,7 +3392,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             await this.sendZigbeeAPSTunnel(nwkHeader.source16!, device64, tApsCmdFrame);
         } else if (status === 0x03) {
             // rejoin
-            await this.associate(device16, device64, 0x01 /* rejoin */, 0x00, false, true /* was allowed by parent */);
+            await this.associate(device16, device64, false /* rejoin */, 0x00, false /* not neighbor */, false, true /* was allowed by parent */);
         } else if (status === 0x02) {
             // left
             // TODO: according to spec, this is "informative" only, should not take any action?
@@ -4036,18 +4057,19 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * @param source16
      * @param source64 Assumed valid if assocType === 0x00
-     * @param assocType Type of association
-     * - 0x00 = MAC Association
-     * - 0x01 = Network Rejoin without Security
-     * @param capabilities
-     * @param denyOverride
+     * @param initialJoin If false, rejoin.
+     * @param neighbor True if the device associating is a neighbor of the coordinator
+     * @param capabilities MAC capabilities
+     * @param denyOverride Treat as MACAssociationStatus.PAN_ACCESS_DENIED
+     * @param allowOverride Treat as MACAssociationStatus.SUCCESS
      * @returns
      */
     private async associate(
         source16: number | undefined,
         source64: bigint | undefined,
-        assocType: number,
+        initialJoin: boolean,
         capabilities: number,
+        neighbor: boolean,
         denyOverride?: boolean,
         allowOverride?: boolean,
     ): Promise<[status: MACAssociationStatus | number, newNetwork16: number]> {
@@ -4059,8 +4081,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             newNetwork16 = 0xffff;
             status = MACAssociationStatus.PAN_ACCESS_DENIED;
         } else if (!allowOverride) {
-            if (assocType === 0x00) {
-                // initial join
+            if (initialJoin) {
                 if (this.trustCenterPolicies.allowJoins) {
                     if (source16 === undefined) {
                         // MAC join (no source16)
@@ -4083,7 +4104,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     newNetwork16 = 0xffff;
                     status = MACAssociationStatus.PAN_ACCESS_DENIED;
                 }
-            } else if (assocType === 0x01) {
+            } else {
                 // rejoin
                 // if rejoin, network address will be stored
                 // if (this.trustCenterPolicies.allowRejoinsWithWellKnownKey) {
@@ -4100,12 +4121,12 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
         logger.debug(
             () =>
-                `DEVICE_JOINING[source16=${source16} newNetwork16=${newNetwork16} assocType=${assocType} capabilities=${capabilities}] replying with status=${status}`,
+                `DEVICE_JOINING[source16=${source16} newNetwork16=${newNetwork16} initialJoin=${initialJoin} capabilities=${capabilities}] replying with status=${status}`,
             NS,
         );
 
         if (status === MACAssociationStatus.SUCCESS) {
-            if (assocType === 0x00) {
+            if (initialJoin) {
                 const rxOnWhenIdle = Boolean((capabilities & 0x08) >> 3);
 
                 this.deviceTable.set(source64!, {
@@ -4113,7 +4134,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     rxOnWhenIdle, // TODO: only valid if not triggered by `processZigbeeAPSUpdateDevice`
                     // on initial join success, device is considered joined but unauthorized after MAC Assoc / NWK Commissioning response is sent
                     authorized: false,
-                    neighbor: true, // TODO: parent === 0x0000
+                    neighbor,
                 });
                 this.address16ToAddress64.set(newNetwork16, source64!);
 
@@ -4124,8 +4145,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
                 // force saving after device change
                 await this.savePeriodicState();
-            } else if (assocType === 0x01) {
-                // TODO
+            } else {
+                // TODO: rejoin
             }
         }
 
