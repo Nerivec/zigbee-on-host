@@ -636,7 +636,6 @@ export type Backup = {
 // const SPINEL_ENCRYPTER_EXTRA_DATA_SIZE = 0;
 // const SPINEL_FRAME_BUFFER_SIZE = SPINEL_FRAME_MAX_SIZE + SPINEL_ENCRYPTER_EXTRA_DATA_SIZE;
 
-const CONFIG_COMMAND_TIMEOUT = 10000;
 const CONFIG_TID_MASK = 0x0e;
 const CONFIG_HIGHWATER_MARK = HDLC_TX_CHUNK_SIZE * 4;
 /** The number of OctetDurations until a route discovery expires. */
@@ -923,7 +922,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
         await new Promise<SpinelFrame>((resolve, reject) => {
             this.resetWaiter = {
-                timer: setTimeout(() => reject(new Error(`Timeout after ${CONFIG_COMMAND_TIMEOUT * 3}`)), CONFIG_COMMAND_TIMEOUT * 3),
+                timer: setTimeout(() => reject(new Error("Reset timeout after 5000ms")), 5000),
                 resolve,
             };
         });
@@ -1087,7 +1086,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 macHeader.destination16! !== ZigbeeMACConsts.BCAST_ADDR &&
                 macHeader.destination16! !== ZigbeeConsts.COORDINATOR_ADDRESS
             ) {
-                logger.debug(`<-~- MAC Ignoring frame intended for device ${macHeader.destination16}`, NS);
+                logger.debug(() => `<-~- MAC Ignoring frame intended for device ${macHeader.destination16}`, NS);
                 return;
             }
 
@@ -1103,7 +1102,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                         const [nwkGPHeader, nwkGPHOutOffset] = decodeZigbeeNWKGPHeader(macPayload, nwkGPFCFOutOffset, nwkGPFCF);
 
                         if (nwkGPHeader.sourceId === undefined) {
-                            logger.debug("<-~- NWKGP Ignoring frame without sourceId", NS);
+                            logger.debug(() => "<-~- NWKGP Ignoring frame without sourceId", NS);
                             return;
                         }
 
@@ -1119,16 +1118,26 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
                             this.processZigbeeNWKGPDataFrame(nwkGPPayload, macHeader, nwkGPHeader, metadata?.rssi ?? 0);
                         } else {
-                            logger.debug(`<-~- NWKGP Ignoring frame with type ${nwkGPHeader.frameControl.frameType}`, NS);
+                            logger.debug(() => `<-~- NWKGP Ignoring frame with type ${nwkGPHeader.frameControl.frameType}`, NS);
                             return;
                         }
                     } else {
-                        logger.debug(`<-x- NWKGP Invalid frame addressing ${macFCF.destAddrMode} (${macHeader.destination16})`, NS);
+                        logger.debug(() => `<-x- NWKGP Invalid frame addressing ${macFCF.destAddrMode} (${macHeader.destination16})`, NS);
                         return;
                     }
                 } else {
                     const [nwkFCF, nwkFCFOutOffset] = decodeZigbeeNWKFrameControl(macPayload, 0);
                     const [nwkHeader, nwkHOutOffset] = decodeZigbeeNWKHeader(macPayload, nwkFCFOutOffset, nwkFCF);
+
+                    if (
+                        macHeader.destination16 !== undefined &&
+                        macHeader.destination16 >= ZigbeeConsts.BCAST_MIN &&
+                        nwkHeader.source16 === ZigbeeConsts.COORDINATOR_ADDRESS
+                    ) {
+                        logger.debug(() => "<-~- NWK Ignoring frame from coordinator (broadcast loopback)", NS);
+                        return;
+                    }
+
                     const nwkPayload = decodeZigbeeNWKPayload(
                         macPayload,
                         nwkHOutOffset,
@@ -1143,7 +1152,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                         const [apsFCF, apsFCFOutOffset] = decodeZigbeeAPSFrameControl(nwkPayload, 0);
                         const [apsHeader, apsHOutOffset] = decodeZigbeeAPSHeader(nwkPayload, apsFCFOutOffset, apsFCF);
 
-                        if (apsHeader.frameControl.ackRequest) {
+                        if (apsHeader.frameControl.ackRequest && nwkHeader.source16 !== ZigbeeConsts.COORDINATOR_ADDRESS) {
                             await this.onZigbeeAPSACKRequest(macHeader, nwkHeader, apsHeader);
                         }
 
@@ -1210,18 +1219,15 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         });
     }
 
-    public async getProperty(propertyId: SpinelPropertyId): ReturnType<typeof this.sendCommand> {
+    public async getProperty(propertyId: SpinelPropertyId, timeout = 10000): ReturnType<typeof this.sendCommand> {
         const [data] = writePropertyId(propertyId, 0);
 
-        return await this.sendCommand(SpinelCommandId.PROP_VALUE_GET, data, true, CONFIG_COMMAND_TIMEOUT);
+        return await this.sendCommand(SpinelCommandId.PROP_VALUE_GET, data, true, timeout);
     }
 
-    public async setProperty(payload: Buffer): Promise<[respPropertyId: SpinelPropertyId, data: Buffer]> {
-        const response = await this.sendCommand(SpinelCommandId.PROP_VALUE_SET, payload, true, CONFIG_COMMAND_TIMEOUT);
-        const [respPropertyId, outOffset] = getPackedUInt(response.payload, 0);
-        const data = response.payload.subarray(outOffset);
-
-        return [respPropertyId, data];
+    public async setProperty(payload: Buffer, timeout = 10000): Promise<void> {
+        // LAST_STATUS checked in `onFrame`
+        await this.sendCommand(SpinelCommandId.PROP_VALUE_SET, payload, true, timeout);
     }
 
     // #endregion
@@ -1239,7 +1245,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     });
                 }
 
-                // status is checked in `onFrame` and rejects if not OK, so, avoid parsing twice
                 await this.setProperty(writePropertyStreamRaw(payload, this.streamRawConfig));
 
                 logger.debug(() => `<=== MAC[seqNum=${seqNum} dest16=${dest16} dest64=${dest64}]`, NS);
@@ -2963,7 +2968,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
                 if (!processed) {
                     if (nwkHeader.source16 === undefined && nwkHeader.source64 === undefined) {
-                        logger.debug("<=~= APS Ignoring frame with no sender info", NS);
+                        logger.debug(() => "<=~= APS Ignoring frame with no sender info", NS);
                         return;
                     }
 
@@ -4442,6 +4447,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         try {
             const state = await readFile(this.savePath);
 
+            logger.debug(() => `Loaded state from ${this.savePath} (${state.byteLength} bytes)`, NS);
+
             if (state.byteLength < SaveConsts.NETWORK_DATA_SIZE) {
                 throw new Error("Invalid save state size");
             }
@@ -4453,6 +4460,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
             const deviceCount = state.readUInt16LE(offset);
             offset += 2;
+
+            logger.debug(() => `Current save devices: ${deviceCount}`, NS);
 
             for (let i = 0; i < deviceCount; i++) {
                 const address64 = state.readBigUInt64LE(offset);
@@ -4569,6 +4578,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             const tcKeyFrameCounter = state.readUInt32LE(offset);
             offset += 4;
 
+            logger.debug(() => `Current save network: eui64=${eui64} panId=${panId} channel=${channel}`, NS);
+
             return {
                 eui64,
                 panId,
@@ -4605,11 +4616,18 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * @param nwkDest16
      * @param nwkDest64
      * @param clusterId
-     * @returns The APS counter of the sent frame
+     * @returns
+     * - The APS counter of the sent frame.
+     * - The ZDO counter of the sent frame.
      */
-    public async sendZDO(payload: Buffer, nwkDest16: number, nwkDest64: bigint | undefined, clusterId: number): Promise<number> {
+    public async sendZDO(payload: Buffer, nwkDest16: number, nwkDest64: bigint | undefined, clusterId: number): Promise<[number, number]> {
+        if (nwkDest16 === ZigbeeConsts.COORDINATOR_ADDRESS || nwkDest64 === this.netParams.eui64) {
+            throw new Error("Cannot send ZDO to coordinator");
+        }
+
         // increment and set the ZDO sequence number in outgoing payload
-        payload[0] = this.nextZDOSeqNum();
+        const zdoCounter = this.nextZDOSeqNum();
+        payload[0] = zdoCounter;
 
         logger.debug(() => `===> ZDO[seqNum=${payload[0]} clusterId=${clusterId} nwkDest=${nwkDest16}:${nwkDest64}]`, NS);
 
@@ -4626,7 +4644,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             }, ZigbeeConsts.BCAST_TIME_WINDOW);
         }
 
-        return await this.sendZigbeeAPSData(
+        const apsCounter = await this.sendZigbeeAPSData(
             payload,
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             nwkDest16, // nwkDest16
@@ -4638,6 +4656,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             ZigbeeConsts.ZDO_ENDPOINT, // sourceEndpoint
             undefined, // group
         );
+
+        return [apsCounter, zdoCounter];
     }
 
     /**
@@ -4649,7 +4669,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * @param dest64
      * @param destEp
      * @param sourceEp
-     * @returns The APS counter of the sent frame
+     * @returns The APS counter of the sent frame.
      */
     public async sendUnicast(
         payload: Buffer,
@@ -4660,6 +4680,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         destEp: number,
         sourceEp: number,
     ): Promise<number> {
+        if (dest16 === ZigbeeConsts.COORDINATOR_ADDRESS || dest64 === this.netParams.eui64) {
+            throw new Error("Cannot send unicast to coordinator");
+        }
+
         return await this.sendZigbeeAPSData(
             payload,
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
@@ -4682,7 +4706,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * @param dest16
      * @param destEp
      * @param sourceEp
-     * @returns The APS counter of the sent frame
+     * @returns The APS counter of the sent frame.
      */
     public async sendMulticast(
         payload: Buffer,
@@ -4714,7 +4738,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * @param dest16
      * @param destEp
      * @param sourceEp
-     * @returns The APS counter of the sent frame
+     * @returns The APS counter of the sent frame.
      */
     public async sendBroadcast(
         payload: Buffer,
