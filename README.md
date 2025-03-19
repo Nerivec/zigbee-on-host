@@ -1,6 +1,8 @@
 # ZigBee on Host
 
 [![Version](https://img.shields.io/npm/v/zigbee-on-host.svg)](https://npmjs.org/package/zigbee-on-host)
+[![CI](https://github.com/Nerivec/zigbee-on-host/actions/workflows/ci.yaml/badge.svg)](https://github.com/Nerivec/zigbee-on-host/actions/workflows/ci.yaml)
+[![CodeQL](https://github.com/Nerivec/zigbee-on-host/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Nerivec/zigbee-on-host/actions/workflows/github-code-scanning/codeql)
 
 Open Source ZigBee stack designed to run on a host and communicate with a radio co-processor (RCP).
 
