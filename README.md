@@ -37,9 +37,9 @@ Some quick guidelines to keep the codebase maintainable:
 - [x] Encoding/decoding of Spinel & HDLC protocols
 - [x] Encoding/decoding of MAC frames
 - [x] Encoding/decoding of ZigBee NWK frames
-  - [ ] lacking reference sniffs for multicast (group)
+  - [ ] Lacking reference sniffs for multicast (group)
+    - [Submit some](https://github.com/Nerivec/zigbee-on-host/discussions/14)
 - [x] Encoding/decoding of ZigBee NWK GP frames
-  - [ ] lacking reference sniffs, needs full re-check
 - [x] Encoding/decoding of ZigBee NWK APS frames
 - [x] Network forming
 - [x] Network state saving (de facto backups)
@@ -50,7 +50,6 @@ Some quick guidelines to keep the codebase maintainable:
   - [x] Direct child end device
   - [x] Nested device
 - [x] Indirect transmission mechanism
-  - [ ] Deal with devices lying on `rxOnWhenIdle` property (bad firmware, resulting in transmission type mismatch)
 - [x] Source routing
 - [ ] Coordinator LQI/Routing tables (for network map data on coordinator side)
 - [ ] LQI reporting in messages (currently showing RSSI - in dBm)
@@ -62,6 +61,7 @@ Some quick guidelines to keep the codebase maintainable:
 - [ ] Metrics/Statistics
 - [ ] Big cleanup of unused / never will use!
 - [ ] Loads of testing!
+- [ ] Firmware stability testing
 - [ ] Optimize firmware building for this usage
 
 And likely more, and of course a bunch of `TODO`s in the code!
@@ -69,13 +69,17 @@ And likely more, and of course a bunch of `TODO`s in the code!
 ### Testing
 
 Use the appropriate OpenThread RCP firmware:
-- Silabs adapters: https://github.com/Nerivec/silabs-firmware-builder/releases
-- TI adapters: https://github.com/Koenkk/OpenThread-TexasInstruments-firmware/releases
+- Silicon Labs adapters: https://github.com/Nerivec/silabs-firmware-builder/releases
+- Texas Instruments adapters: https://github.com/Koenkk/OpenThread-TexasInstruments-firmware/releases
+- Nordic Semiconductor adapters: https://github.com/Nerivec/zigbee-on-host/discussions/18
 
 #### Zigbee2MQTT
 
 Zigbee2MQTT 2.1.3-dev (after [PR #26742](https://github.com/Koenkk/zigbee2mqtt/pull/26742)) and later versions should allow the use of the `zoh` adapter.
 Make sure you followed the above steps to get the proper firmware, then configure your `configuration.yaml`, including:
+
+> [!TIP]
+> It is currently recommended you use Zigbee2MQTT `latest-dev` (`edge`) to get the latest fixes when testing this implementation!
 
 ```yaml
 serial:
@@ -89,8 +93,7 @@ serial:
 
 > [!TIP]
 > ZigBee on Host saves the current state of the network in the file `zoh.save`. _It is similar to the NVRAM of an NCP coordinator._
-> This file contains everything needed to re-establish the network on start, hence, a `coordinator_backup.json` is never created.
-> For Zigbee2MQTT, this file is alongside the `database.db` in the `data` folder.
+> This file contains everything needed to re-establish the network on start, hence, a `coordinator_backup.json` is never created by Zigbee2MQTT. It is located alongside the `database.db` in the `data` folder.
 
 > [!TIP]
 > The EUI64 (IEEE address) in the firmware of the coordinator is ignored in this mode. A static one is used instead (set by Zigbee2MQTT), allowing you to change coordinators at will on the same network (although you may encounter device-related troubles when radio specs vary wildly).
