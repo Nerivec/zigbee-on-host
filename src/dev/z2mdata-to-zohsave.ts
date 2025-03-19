@@ -194,13 +194,12 @@ async function convert(dataPath: string): Promise<void> {
 
         driver.deviceTable.set(BigInt(device.ieeeAddr), {
             address16: device.nwkAddr,
-            rxOnWhenIdle:
-                device.powerSource === "Mains (single phase)" ||
-                device.powerSource === "Mains (3 phase)" ||
-                device.powerSource === "Emergency mains and transfer switch" ||
-                device.powerSource === "Emergency mains constantly powered", // `powerSource` might be undefined, or wrong, so this could be... wrong
-            authorized: device.interviewCompleted === true, // technically not correct, but reasonable expectation
-            neighbor: backupDevice?.is_child !== true, // add support for not knowing this in driver (re-evaluation)
+            // this could be... wrong, devices not always use this properly
+            rxOnWhenIdle: device.type === "Router" && device.powerSource !== "Battery",
+            // technically not correct, but reasonable expectation
+            authorized: device.interviewCompleted === true,
+            // add support for not knowing this in driver (re-evaluation)
+            neighbor: backupDevice?.is_child !== true,
         });
     }
 
