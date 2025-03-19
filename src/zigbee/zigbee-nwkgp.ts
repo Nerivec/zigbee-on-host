@@ -138,10 +138,12 @@ export const enum ZigbeeNWKGPCommandId {
     SUCCESS = 0xe2,
     CHANNEL_REQUEST = 0xe3,
     APPLICATION_DESCRIPTION = 0xe4,
+    //-- sent to GPD
     COMMISSIONING_REPLY = 0xf0,
     WRITE_ATTRIBUTES = 0xf1,
     READ_ATTRIBUTES = 0xf2,
     CHANNEL_CONFIGURATION = 0xf3,
+    ZCL_TUNNELING_TO_GPD = 0x6,
 }
 
 /**

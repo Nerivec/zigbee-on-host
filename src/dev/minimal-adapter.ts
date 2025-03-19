@@ -103,7 +103,7 @@ export class MinimalAdapter {
             const hostname = pathUrl.hostname;
             const port = Number.parseInt(pathUrl.port, 10);
 
-            logger.debug(`Opening TCP socket with ${hostname}:${port}`, NS);
+            logger.debug(() => `Opening TCP socket with ${hostname}:${port}`, NS);
 
             this.socketPort = new Socket();
 
@@ -121,7 +121,7 @@ export class MinimalAdapter {
                 };
 
                 this.socketPort!.on("connect", () => {
-                    logger.debug("Socket connected", NS);
+                    logger.debug(() => "Socket connected", NS);
                 });
                 this.socketPort!.on("ready", (): void => {
                     logger.info("Socket ready", NS);

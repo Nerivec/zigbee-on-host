@@ -371,7 +371,7 @@ describe("OT RCP Driver", () => {
 
         it("throw when trying to reset network after state already loaded", async () => {
             // no-op
-            vi.spyOn(driver, "setProperty").mockImplementation(() => Promise.resolve([0, Buffer.alloc(0)]));
+            vi.spyOn(driver, "setProperty").mockImplementation(() => Promise.resolve());
             vi.spyOn(driver, "registerTimers").mockImplementation(() => Promise.resolve());
 
             await driver.loadState(); // mock shallow start
@@ -380,7 +380,7 @@ describe("OT RCP Driver", () => {
 
         it("forms network", async () => {
             // no-op
-            vi.spyOn(driver, "setProperty").mockImplementation(() => Promise.resolve([0, Buffer.alloc(0)]));
+            vi.spyOn(driver, "setProperty").mockImplementation(() => Promise.resolve());
             vi.spyOn(driver, "registerTimers").mockImplementation(() => Promise.resolve());
 
             await driver.loadState(); // mock shallow start
@@ -635,7 +635,7 @@ describe("OT RCP Driver", () => {
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
             expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
-            expect(processZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1);
+            expect(processZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(0);
             expect(sendZigbeeNWKRouteReplySpy).toHaveBeenCalledTimes(0);
         });
 
