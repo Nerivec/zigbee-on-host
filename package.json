@@ -1,6 +1,6 @@
 {
     "name": "zigbee-on-host",
-    "version": "0.1.3",
+    "version": "0.1.4",
     "description": "ZigBee stack designed to run on a host and communicate with a radio co-processor (RCP)",
     "engines": {
         "node": ">=20.17.0"
@@ -18,6 +18,8 @@
         "check:ci": "biome check .",
         "clean": "rm -rf dist *.tsbuildinfo",
         "dev:cli": "node dist/dev/cli.js",
+        "dev:z2z": "node dist/dev/z2mdata-to-zohsave.js",
+        "dev:z2r": "node dist/dev/zohsave-to-readable.js",
         "prepack": "npm run clean && npm run build:prod"
     },
     "repository": {
