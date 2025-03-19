@@ -98,9 +98,13 @@ serial:
 > [!TIP]
 > The EUI64 (IEEE address) in the firmware of the coordinator is ignored in this mode. A static one is used instead (set by Zigbee2MQTT), allowing you to change coordinators at will on the same network (although you may encounter device-related troubles when radio specs vary wildly).
 
-#### CLI
+#### CLI & Utils
 
-> This is intended for developers to quickly test specific features, like joining. Currently, the CLI is output-only.
+Clone the repository.
+
+```bash
+git clone https://github.com/Nerivec/zigbee-on-host
+```
 
 Install dev dependencies and build:
 
@@ -109,17 +113,35 @@ npm ci
 npm run build
 ```
 
+> [!IMPORTANT]
+> Running `npm run build:prod` omits the `src/dev` directory (for production). If you do, you will not be able to use `dev:*` commands.
+
+> [!TIP]
+> If having issues with building, try removing the `*.tsbuildinfo` incremental compilation files (or run `npm run clean` first).
+
+##### Minimal adapter
+
+> This is intended for developers to quickly test specific features, like joining. Currently, the CLI is output-only.
+
 Configure parameters in `dist/dev/conf.json` then start CLI (next start will use `zoh.save` file, if not removed):
 
 ```bash
 npm run dev:cli
 ```
 
-> [!TIP]
-> Running `npm run build:prod` omits the `src/dev` directory.
+##### Utils
+
+###### Create a 'zoh.save' from the content of a Zigbee2MQTT data folder
+
+```bash
+npm run dev:z2z ./path/to/data/
+```
 
 > [!TIP]
-> If having issues with building, try removing the `*.tsbuildinfo` incremental compilation files.
+> This allows you to quickly take over a network created with `zstack` or `ember`. You then just need to change the `configuration.yaml` to `adapter: zoh` and `baudrate: 460800` (and `port` as appropriate).
 
-> [!TIP]
-> For testing purposes, you can create a network with a regular NCP, then take it over with the RCP by copying all network settings. This allows to bypass the join steps as needed.
+###### Print and save the content of the 'zoh.save' in the given directory in human-readable format (as JSON, in same directory)
+
+```bash
+npm run dev:z2r ./path/to/data/
+```
