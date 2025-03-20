@@ -66,14 +66,14 @@ Some quick guidelines to keep the codebase maintainable:
 
 And likely more, and of course a bunch of `TODO`s in the code!
 
-### Testing
+## Testing
 
 Use the appropriate OpenThread RCP firmware:
 - Silicon Labs adapters: https://github.com/Nerivec/silabs-firmware-builder/releases
 - Texas Instruments adapters: https://github.com/Koenkk/OpenThread-TexasInstruments-firmware/releases
 - Nordic Semiconductor adapters: https://github.com/Nerivec/zigbee-on-host/discussions/18
 
-#### Zigbee2MQTT
+### Zigbee2MQTT
 
 Zigbee2MQTT 2.1.3-dev (after [PR #26742](https://github.com/Koenkk/zigbee2mqtt/pull/26742)) and later versions should allow the use of the `zoh` adapter.
 Make sure you followed the above steps to get the proper firmware, then configure your `configuration.yaml`, including:
@@ -98,12 +98,13 @@ serial:
 > [!TIP]
 > The EUI64 (IEEE address) in the firmware of the coordinator is ignored in this mode. A static one is used instead (set by Zigbee2MQTT), allowing you to change coordinators at will on the same network (although you may encounter device-related troubles when radio specs vary wildly).
 
-#### CLI & Utils
+### CLI & Utils
 
 Clone the repository.
 
 ```bash
 git clone https://github.com/Nerivec/zigbee-on-host
+cd zigbee-on-host
 ```
 
 Install dev dependencies and build:
@@ -119,7 +120,7 @@ npm run build
 > [!TIP]
 > If having issues with building, try removing the `*.tsbuildinfo` incremental compilation files (or run `npm run clean` first).
 
-##### Minimal adapter
+#### Minimal adapter
 
 > This is intended for developers to quickly test specific features, like joining. Currently, the CLI is output-only.
 
@@ -129,9 +130,9 @@ Configure parameters in `dist/dev/conf.json` then start CLI (next start will use
 npm run dev:cli
 ```
 
-##### Utils
+#### Utils
 
-###### Create a 'zoh.save' from the content of a Zigbee2MQTT data folder
+##### Create a 'zoh.save' from the content of a Zigbee2MQTT data folder
 
 ```bash
 npm run dev:z2z ./path/to/data/
@@ -140,8 +141,40 @@ npm run dev:z2z ./path/to/data/
 > [!TIP]
 > This allows you to quickly take over a network created with `zstack` or `ember`. You then just need to change the `configuration.yaml` to `adapter: zoh` and `baudrate: 460800` (and `port` as appropriate).
 
-###### Print and save the content of the 'zoh.save' in the given directory in human-readable format (as JSON, in same directory)
+##### Print and save the content of the 'zoh.save' in the given directory in human-readable format (as JSON, in same directory)
 
 ```bash
 npm run dev:z2r ./path/to/data/
+```
+
+##### Using 'Docker.dev' and 'compose.dev.yaml'
+
+###### Pre-requisites
+
+```bash
+git clone https://github.com/Nerivec/zigbee-on-host
+cd zigbee-on-host
+docker compose -f docker/compose.dev.yaml up -d --pull never
+docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm ci
+docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm run build
+```
+
+###### Running util commands
+
+Create 'zoh.save' (details above):
+
+```bash
+docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm run dev:z2z ./path/to/data
+```
+
+Print readable 'zoh.save' content (details above):
+
+```bash
+docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm run dev:z2r ./path/to/data
+```
+
+###### Stopping & removing the container
+
+```bash
+docker compose -f docker/compose.dev.yaml down
 ```

@@ -1,6 +1,6 @@
 {
     "adapter": {
-        "path": "COM4",
+        "path": "/dev/ttyACM0",
         "baudRate": 460800,
         "rtscts": true
     },

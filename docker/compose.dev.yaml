@@ -1,0 +1,11 @@
+services:
+    zigbee-on-host:
+        container_name: zigbee-on-host
+        image: nerivec/zigbee-on-host:dev
+        build:
+            context: ../
+            dockerfile: docker/Dockerfile.dev
+        volumes:
+            - ../:/app
+        # devices:
+        #     - /dev/serial/by-id/<serial-id>:/dev/ttyACM0
