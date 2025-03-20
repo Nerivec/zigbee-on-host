@@ -21,7 +21,5 @@ export default defineConfig({
                 100: true,
             },
         },
-        // https://github.com/vitest-dev/vitest/issues/7285
-        reporters: [["default", { summary: false }]],
     },
 });
