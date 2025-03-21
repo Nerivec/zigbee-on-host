@@ -1123,12 +1123,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                             return;
                         }
 
-                        if (nwkGPHeader.frameControl.frameType === ZigbeeNWKGPFrameType.DATA && nwkGPHeader.sourceId === undefined) {
-                            // TODO: is this always proper?
-                            logger.debug(() => "<-~- NWKGP Ignoring DATA frame without srcId", NS);
-                            return;
-                        }
-
                         if (this.checkZigbeeNWKGPDuplicate(macHeader, nwkGPHeader)) {
                             logger.debug(
                                 () =>
@@ -2585,26 +2579,30 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         return duplicate;
     }
 
+    /**
+     * See 14-0563-19 #A.3.8.2
+     * @param data
+     * @param macHeader
+     * @param nwkHeader
+     * @param rssi
+     * @returns
+     */
     public processZigbeeNWKGPFrame(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, rssi: number): void {
         let offset = 0;
         const cmdId = data.readUInt8(offset);
         offset += 1;
         const framePayload = data.subarray(offset);
 
-        if (!this.gpCommissioningMode && (cmdId === ZigbeeNWKGPCommandId.CHANNEL_REQUEST || cmdId === ZigbeeNWKGPCommandId.COMMISSIONING)) {
-            logger.debug(
-                () =>
-                    `<=~= NWKGP[cmdId=${cmdId} dstPANId=${macHeader.destinationPANId} dst64=${macHeader.destination64} srcId=${nwkHeader.sourceId}] Not in commissioning mode`,
-                NS,
-            );
+        if (
+            !this.gpCommissioningMode &&
+            (cmdId === ZigbeeNWKGPCommandId.COMMISSIONING || cmdId === ZigbeeNWKGPCommandId.SUCCESS || cmdId === ZigbeeNWKGPCommandId.CHANNEL_REQUEST)
+        ) {
+            logger.debug(() => `<=~= NWKGP[cmdId=${cmdId} src=${nwkHeader.sourceId}:${macHeader.source64}] Not in commissioning mode`, NS);
 
             return;
         }
 
-        logger.debug(
-            () => `<=== NWKGP[cmdId=${cmdId} dstPANId=${macHeader.destinationPANId} dst64=${macHeader.destination64} srcId=${nwkHeader.sourceId}]`,
-            NS,
-        );
+        logger.debug(() => `<=== NWKGP[cmdId=${cmdId} src=${nwkHeader.sourceId}:${macHeader.source64}]`, NS);
 
         setImmediate(() => {
             this.emit("gpFrame", cmdId, framePayload, macHeader, nwkHeader, rssi);
