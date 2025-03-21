@@ -4085,6 +4085,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             this.macAssociationPermit = macAssociationPermit;
 
             this.allowJoinTimeout = setTimeout(this.disallowJoins.bind(this), Math.min(duration, 0xfe) * 1000);
+
+            logger.info(`Allowed joins for ${duration} seconds (self=${macAssociationPermit})`, NS);
         } else {
             this.disallowJoins();
         }
@@ -4099,6 +4101,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.trustCenterPolicies.allowJoins = false;
         this.trustCenterPolicies.allowRejoinsWithWellKnownKey = true;
         this.macAssociationPermit = false;
+
+        logger.info("Disallowed joins", NS);
     }
 
     /**
@@ -4110,6 +4114,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             this.gpCommissioningMode = true;
 
             this.gpCommissioningWindowTimeout = setTimeout(this.gpExitCommissioningMode.bind(this), Math.min(commissioningWindow, 0xfe) * 1000);
+
+            logger.info(`Entered Green Power commissioning mode for ${commissioningWindow} seconds`, NS);
         } else {
             this.gpExitCommissioningMode();
         }
@@ -4119,6 +4125,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         clearTimeout(this.gpCommissioningWindowTimeout);
 
         this.gpCommissioningMode = false;
+
+        logger.info("Exited Green Power commissioning mode", NS);
     }
 
     /**
