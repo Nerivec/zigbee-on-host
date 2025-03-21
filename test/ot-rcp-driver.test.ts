@@ -1479,5 +1479,45 @@ describe("OT RCP Driver", () => {
 
             expect(emitSpy).toHaveBeenCalledTimes(0);
         });
+
+        it("receives duplicate frame NET5_GP_CHANNEL_REQUEST_BCAST", async () => {
+            driver.gpEnterCommissioningMode(0xfe); // in commissioning mode
+
+            const emitSpy = vi.spyOn(driver, "emit");
+            const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
+
+            driver.parser._transform(makeSpinelStreamRaw(0, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(100);
+
+            driver.parser._transform(makeSpinelStreamRaw(0, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(100);
+
+            expect(emitSpy).toHaveBeenCalledTimes(1);
+            expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(2);
+
+            // dupe notification frames from live logs
+            driver.parser._transform(
+                Buffer.from(
+                    "7e8006711800010802ffffffff8c30d755550102020000683e1b87c46921c98000000a0014ff8e54cb990000000001000005000000000000979a7e",
+                    "hex",
+                ),
+                "utf8",
+                () => {},
+            );
+            await vi.advanceTimersByTimeAsync(100);
+
+            driver.parser._transform(
+                Buffer.from(
+                    "7e8006711800010802ffffffff8c30d755550102020000683e1b87c46921c98000000a0014ff5e5ccb99000000000100000500000000000060a27e",
+                    "hex",
+                ),
+                "utf8",
+                () => {},
+            );
+            await vi.advanceTimersByTimeAsync(100);
+
+            expect(emitSpy).toHaveBeenCalledTimes(2);
+            expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(4);
+        });
     });
 });

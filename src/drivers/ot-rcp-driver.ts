@@ -727,8 +727,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     private allowJoinTimeout: NodeJS.Timeout | undefined;
 
     //----- Green Power (see 14-0563-18)
+
     private gpCommissioningMode: boolean;
     private gpCommissioningWindowTimeout: NodeJS.Timeout | undefined;
+    private gpLastMACSequenceNumber: number;
+    private gpLastSecurityFrameCounter: number;
 
     //---- NWK
 
@@ -798,7 +801,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             allowVirtualDevices: false,
         };
         this.macAssociationPermit = false;
+
+        //---- Green Power
         this.gpCommissioningMode = false;
+        this.gpLastMACSequenceNumber = -1;
+        this.gpLastSecurityFrameCounter = -1;
 
         //---- NWK
         this.netParams = netParams;
@@ -1119,6 +1126,15 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                         if (nwkGPHeader.frameControl.frameType === ZigbeeNWKGPFrameType.DATA && nwkGPHeader.sourceId === undefined) {
                             // TODO: is this always proper?
                             logger.debug(() => "<-~- NWKGP Ignoring DATA frame without srcId", NS);
+                            return;
+                        }
+
+                        if (this.checkZigbeeNWKGPDuplicate(macHeader, nwkGPHeader)) {
+                            logger.debug(
+                                () =>
+                                    `<-~- NWKGP Ignoring duplicate frame macSeqNum=${macHeader.sequenceNumber} nwkGPFC=${nwkGPHeader.securityFrameCounter}`,
+                                NS,
+                            );
                             return;
                         }
 
@@ -2548,6 +2564,26 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     // #endregion
 
     // #region Zigbee NWK GP layer
+
+    public checkZigbeeNWKGPDuplicate(macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader): boolean {
+        let duplicate = false;
+
+        if (nwkHeader.securityFrameCounter !== undefined) {
+            if (nwkHeader.securityFrameCounter === this.gpLastSecurityFrameCounter) {
+                duplicate = true;
+            }
+
+            this.gpLastSecurityFrameCounter = nwkHeader.securityFrameCounter;
+        } else if (macHeader.sequenceNumber !== undefined) {
+            if (macHeader.sequenceNumber === this.gpLastMACSequenceNumber) {
+                duplicate = true;
+            }
+
+            this.gpLastMACSequenceNumber = macHeader.sequenceNumber;
+        }
+
+        return duplicate;
+    }
 
     public processZigbeeNWKGPFrame(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, rssi: number): void {
         let offset = 0;
