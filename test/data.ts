@@ -2040,3 +2040,48 @@ export const NET4_ROUTE_RECORD_FROM_4B8E_RELAY_CB47 = Buffer.from([
 ]);
 
 // #endregion
+
+// #region
+
+// GP-stuff from `ember` Zigbee2MQTT 2.1.3-dev (commit #ef5b3de5)
+
+// export const NET5_TC_KEY = Buffer.from([0x5a, 0x69, 0x67, 0x42, 0x65, 0x65, 0x41, 0x6c, 0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x30, 0x39]);
+export const NET5_PAN_ID = 0xe6b4;
+export const NET5_EXTENDED_PAN_ID = Buffer.from([0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd]);
+export const NET5_NETWORK_KEY = Buffer.from([0x43, 0xa3, 0x0b, 0xe5, 0x3f, 0xee, 0xd5, 0x21, 0x04, 0xfd, 0x82, 0xd6, 0x57, 0xa3, 0xcb, 0x4a]);
+export const NET5_COORD_EUI64 = Buffer.from([0x6c, 0x5c, 0xb1, 0xff, 0xfe, 0xfc, 0x78, 0x0a]);
+
+/**
+ * IEEE 802.15.4 Data, Dst: Broadcast
+ *   Frame Control Field: 0x0801, Frame Type: Data, Destination Addressing Mode: Short/16-bit, Frame Version: IEEE Std 802.15.4-2003, Source Addressing Mode: None
+ *       .... .... .... .001 = Frame Type: Data (0x1)
+ *       .... .... .... 0... = Security Enabled: False
+ *       .... .... ...0 .... = Frame Pending: False
+ *       .... .... ..0. .... = Acknowledge Request: False
+ *       .... .... .0.. .... = PAN ID Compression: False
+ *       .... .... 0... .... = Reserved: False
+ *       .... ...0 .... .... = Sequence Number Suppression: False
+ *       .... ..0. .... .... = Information Elements Present: False
+ *       .... 10.. .... .... = Destination Addressing Mode: Short/16-bit (0x2)
+ *       ..00 .... .... .... = Frame Version: IEEE Std 802.15.4-2003 (0)
+ *       00.. .... .... .... = Source Addressing Mode: None (0x0)
+ *   Sequence Number: 1
+ *   Destination PAN: 0xffff
+ *   Destination: 0xffff
+ *   FCS: 0x7808 (Correct)
+ *
+ * ZGP stub NWK header Maintenance
+ *   Frame Control Field: 0x4d, Frame Type: Maintenance, Auto Commissioning Maintenance
+ *       .... ..01 = Frame Type: Maintenance (0x1)
+ *       ..00 11.. = Protocol Version: 3
+ *       .1.. .... = Auto Commissioning: True
+ *       0... .... = NWK Frame Extension: False
+ *   Command Frame: Channel Request
+ *       ZGPD Command ID: Channel Request (0xe3)
+ *       Channel Toggling Behaviour: 0x85
+ *           .... 0101 = Rx channel in the next attempt: 0x5
+ *           1000 .... = Rx channel in the second next attempt: 0x8
+ */
+export const NET5_GP_CHANNEL_REQUEST_BCAST = Buffer.from([0x1, 0x8, 0x1, 0xff, 0xff, 0xff, 0xff, 0x4d, 0xe3, 0x85, 0x8, 0x78]);
+
+// #endregion

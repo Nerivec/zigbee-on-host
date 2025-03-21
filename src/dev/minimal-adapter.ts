@@ -222,6 +222,7 @@ export class MinimalAdapter {
         await this.driver.formNetwork();
         // allow joins on start for 254 seconds
         this.driver.allowJoins(0xfe, true);
+        this.driver.gpEnterCommissioningMode(0xfe);
 
         this.driver.on("frame", this.onFrame.bind(this));
         this.driver.on("deviceJoined", this.onDeviceJoined.bind(this));

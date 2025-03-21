@@ -73,6 +73,7 @@ import {
     encodeZigbeeNWKFrame,
 } from "../zigbee/zigbee-nwk.js";
 import {
+    ZigbeeNWKGPCommandId,
     ZigbeeNWKGPFrameType,
     type ZigbeeNWKGPHeader,
     decodeZigbeeNWKGPFrameControl,
@@ -723,7 +724,14 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     private readonly trustCenterPolicies: TrustCenterPolicies;
     private macAssociationPermit: boolean;
-    private permitJoinTimeout: NodeJS.Timeout | undefined;
+    private allowJoinTimeout: NodeJS.Timeout | undefined;
+
+    //----- Green Power (see 14-0563-18)
+
+    private gpCommissioningMode: boolean;
+    private gpCommissioningWindowTimeout: NodeJS.Timeout | undefined;
+    private gpLastMACSequenceNumber: number;
+    private gpLastSecurityFrameCounter: number;
 
     //---- NWK
 
@@ -793,6 +801,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             allowVirtualDevices: false,
         };
         this.macAssociationPermit = false;
+
+        //---- Green Power
+        this.gpCommissioningMode = false;
+        this.gpLastMACSequenceNumber = -1;
+        this.gpLastSecurityFrameCounter = -1;
 
         //---- NWK
         this.netParams = netParams;
@@ -934,6 +947,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         logger.info("======== Driver stopping ========", NS);
 
         this.disallowJoins();
+        this.gpExitCommissioningMode();
 
         // pre-emptive
         this.networkUp = false;
@@ -1101,26 +1115,33 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                         const [nwkGPFCF, nwkGPFCFOutOffset] = decodeZigbeeNWKGPFrameControl(macPayload, 0);
                         const [nwkGPHeader, nwkGPHOutOffset] = decodeZigbeeNWKGPHeader(macPayload, nwkGPFCFOutOffset, nwkGPFCF);
 
-                        if (nwkGPHeader.sourceId === undefined) {
-                            logger.debug(() => "<-~- NWKGP Ignoring frame without srcId", NS);
-                            return;
-                        }
-
-                        if (nwkGPHeader.frameControl.frameType === ZigbeeNWKGPFrameType.DATA) {
-                            const nwkGPPayload = decodeZigbeeNWKGPPayload(
-                                macPayload,
-                                nwkGPHOutOffset,
-                                this.netParams.networkKey,
-                                macHeader.source64,
-                                nwkGPFCF,
-                                nwkGPHeader,
-                            );
-
-                            this.processZigbeeNWKGPDataFrame(nwkGPPayload, macHeader, nwkGPHeader, metadata?.rssi ?? 0);
-                        } else {
+                        if (
+                            nwkGPHeader.frameControl.frameType !== ZigbeeNWKGPFrameType.DATA &&
+                            nwkGPHeader.frameControl.frameType !== ZigbeeNWKGPFrameType.MAINTENANCE
+                        ) {
                             logger.debug(() => `<-~- NWKGP Ignoring frame with type ${nwkGPHeader.frameControl.frameType}`, NS);
                             return;
                         }
+
+                        if (this.checkZigbeeNWKGPDuplicate(macHeader, nwkGPHeader)) {
+                            logger.debug(
+                                () =>
+                                    `<-~- NWKGP Ignoring duplicate frame macSeqNum=${macHeader.sequenceNumber} nwkGPFC=${nwkGPHeader.securityFrameCounter}`,
+                                NS,
+                            );
+                            return;
+                        }
+
+                        const nwkGPPayload = decodeZigbeeNWKGPPayload(
+                            macPayload,
+                            nwkGPHOutOffset,
+                            this.netParams.networkKey,
+                            macHeader.source64,
+                            nwkGPFCF,
+                            nwkGPHeader,
+                        );
+
+                        this.processZigbeeNWKGPFrame(nwkGPPayload, macHeader, nwkGPHeader, metadata?.rssi ?? 0);
                     } else {
                         logger.debug(() => `<-x- NWKGP Invalid frame addressing ${macFCF.destAddrMode} (${macHeader.destination16})`, NS);
                         return;
@@ -2538,16 +2559,50 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     // #region Zigbee NWK GP layer
 
-    public processZigbeeNWKGPDataFrame(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, rssi: number): void {
+    public checkZigbeeNWKGPDuplicate(macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader): boolean {
+        let duplicate = false;
+
+        if (nwkHeader.securityFrameCounter !== undefined) {
+            if (nwkHeader.securityFrameCounter === this.gpLastSecurityFrameCounter) {
+                duplicate = true;
+            }
+
+            this.gpLastSecurityFrameCounter = nwkHeader.securityFrameCounter;
+        } else if (macHeader.sequenceNumber !== undefined) {
+            if (macHeader.sequenceNumber === this.gpLastMACSequenceNumber) {
+                duplicate = true;
+            }
+
+            this.gpLastMACSequenceNumber = macHeader.sequenceNumber;
+        }
+
+        return duplicate;
+    }
+
+    /**
+     * See 14-0563-19 #A.3.8.2
+     * @param data
+     * @param macHeader
+     * @param nwkHeader
+     * @param rssi
+     * @returns
+     */
+    public processZigbeeNWKGPFrame(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, rssi: number): void {
         let offset = 0;
         const cmdId = data.readUInt8(offset);
         offset += 1;
         const framePayload = data.subarray(offset);
 
-        logger.debug(
-            () => `<=== NWKGP[cmdId=${cmdId} dstPANId=${macHeader.destinationPANId} dst64=${macHeader.destination64} srcId=${nwkHeader.sourceId}]`,
-            NS,
-        );
+        if (
+            !this.gpCommissioningMode &&
+            (cmdId === ZigbeeNWKGPCommandId.COMMISSIONING || cmdId === ZigbeeNWKGPCommandId.SUCCESS || cmdId === ZigbeeNWKGPCommandId.CHANNEL_REQUEST)
+        ) {
+            logger.debug(() => `<=~= NWKGP[cmdId=${cmdId} src=${nwkHeader.sourceId}:${macHeader.source64}] Not in commissioning mode`, NS);
+
+            return;
+        }
+
+        logger.debug(() => `<=== NWKGP[cmdId=${cmdId} src=${nwkHeader.sourceId}:${macHeader.source64}]`, NS);
 
         setImmediate(() => {
             this.emit("gpFrame", cmdId, framePayload, macHeader, nwkHeader, rssi);
@@ -4020,16 +4075,18 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * @param duration The length of time in seconds during which the trust center will allow joins.
      * The value 0x00 and 0xff indicate that permission is disabled or enabled, respectively, without a specified time limit.
      * 0xff is clamped to 0xfe for security reasons
-     * @param macAssociationPermit If true, also allow association on coordinator itself. If false, only change TC policies
+     * @param macAssociationPermit If true, also allow association on coordinator itself.
      */
     public allowJoins(duration: number, macAssociationPermit: boolean): void {
         if (duration > 0) {
-            clearTimeout(this.permitJoinTimeout);
+            clearTimeout(this.allowJoinTimeout);
             this.trustCenterPolicies.allowJoins = true;
             this.trustCenterPolicies.allowRejoinsWithWellKnownKey = true;
             this.macAssociationPermit = macAssociationPermit;
 
-            this.permitJoinTimeout = setTimeout(this.disallowJoins.bind(this), Math.min(duration, 0xfe) * 1000);
+            this.allowJoinTimeout = setTimeout(this.disallowJoins.bind(this), Math.min(duration, 0xfe) * 1000);
+
+            logger.info(`Allowed joins for ${duration} seconds (self=${macAssociationPermit})`, NS);
         } else {
             this.disallowJoins();
         }
@@ -4039,11 +4096,37 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * Revert allowing joins (keeps `allowRejoinsWithWellKnownKey=true`).
      */
     public disallowJoins(): void {
-        clearTimeout(this.permitJoinTimeout);
+        clearTimeout(this.allowJoinTimeout);
 
         this.trustCenterPolicies.allowJoins = false;
         this.trustCenterPolicies.allowRejoinsWithWellKnownKey = true;
         this.macAssociationPermit = false;
+
+        logger.info("Disallowed joins", NS);
+    }
+
+    /**
+     * Put the coordinator in Green Power commissioning mode.
+     * @param commissioningWindow Defaults to 180 if unspecified. Max 254
+     */
+    public gpEnterCommissioningMode(commissioningWindow = 180): void {
+        if (commissioningWindow > 0) {
+            this.gpCommissioningMode = true;
+
+            this.gpCommissioningWindowTimeout = setTimeout(this.gpExitCommissioningMode.bind(this), Math.min(commissioningWindow, 0xfe) * 1000);
+
+            logger.info(`Entered Green Power commissioning mode for ${commissioningWindow} seconds`, NS);
+        } else {
+            this.gpExitCommissioningMode();
+        }
+    }
+
+    public gpExitCommissioningMode(): void {
+        clearTimeout(this.gpCommissioningWindowTimeout);
+
+        this.gpCommissioningMode = false;
+
+        logger.info("Exited Green Power commissioning mode", NS);
     }
 
     /**

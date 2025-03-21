@@ -38,6 +38,11 @@ import {
     NET4_ROUTE_RECORD_FROM_91D2_NO_RELAY,
     NET4_ROUTE_RECORD_FROM_96BA_NO_RELAY,
     NET4_ROUTE_RECORD_FROM_6887_RELAY_96BA,
+    NET5_COORD_EUI64,
+    NET5_EXTENDED_PAN_ID,
+    NET5_GP_CHANNEL_REQUEST_BCAST,
+    NET5_NETWORK_KEY,
+    NET5_PAN_ID,
     NETDEF_ACK_FRAME_FROM_COORD,
     NETDEF_ACK_FRAME_TO_COORD,
     NETDEF_EXTENDED_PAN_ID,
@@ -131,6 +136,9 @@ describe("OT RCP Driver", () => {
     });
 
     afterEach(async () => {
+        driver?.disallowJoins();
+        driver?.gpExitCommissioningMode();
+
         await endWireshark();
     });
 
@@ -639,12 +647,14 @@ describe("OT RCP Driver", () => {
             expect(sendZigbeeNWKRouteReplySpy).toHaveBeenCalledTimes(0);
         });
 
-        it("receives frame NETDEF_ZGP_COMMISSIONING", async () => {
+        it("receives frame NETDEF_ZGP_COMMISSIONING while in commissioning mode", async () => {
+            driver.gpEnterCommissioningMode(0xfe); // in commissioning mode
+
             const emitSpy = vi.spyOn(driver, "emit");
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
             const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
-            const processZigbeeNWKGPDataFrameSpy = vi.spyOn(driver, "processZigbeeNWKGPDataFrame");
+            const processZigbeeNWKGPFrameSpy = vi.spyOn(driver, "processZigbeeNWKGPFrame");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ZGP_COMMISSIONING), "utf8", () => {});
             await vi.runOnlyPendingTimersAsync();
@@ -683,7 +693,7 @@ describe("OT RCP Driver", () => {
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
             expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
-            expect(processZigbeeNWKGPDataFrameSpy).toHaveBeenCalledTimes(1);
+            expect(processZigbeeNWKGPFrameSpy).toHaveBeenCalledTimes(1);
             expect(emitSpy).toHaveBeenCalledWith(
                 "gpFrame",
                 0xe0,
@@ -698,12 +708,23 @@ describe("OT RCP Driver", () => {
             );
         });
 
+        it("receives frame NETDEF_ZGP_COMMISSIONING while not in commissioning mode", async () => {
+            // driver.gpEnterCommissioningMode(0xfe); // not in commissioning mode
+
+            const emitSpy = vi.spyOn(driver, "emit");
+
+            driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ZGP_COMMISSIONING), "utf8", () => {});
+            await vi.runOnlyPendingTimersAsync();
+
+            expect(emitSpy).toHaveBeenCalledTimes(0);
+        });
+
         it("receives frame NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0", async () => {
             const emitSpy = vi.spyOn(driver, "emit");
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
             const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
-            const processZigbeeNWKGPDataFrameSpy = vi.spyOn(driver, "processZigbeeNWKGPDataFrame");
+            const processZigbeeNWKGPFrameSpy = vi.spyOn(driver, "processZigbeeNWKGPFrame");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0), "utf8", () => {});
             await vi.runOnlyPendingTimersAsync();
@@ -751,7 +772,7 @@ describe("OT RCP Driver", () => {
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
             expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
-            expect(processZigbeeNWKGPDataFrameSpy).toHaveBeenCalledTimes(1);
+            expect(processZigbeeNWKGPFrameSpy).toHaveBeenCalledTimes(1);
             expect(emitSpy).toHaveBeenCalledWith("gpFrame", 0x10, Buffer.from([]), expectedMACHeader, expectedNWKGPHeader, 0);
         });
     });
@@ -1354,6 +1375,149 @@ describe("OT RCP Driver", () => {
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x4b8e, 5149013573816379n);
             expect(findBestSourceRouteSpy).toHaveLastReturnedWith([0, [0xcb47], 2]);
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0xcb47, undefined);
+        });
+    });
+
+    describe("NET5", () => {
+        beforeEach(async () => {
+            driver = new OTRCPDriver(
+                {
+                    txChannel: A_CHANNEL,
+                    ccaBackoffAttempts: 1,
+                    ccaRetries: 4,
+                    enableCSMACA: true,
+                    headerUpdated: true,
+                    reTx: false,
+                    securityProcessed: true,
+                    txDelay: 0,
+                    txDelayBaseTime: 0,
+                    rxChannelAfterTxDone: A_CHANNEL,
+                },
+                {
+                    eui64: Buffer.from(NET5_COORD_EUI64).readBigUInt64LE(0),
+                    panId: NET5_PAN_ID,
+                    extendedPANId: Buffer.from(NET5_EXTENDED_PAN_ID).readBigUInt64LE(0),
+                    channel: A_CHANNEL,
+                    nwkUpdateId: 0,
+                    txPower: 10,
+                    networkKey: Buffer.from(NET5_NETWORK_KEY),
+                    networkKeyFrameCounter: 0,
+                    networkKeySequenceNumber: 0,
+                    tcKey: Buffer.from(NETDEF_TC_KEY),
+                    tcKeyFrameCounter: 0,
+                },
+                SAVE_DIR,
+                // true, // emitMACFrames
+            );
+            await driver.loadState();
+            driver.parser.on("data", driver.onFrame.bind(driver));
+
+            // @ts-expect-error mock override
+            driver.networkUp = true;
+        });
+
+        afterEach(() => {
+            driver.deviceTable.clear();
+            driver.address16ToAddress64.clear();
+        });
+
+        it("receives from NET5_GP_CHANNEL_REQUEST_BCAST while in commissioning mode", async () => {
+            driver.gpEnterCommissioningMode(0xfe); // in commissioning mode
+
+            const emitSpy = vi.spyOn(driver, "emit");
+            const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
+            const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
+            const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
+            const processZigbeeNWKGPFrameSpy = vi.spyOn(driver, "processZigbeeNWKGPFrame");
+
+            driver.parser._transform(makeSpinelStreamRaw(1, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
+            await vi.runOnlyPendingTimersAsync();
+            const expectedMACHeader: MACHeader = {
+                frameControl: {
+                    frameType: 0x1,
+                    securityEnabled: false,
+                    framePending: false,
+                    ackRequest: false,
+                    panIdCompression: false,
+                    seqNumSuppress: false,
+                    iePresent: false,
+                    destAddrMode: 0x2,
+                    frameVersion: 0,
+                    sourceAddrMode: 0x0,
+                },
+                sequenceNumber: 1,
+                destinationPANId: 0xffff,
+                destination16: 0xffff,
+                sourcePANId: 0xffff,
+                fcs: 0x7808,
+            };
+            const expectedNWKGPHeader: ZigbeeNWKGPHeader = {
+                frameControl: {
+                    frameType: 0x1,
+                    protocolVersion: 3,
+                    autoCommissioning: true,
+                    nwkFrameControlExtension: false,
+                },
+                micSize: 0,
+                payloadLength: 2,
+            };
+
+            expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
+            expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
+            expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
+            expect(processZigbeeNWKGPFrameSpy).toHaveBeenCalledTimes(1);
+            expect(emitSpy).toHaveBeenCalledWith("gpFrame", 0xe3, Buffer.from([0x85]), expectedMACHeader, expectedNWKGPHeader, 0);
+        });
+
+        it("receives frame NET5_GP_CHANNEL_REQUEST_BCAST while not in commissioning mode", async () => {
+            // driver.gpEnterCommissioningMode(0xfe); // not in commissioning mode
+
+            const emitSpy = vi.spyOn(driver, "emit");
+
+            driver.parser._transform(makeSpinelStreamRaw(1, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
+            await vi.runOnlyPendingTimersAsync();
+
+            expect(emitSpy).toHaveBeenCalledTimes(0);
+        });
+
+        it("receives duplicate frame NET5_GP_CHANNEL_REQUEST_BCAST", async () => {
+            driver.gpEnterCommissioningMode(0xfe); // in commissioning mode
+
+            const emitSpy = vi.spyOn(driver, "emit");
+            const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
+
+            driver.parser._transform(makeSpinelStreamRaw(0, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(100);
+
+            driver.parser._transform(makeSpinelStreamRaw(0, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(100);
+
+            expect(emitSpy).toHaveBeenCalledTimes(1);
+            expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(2);
+
+            // dupe notification frames from live logs
+            driver.parser._transform(
+                Buffer.from(
+                    "7e8006711800010802ffffffff8c30d755550102020000683e1b87c46921c98000000a0014ff8e54cb990000000001000005000000000000979a7e",
+                    "hex",
+                ),
+                "utf8",
+                () => {},
+            );
+            await vi.advanceTimersByTimeAsync(100);
+
+            driver.parser._transform(
+                Buffer.from(
+                    "7e8006711800010802ffffffff8c30d755550102020000683e1b87c46921c98000000a0014ff5e5ccb99000000000100000500000000000060a27e",
+                    "hex",
+                ),
+                "utf8",
+                () => {},
+            );
+            await vi.advanceTimersByTimeAsync(100);
+
+            expect(emitSpy).toHaveBeenCalledTimes(2);
+            expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(4);
         });
     });
 });
