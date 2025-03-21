@@ -41,6 +41,8 @@ import {
     NET2_DEVICE_LEAVE_BROADCAST,
     NET2_REQUEST_KEY_TC_FROM_DEVICE,
     NET2_TRANSPORT_KEY_NWK_FROM_COORD,
+    NET5_GP_CHANNEL_REQUEST_BCAST,
+    NET5_NETWORK_KEY,
     NETDEF_ACK_FRAME_FROM_COORD,
     NETDEF_ACK_FRAME_TO_COORD,
     NETDEF_LINK_STATUS_FROM_DEV,
@@ -1556,6 +1558,79 @@ describe("Zigbee", () => {
         const encAPSFrame = encodeZigbeeAPSFrame(encAPSHeader, apsPayload, encAPSHeader.securityHeader!, undefined);
 
         expect(encAPSFrame).toStrictEqual(nwkPayload);
+    });
+
+    it("NET5_GP_CHANNEL_REQUEST_BCAST", () => {
+        const [macFCF, macFCFOutOffset] = decodeMACFrameControl(NET5_GP_CHANNEL_REQUEST_BCAST, 0);
+        const [macHeader, macHOutOffset] = decodeMACHeader(NET5_GP_CHANNEL_REQUEST_BCAST, macFCFOutOffset, macFCF);
+        const macPayload = decodeMACPayload(NET5_GP_CHANNEL_REQUEST_BCAST, macHOutOffset, macFCF, macHeader);
+        const expectedMACHeader: MACHeader = {
+            frameControl: {
+                frameType: 0x1,
+                securityEnabled: false,
+                framePending: false,
+                ackRequest: false,
+                panIdCompression: false,
+                seqNumSuppress: false,
+                iePresent: false,
+                destAddrMode: 0x2,
+                frameVersion: 0,
+                sourceAddrMode: 0x0,
+            },
+            sequenceNumber: 1,
+            destinationPANId: 0xffff,
+            destination16: 0xffff,
+            destination64: undefined,
+            sourcePANId: 0xffff,
+            source16: undefined,
+            source64: undefined,
+            auxSecHeader: undefined,
+            superframeSpec: undefined,
+            gtsInfo: undefined,
+            pendAddr: undefined,
+            commandId: undefined,
+            headerIE: undefined,
+            frameCounter: undefined,
+            keySeqCounter: undefined,
+            fcs: 0x7808,
+        };
+
+        expect(macHeader).toStrictEqual(expectedMACHeader);
+        expect(macPayload.byteLength).toStrictEqual(3);
+
+        const [nwkGPFCF, nwkGPFCFOutOffset] = decodeZigbeeNWKGPFrameControl(macPayload, 0);
+        const [nwkGPHeader, nwkGPHOutOffset] = decodeZigbeeNWKGPHeader(macPayload, nwkGPFCFOutOffset, nwkGPFCF);
+        const nwkGPPayload = decodeZigbeeNWKGPPayload(macPayload, nwkGPHOutOffset, NET5_NETWORK_KEY, macHeader.source64, nwkGPFCF, nwkGPHeader);
+        const expectedNWKGPHeader: ZigbeeNWKGPHeader = {
+            frameControl: {
+                frameType: 0x1,
+                protocolVersion: 3,
+                autoCommissioning: true,
+                nwkFrameControlExtension: false,
+            },
+            frameControlExt: undefined,
+            sourceId: undefined,
+            endpoint: undefined,
+            securityFrameCounter: undefined,
+            micSize: 0,
+            payloadLength: 2,
+            mic: undefined,
+        };
+
+        expect(nwkGPHeader).toStrictEqual(expectedNWKGPHeader);
+        expect(nwkGPPayload).toStrictEqual(Buffer.from([0xe3, 0x85]));
+
+        const encHeader = structuredClone(macHeader);
+        encHeader.sourcePANId = undefined;
+
+        const encFrame = encodeMACFrameZigbee(encHeader, macPayload);
+
+        expect(encFrame.subarray(0, -2)).toStrictEqual(NET5_GP_CHANNEL_REQUEST_BCAST.subarray(0, -2));
+
+        const encNWKGPHeader = structuredClone(nwkGPHeader);
+        const encNWKFrame = encodeZigbeeNWKGPFrame(encNWKGPHeader, nwkGPPayload, NET5_NETWORK_KEY, macHeader.source64);
+
+        expect(encNWKFrame).toStrictEqual(macPayload);
     });
 
     it("ZGP FULL test vector from spec v1.1.1 #A.1.5.4.2", () => {
