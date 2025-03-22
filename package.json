@@ -1,6 +1,6 @@
 {
     "name": "zigbee-on-host",
-    "version": "0.1.6",
+    "version": "0.1.7",
     "description": "ZigBee stack designed to run on a host and communicate with a radio co-processor (RCP)",
     "engines": {
         "node": ">=20.17.0"
