@@ -919,7 +919,7 @@ describe("Zigbee", () => {
 
         expect(encFrame.subarray(0, -2)).toStrictEqual(NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0.subarray(0, -2));
 
-        // TODO: Works against spec test vectors but not actual sniffed frame...
+        // XXX: don't have the GP security key for this one
         // const encNWKGPHeader = structuredClone(nwkGPHeader);
 
         // const encNWKFrame = encodeZigbeeNWKGPFrame(encNWKGPHeader, nwkGPPayload, NETDEF_NETWORK_KEY, macHeader.source64);
