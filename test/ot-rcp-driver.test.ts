@@ -180,8 +180,6 @@ describe("OT RCP Driver", () => {
             driver.networkUp = true;
         });
 
-        afterEach(async () => {});
-
         it("handles loading with given network params - first start", async () => {
             const saveStateSpy = vi.spyOn(driver, "saveState");
 
@@ -455,11 +453,6 @@ describe("OT RCP Driver", () => {
 
             // @ts-expect-error mock override
             driver.networkUp = true;
-        });
-
-        afterEach(() => {
-            driver.deviceTable.clear();
-            driver.address16ToAddress64.clear();
         });
 
         it("ignores bogus data before start of HDLC frame", async () => {
@@ -815,11 +808,6 @@ describe("OT RCP Driver", () => {
             driver.networkUp = true;
         });
 
-        afterEach(() => {
-            driver.deviceTable.clear();
-            driver.address16ToAddress64.clear();
-        });
-
         it("receives frame NET2_TRANSPORT_KEY_NWK_FROM_COORD - not for coordinator", async () => {
             // encrypted only APS
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
@@ -1039,11 +1027,6 @@ describe("OT RCP Driver", () => {
             driver.networkUp = true;
         });
 
-        afterEach(() => {
-            driver.deviceTable.clear();
-            driver.address16ToAddress64.clear();
-        });
-
         it("registers timers", async () => {
             // creates a bottleneck with vitest & promises, noop it
             vi.spyOn(driver, "savePeriodicState").mockImplementation(() => Promise.resolve());
@@ -1216,11 +1199,6 @@ describe("OT RCP Driver", () => {
             driver.networkUp = true;
         });
 
-        afterEach(() => {
-            driver.deviceTable.clear();
-            driver.address16ToAddress64.clear();
-        });
-
         it("handles source routing", async () => {
             // creates a bottleneck with vitest & promises, noop it
             vi.spyOn(driver, "savePeriodicState").mockImplementation(() => Promise.resolve());
@@ -1375,6 +1353,30 @@ describe("OT RCP Driver", () => {
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x4b8e, 5149013573816379n);
             expect(findBestSourceRouteSpy).toHaveLastReturnedWith([0, [0xcb47], 2]);
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0xcb47, undefined);
+
+            //-- no duplication of existing entries
+            driver.parser._transform(makeSpinelStreamRaw(6, NET4_ROUTE_RECORD_FROM_4B8E_RELAY_CB47), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+            // ROUTE_RECORD => OK
+            driver.parser._transform(makeSpinelLastStatus(6), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(driver.sourceRouteTable.get(0x4b8e)!.length).toStrictEqual(1);
+        });
+
+        it("checks if source route exists in entries for a given device", () => {
+            driver.sourceRouteTable.set(0x4b8e, [{ relayAddresses: [1, 2], pathCost: 3 }]);
+            const existingEntries = driver.sourceRouteTable.get(0x4b8e)!;
+
+            expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [1, 2], pathCost: 3 }, existingEntries)).toStrictEqual(true);
+            expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [1, 2], pathCost: 2 }, existingEntries)).toStrictEqual(false);
+            expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [3], pathCost: 2 }, existingEntries)).toStrictEqual(false);
+            expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [4, 5], pathCost: 3 }, existingEntries)).toStrictEqual(false);
+            expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [1, 2], pathCost: 3 })).toStrictEqual(true);
+            expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [1, 2], pathCost: 2 })).toStrictEqual(false);
+            expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [3], pathCost: 2 })).toStrictEqual(false);
+            expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [4, 5], pathCost: 3 })).toStrictEqual(false);
+            expect(driver.hasSourceRoute(0x12345, { relayAddresses: [4, 5], pathCost: 3 })).toStrictEqual(false);
         });
     });
 
@@ -1414,11 +1416,6 @@ describe("OT RCP Driver", () => {
 
             // @ts-expect-error mock override
             driver.networkUp = true;
-        });
-
-        afterEach(() => {
-            driver.deviceTable.clear();
-            driver.address16ToAddress64.clear();
         });
 
         it("receives from NET5_GP_CHANNEL_REQUEST_BCAST while in commissioning mode", async () => {

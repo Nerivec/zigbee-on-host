@@ -2079,7 +2079,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
             if (entries === undefined) {
                 this.sourceRouteTable.set(source16, [entry]);
-            } else {
+            } else if (!this.hasSourceRoute(source16, entry, entries)) {
                 entries.push(entry);
             }
         }
@@ -4250,6 +4250,42 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             // force saving after device change
             await this.savePeriodicState();
         }
+    }
+
+    /**
+     * Check if a source route entry for the given address is already present.
+     * If `existingEntries` not given and address16 doesn't have any entries, always returns false.
+     * @param address16 The network address to check for
+     * @param newEntry The entry to check
+     * @param existingEntries If given, skip the retrieval from `sourceRouteTable` and use these entries to check against instead
+     * @returns
+     */
+    public hasSourceRoute(address16: number, newEntry: SourceRouteTableEntry, existingEntries?: SourceRouteTableEntry[]): boolean {
+        if (!existingEntries) {
+            existingEntries = this.sourceRouteTable.get(address16);
+
+            if (!existingEntries) {
+                return false;
+            }
+        }
+
+        for (const existingEntry of existingEntries) {
+            if (newEntry.pathCost !== existingEntry.pathCost) {
+                return false;
+            }
+
+            if (newEntry.relayAddresses.length !== existingEntry.relayAddresses.length) {
+                return false;
+            }
+
+            for (const relay of newEntry.relayAddresses) {
+                if (!existingEntry.relayAddresses.includes(relay)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     /**

@@ -51,6 +51,18 @@ async function printSave(dataPath: string): Promise<void> {
     console.log(devicesJson);
 
     await writeFile(join(dataPath, "zohsave-devices.json"), devicesJson, "utf8");
+
+    const routes = [];
+
+    for (const [addr16, entries] of driver.sourceRouteTable) {
+        routes.push({ addr16, entries });
+    }
+
+    const routesJson = JSON.stringify(routes, undefined, 2);
+
+    console.log(routesJson);
+
+    await writeFile(join(dataPath, "zohsave-routes.json"), routesJson, "utf8");
 }
 
 if (require.main === module) {
