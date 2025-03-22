@@ -1365,14 +1365,23 @@ describe("OT RCP Driver", () => {
         });
 
         it("checks if source route exists in entries for a given device", () => {
-            driver.sourceRouteTable.set(0x4b8e, [{ relayAddresses: [1, 2], pathCost: 3 }]);
+            driver.sourceRouteTable.set(0x4b8e, [
+                { relayAddresses: [1, 2], pathCost: 3 },
+                { relayAddresses: [11, 22], pathCost: 3 },
+                { relayAddresses: [33, 22, 44], pathCost: 4 },
+                { relayAddresses: [], pathCost: 1 },
+            ]);
             const existingEntries = driver.sourceRouteTable.get(0x4b8e)!;
 
+            expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [], pathCost: 1 }, existingEntries)).toStrictEqual(true);
+            expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [], pathCost: 2 }, existingEntries)).toStrictEqual(false);
             expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [1, 2], pathCost: 3 }, existingEntries)).toStrictEqual(true);
+            expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [2, 1], pathCost: 3 }, existingEntries)).toStrictEqual(false);
             expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [1, 2], pathCost: 2 }, existingEntries)).toStrictEqual(false);
             expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [3], pathCost: 2 }, existingEntries)).toStrictEqual(false);
             expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [4, 5], pathCost: 3 }, existingEntries)).toStrictEqual(false);
             expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [1, 2], pathCost: 3 })).toStrictEqual(true);
+            expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [2, 1], pathCost: 3 })).toStrictEqual(false);
             expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [1, 2], pathCost: 2 })).toStrictEqual(false);
             expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [3], pathCost: 2 })).toStrictEqual(false);
             expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [4, 5], pathCost: 3 })).toStrictEqual(false);

@@ -4270,22 +4270,23 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         }
 
         for (const existingEntry of existingEntries) {
-            if (newEntry.pathCost !== existingEntry.pathCost) {
-                return false;
-            }
+            if (newEntry.pathCost === existingEntry.pathCost && newEntry.relayAddresses.length === existingEntry.relayAddresses.length) {
+                let matching = true;
 
-            if (newEntry.relayAddresses.length !== existingEntry.relayAddresses.length) {
-                return false;
-            }
+                for (let i = 0; i < newEntry.relayAddresses.length; i++) {
+                    if (newEntry.relayAddresses[i] !== existingEntry.relayAddresses[i]) {
+                        matching = false;
+                        break;
+                    }
+                }
 
-            for (const relay of newEntry.relayAddresses) {
-                if (!existingEntry.relayAddresses.includes(relay)) {
-                    return false;
+                if (matching) {
+                    return true;
                 }
             }
         }
 
-        return true;
+        return false;
     }
 
     /**
