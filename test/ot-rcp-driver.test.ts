@@ -1396,6 +1396,221 @@ describe("OT RCP Driver", () => {
             expect(driver.hasSourceRoute(0x4b8e, { relayAddresses: [4, 5], pathCost: 3 })).toStrictEqual(false);
             expect(driver.hasSourceRoute(0x12345, { relayAddresses: [4, 5], pathCost: 3 })).toStrictEqual(false);
         });
+
+        it("gets routing table", async () => {
+            await fillSourceRouteTableFromRequests();
+
+            expect(driver.sourceRouteTable.size).toStrictEqual(5);
+
+            const initialRoutingTable = Buffer.from([
+                0, // status
+                3, // total entries
+                0, // start index
+                3, // entries following
+                0x6887 & 0xff,
+                (0x6887 >> 8) & 0xff,
+                0,
+                0x96ba & 0xff,
+                (0x96ba >> 8) & 0xff,
+                0x9ed5 & 0xff,
+                (0x9ed5 >> 8) & 0xff,
+                0,
+                0x91d2 & 0xff,
+                (0x91d2 >> 8) & 0xff,
+                0x4b8e & 0xff,
+                (0x4b8e >> 8) & 0xff,
+                0,
+                0xcb47 & 0xff,
+                (0xcb47 >> 8) & 0xff,
+            ]);
+            let routingTable = driver.getRoutingTableResponse(0);
+
+            // 0x6887 => 0x96ba
+            // 0x9ed5 => 0x91d2
+            // 0x4b8e => 0xcb47
+            expect(routingTable).toStrictEqual(initialRoutingTable);
+
+            const sr0x6887 = driver.sourceRouteTable.get(0x6887);
+            const sr0x9ed5 = driver.sourceRouteTable.get(0x9ed5);
+            const sr0x4b8e = driver.sourceRouteTable.get(0x4b8e);
+
+            sr0x6887?.push({ relayAddresses: [0x0001, 0x0002], pathCost: 3 });
+            sr0x6887?.push({ relayAddresses: [0x0003], pathCost: 2 });
+
+            sr0x9ed5?.push({ relayAddresses: [0x0001], pathCost: 2 });
+
+            sr0x4b8e?.push({ relayAddresses: [0x0001, 0x0002, 0x0003], pathCost: 4 });
+
+            routingTable = driver.getRoutingTableResponse(0);
+
+            // still the same
+            expect(routingTable).toStrictEqual(initialRoutingTable);
+
+            sr0x6887?.shift();
+
+            routingTable = driver.getRoutingTableResponse(0);
+
+            expect(routingTable).toStrictEqual(
+                Buffer.from([
+                    0, // status
+                    3, // total entries
+                    0, // start index
+                    3, // entries following
+                    0x6887 & 0xff,
+                    (0x6887 >> 8) & 0xff,
+                    0,
+                    0x0003 & 0xff,
+                    (0x0003 >> 8) & 0xff,
+                    0x9ed5 & 0xff,
+                    (0x9ed5 >> 8) & 0xff,
+                    0,
+                    0x91d2 & 0xff,
+                    (0x91d2 >> 8) & 0xff,
+                    0x4b8e & 0xff,
+                    (0x4b8e >> 8) & 0xff,
+                    0,
+                    0xcb47 & 0xff,
+                    (0xcb47 >> 8) & 0xff,
+                ]),
+            );
+
+            driver.sourceRouteTable.set(0x2345, [
+                { relayAddresses: [0x0001, 0x0002, 0x0003], pathCost: 4 },
+                { relayAddresses: [0x0004, 0x0005], pathCost: 3 },
+            ]);
+
+            expect(driver.sourceRouteTable.size).toStrictEqual(6);
+
+            routingTable = driver.getRoutingTableResponse(0);
+
+            expect(routingTable).toStrictEqual(
+                Buffer.from([
+                    0, // status
+                    4, // total entries
+                    0, // start index
+                    4, // entries following
+                    0x6887 & 0xff,
+                    (0x6887 >> 8) & 0xff,
+                    0,
+                    0x0003 & 0xff,
+                    (0x0003 >> 8) & 0xff,
+                    0x9ed5 & 0xff,
+                    (0x9ed5 >> 8) & 0xff,
+                    0,
+                    0x91d2 & 0xff,
+                    (0x91d2 >> 8) & 0xff,
+                    0x4b8e & 0xff,
+                    (0x4b8e >> 8) & 0xff,
+                    0,
+                    0xcb47 & 0xff,
+                    (0xcb47 >> 8) & 0xff,
+                    0x2345 & 0xff,
+                    (0x2345 >> 8) & 0xff,
+                    0,
+                    5 & 0xff,
+                    (5 >> 8) & 0xff,
+                ]),
+            );
+
+            //-- mock LEAVE
+            await driver.disassociate(0x91d2, 8118874123826907736n);
+
+            expect(driver.sourceRouteTable.size).toStrictEqual(5);
+
+            routingTable = driver.getRoutingTableResponse(0);
+
+            expect(routingTable).toStrictEqual(
+                Buffer.from([
+                    0, // status
+                    4, // total entries
+                    0, // start index
+                    4, // entries following
+                    0x6887 & 0xff,
+                    (0x6887 >> 8) & 0xff,
+                    0,
+                    3 & 0xff,
+                    (3 >> 8) & 0xff,
+                    0x9ed5 & 0xff,
+                    (0x9ed5 >> 8) & 0xff,
+                    0,
+                    0x0001 & 0xff,
+                    (0x0001 >> 8) & 0xff,
+                    0x4b8e & 0xff,
+                    (0x4b8e >> 8) & 0xff,
+                    0,
+                    0xcb47 & 0xff,
+                    (0xcb47 >> 8) & 0xff,
+                    0x2345 & 0xff,
+                    (0x2345 >> 8) & 0xff,
+                    0,
+                    5 & 0xff,
+                    (5 >> 8) & 0xff,
+                ]),
+            );
+
+            driver.sourceRouteTable.clear();
+
+            expect(driver.sourceRouteTable.size).toStrictEqual(0);
+
+            let clippedLastAddr16 = 0;
+            let clippedLastRelay16 = 0;
+            let lastAdrr16 = 0;
+            let lastRelay16 = 0;
+
+            //-- clipped to 0xff to fit ZDO uint8 count-type bytes
+            for (let i = 0; i < 300; i++) {
+                const addr16 = driver.assignNetworkAddress();
+                const relay16 = driver.assignNetworkAddress();
+                driver.sourceRouteTable.set(addr16, [{ relayAddresses: [relay16], pathCost: 2 }]);
+                driver.address16ToAddress64.set(addr16, 1n); // just for dupe checking in `assignNetworkAddress`
+                driver.address16ToAddress64.set(relay16, 1n); // just for dupe checking in `assignNetworkAddress`
+
+                if (i === 254 /* 0-based */) {
+                    clippedLastRelay16 = relay16;
+                    clippedLastAddr16 = addr16;
+                }
+
+                lastRelay16 = relay16;
+                lastAdrr16 = addr16;
+            }
+
+            expect(driver.sourceRouteTable.size).toStrictEqual(300);
+
+            routingTable = driver.getRoutingTableResponse(0);
+
+            expect(routingTable.byteLength).toStrictEqual(4 + 255 * 5);
+            expect(routingTable.readUInt16LE(routingTable.byteLength - 5)).toStrictEqual(clippedLastAddr16);
+            expect(routingTable.readUInt16LE(routingTable.byteLength - 2)).toStrictEqual(clippedLastRelay16);
+
+            //---- non-zero offset
+            routingTable = driver.getRoutingTableResponse(200);
+
+            expect(routingTable.byteLength).toStrictEqual(4 + (300 - 200) * 5);
+            expect(routingTable.readUInt16LE(routingTable.byteLength - 5)).toStrictEqual(lastAdrr16);
+            expect(routingTable.readUInt16LE(routingTable.byteLength - 2)).toStrictEqual(lastRelay16);
+
+            //---- non-zero offset, removed last entry
+            driver.sourceRouteTable.set(lastAdrr16, [{ relayAddresses: [], pathCost: 1 }]);
+
+            routingTable = driver.getRoutingTableResponse(200);
+
+            expect(routingTable.byteLength).toStrictEqual(4 + (299 - 200) * 5);
+            expect(routingTable.readUInt16LE(routingTable.byteLength - 5)).not.toStrictEqual(lastAdrr16);
+            expect(routingTable.readUInt16LE(routingTable.byteLength - 2)).not.toStrictEqual(lastRelay16);
+        });
+
+        it("ignores direct routes when getting routing table ZDO", () => {
+            driver.sourceRouteTable.set(0x4b8e, [
+                { relayAddresses: [1, 2], pathCost: 3 },
+                { relayAddresses: [11, 22], pathCost: 3 },
+                { relayAddresses: [33, 22, 44], pathCost: 4 },
+                { relayAddresses: [], pathCost: 1 },
+            ]);
+
+            const routingTable = driver.getRoutingTableResponse(0);
+
+            expect(routingTable.byteLength).toStrictEqual(4 + 0);
+        });
     });
 
     describe("NET5", () => {

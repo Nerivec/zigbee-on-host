@@ -4368,6 +4368,98 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     // TODO: interference detection (& optionally auto channel changing)
 
     /**
+     * ZDO response to ROUTING_TABLE_REQUEST for coordinator
+     * NOTE: Only outputs the best source route for each entry in the table (clipped to max 255 entries).
+     * @param startIndex
+     * @returns
+     */
+    public getRoutingTableResponse(startIndex: number): Buffer {
+        let sourceRouteTableIndex = 0;
+        let routingTableEntries = 0;
+        // multiple of 3: [destination16, statusByte, nextHopAddress, ...repeat]
+        const routingTableArr: number[] = [];
+
+        // XXX: this is not great...
+        for (const [addr16] of this.sourceRouteTable) {
+            const [relayLastIndex, relayAddresses] = this.findBestSourceRoute(addr16, undefined);
+
+            if (relayLastIndex !== undefined && relayAddresses !== undefined) {
+                if (sourceRouteTableIndex < startIndex) {
+                    // if under `startIndex`, just count
+                    sourceRouteTableIndex += 1;
+                    routingTableEntries += 1;
+
+                    continue;
+                }
+
+                if (sourceRouteTableIndex >= startIndex + 0xff) {
+                    // if over uint8 size from `startIndex`, just count
+                    sourceRouteTableIndex += 1;
+                    routingTableEntries += 1;
+
+                    continue;
+                }
+
+                const status = 0x0; // ACTIVE
+                const memoryConstrained = 0; // TODO
+                const manyToOne = 0; // TODO
+                const routeRecordRequired = 0; // TODO
+                const statusByte =
+                    (status & 0x07) |
+                    ((memoryConstrained << 3) & 0x01) |
+                    ((manyToOne << 4) & 0x01) |
+                    ((routeRecordRequired << 5) & 0x01) |
+                    ((0 /* reserved */ << 6) & 0x03);
+                // last entry is next hop
+                const nextHopAddress = relayAddresses[relayLastIndex];
+
+                routingTableArr.push(addr16);
+                routingTableArr.push(statusByte);
+                routingTableArr.push(nextHopAddress);
+
+                routingTableEntries += 1;
+            }
+
+            sourceRouteTableIndex += 1;
+        }
+
+        console.log(routingTableArr.slice(routingTableArr.length - 25));
+        // have to fit uint8 count-type bytes of ZDO response
+        const clipped = routingTableEntries > 0xff;
+        const entryCount = routingTableArr.length / 3;
+        const routingTable = Buffer.alloc(4 + entryCount * 5);
+        let offset = 0;
+
+        if (clipped) {
+            logger.debug(() => `Routing table clipped at 255 entries to fit ZDO response (actual=${routingTableEntries})`, NS);
+        }
+
+        routingTable.writeUInt8(0 /* SUCCESS */, offset);
+        offset += 1;
+        routingTable.writeUInt8(clipped ? 0xff : routingTableEntries, offset);
+        offset += 1;
+        routingTable.writeUInt8(startIndex, offset);
+        offset += 1;
+        routingTable.writeUInt8(entryCount, offset);
+        offset += 1;
+
+        let entryIndex = 0;
+
+        for (let i = 0; i < entryCount; i++) {
+            routingTable.writeUInt16LE(routingTableArr[entryIndex] /* destination16 */, offset);
+            offset += 2;
+            routingTable.writeUInt8(routingTableArr[entryIndex + 1] /* statusByte */, offset);
+            offset += 1;
+            routingTable.writeUInt16LE(routingTableArr[entryIndex + 2] /* nextHopAddress */, offset);
+            offset += 2;
+
+            entryIndex += 3;
+        }
+
+        return routingTable;
+    }
+
+    /**
      * Check if ZDO message is aimed at coordinator, and if it should be emitted.
      * @param data
      * @param clusterId
