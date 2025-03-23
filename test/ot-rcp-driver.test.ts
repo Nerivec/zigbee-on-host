@@ -373,6 +373,11 @@ describe("OT RCP Driver", () => {
             await driver.resetNetwork();
 
             expect(existsSync(driver.savePath)).toStrictEqual(false);
+            expect(driver.deviceTable.size).toStrictEqual(0);
+            expect(driver.address16ToAddress64.size).toStrictEqual(0);
+            expect(driver.sourceRouteTable.size).toStrictEqual(0);
+            expect(driver.indirectTransmissions.size).toStrictEqual(0);
+            expect(driver.pendingAssociations.size).toStrictEqual(0);
         });
 
         it("throw when trying to reset network after state already loaded", async () => {
@@ -1199,6 +1204,38 @@ describe("OT RCP Driver", () => {
             driver.networkUp = true;
         });
 
+        const fillSourceRouteTableFromRequests = async () => {
+            driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_96BA_NO_RELAY), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+            // ROUTE_RECORD => OK
+            driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+
+            driver.parser._transform(makeSpinelStreamRaw(2, NET4_ROUTE_RECORD_FROM_91D2_NO_RELAY), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+            // ROUTE_RECORD => OK
+            driver.parser._transform(makeSpinelLastStatus(2), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+
+            driver.parser._transform(makeSpinelStreamRaw(3, NET4_ROUTE_RECORD_FROM_6887_RELAY_96BA), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+            // ROUTE_RECORD => OK
+            driver.parser._transform(makeSpinelLastStatus(3), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+
+            driver.parser._transform(makeSpinelStreamRaw(4, NET4_ROUTE_RECORD_FROM_9ED5_RELAY_91D2), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+            // ROUTE_RECORD => OK
+            driver.parser._transform(makeSpinelLastStatus(4), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+
+            driver.parser._transform(makeSpinelStreamRaw(5, NET4_ROUTE_RECORD_FROM_4B8E_RELAY_CB47), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+            // ROUTE_RECORD => OK
+            driver.parser._transform(makeSpinelLastStatus(5), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+        };
+
         it("handles source routing", async () => {
             // creates a bottleneck with vitest & promises, noop it
             vi.spyOn(driver, "savePeriodicState").mockImplementation(() => Promise.resolve());
@@ -1240,35 +1277,7 @@ describe("OT RCP Driver", () => {
             expect(sendZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(1 + 1); // 1 by spy mock
             expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1 + 1); // 1 by spy mock
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_96BA_NO_RELAY), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-            // ROUTE_RECORD => OK
-            driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-
-            driver.parser._transform(makeSpinelStreamRaw(2, NET4_ROUTE_RECORD_FROM_91D2_NO_RELAY), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-            // ROUTE_RECORD => OK
-            driver.parser._transform(makeSpinelLastStatus(2), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-
-            driver.parser._transform(makeSpinelStreamRaw(3, NET4_ROUTE_RECORD_FROM_6887_RELAY_96BA), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-            // ROUTE_RECORD => OK
-            driver.parser._transform(makeSpinelLastStatus(3), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-
-            driver.parser._transform(makeSpinelStreamRaw(4, NET4_ROUTE_RECORD_FROM_9ED5_RELAY_91D2), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-            // ROUTE_RECORD => OK
-            driver.parser._transform(makeSpinelLastStatus(4), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-
-            driver.parser._transform(makeSpinelStreamRaw(5, NET4_ROUTE_RECORD_FROM_4B8E_RELAY_CB47), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-            // ROUTE_RECORD => OK
-            driver.parser._transform(makeSpinelLastStatus(5), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
+            await fillSourceRouteTableFromRequests();
 
             expect(processZigbeeNWKRouteRecordSpy).toHaveBeenCalledTimes(5);
 

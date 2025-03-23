@@ -749,9 +749,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     //---- APS
 
     /** mapping by network16 */
-    public readonly apsDeviceKeyPairSet: Map<number, APSDeviceKeyPairSet>;
+    // public readonly apsDeviceKeyPairSet: Map<number, APSDeviceKeyPairSet>;
     /** mapping by network16 */
-    public readonly apsBindingTable: Map<number, APSBindingTable>;
+    // public readonly apsBindingTable: Map<number, APSBindingTable>;
 
     //---- Attribute
 
@@ -816,8 +816,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.sourceRouteTable = new Map();
 
         //---- APS
-        this.apsDeviceKeyPairSet = new Map();
-        this.apsBindingTable = new Map();
+        // this.apsDeviceKeyPairSet = new Map();
+        // this.apsBindingTable = new Map();
 
         //---- Attributes
         this.configAttributes = {
@@ -4012,6 +4012,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.address16ToAddress64.clear();
         this.indirectTransmissions.clear();
         this.sourceRouteTable.clear();
+        this.pendingAssociations.clear();
 
         logger.info("======== Network reset ========", NS);
     }
@@ -4139,7 +4140,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * @param allowOverride Treat as MACAssociationStatus.SUCCESS
      * @returns
      */
-    private async associate(
+    public async associate(
         source16: number | undefined,
         source64: bigint | undefined,
         initialJoin: boolean,
@@ -4228,7 +4229,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         return [status, newAddress16];
     }
 
-    private async disassociate(source16: number | undefined, source64: bigint | undefined): Promise<void> {
+    public async disassociate(source16: number | undefined, source64: bigint | undefined): Promise<void> {
         if (source64 === undefined && source16 !== undefined) {
             source64 = this.address16ToAddress64.get(source16);
         } else if (source16 === undefined && source64 !== undefined) {
@@ -4240,6 +4241,18 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             this.deviceTable.delete(source64);
             this.address16ToAddress64.delete(source16);
             this.indirectTransmissions.delete(source64);
+            this.sourceRouteTable.delete(source16);
+            this.pendingAssociations.delete(source64); // should never amount to a delete
+
+            // XXX: should only be needed for `rxOnWhenIdle`, but for now always trigger (tricky bit, not always correct)
+            for (const [addr16, entries] of this.sourceRouteTable) {
+                // entries using this device as relay are no longer valid
+                const filteredEntries = entries.filter((entry) => !entry.relayAddresses.includes(source16));
+
+                if (filteredEntries.length !== entries.length) {
+                    this.sourceRouteTable.set(addr16, filteredEntries);
+                }
+            }
 
             logger.debug(() => `DEVICE_LEFT[src=${source16}:${source64}]`, NS);
 
