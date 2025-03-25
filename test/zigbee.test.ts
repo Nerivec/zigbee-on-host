@@ -1,11 +1,14 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import {
+    type MACCapabilities,
     type MACHeader,
     type MACZigbeeBeacon,
+    decodeMACCapabilities,
     decodeMACFrameControl,
     decodeMACHeader,
     decodeMACPayload,
     decodeMACZigbeeBeacon,
+    encodeMACCapabilities,
     encodeMACFrame,
     encodeMACFrameZigbee,
     encodeMACZigbeeBeacon,
@@ -64,6 +67,50 @@ describe("Zigbee", () => {
             makeKeyedHashByType(ZigbeeKeyType.TRANSPORT, NETDEF_TC_KEY),
             makeKeyedHashByType(ZigbeeKeyType.LOAD, NETDEF_TC_KEY),
         );
+    });
+
+    it("encodes/decodes MAC capabilities", () => {
+        // common RFD
+        let decodedCap: MACCapabilities = {
+            alternatePANCoordinator: false,
+            deviceType: 0,
+            powerSource: 0,
+            rxOnWhenIdle: false,
+            securityCapability: false,
+            allocateAddress: true,
+        };
+        let encodedCap = 0x80;
+
+        expect(encodeMACCapabilities(decodedCap)).toStrictEqual(encodedCap);
+        expect(decodeMACCapabilities(encodedCap)).toStrictEqual(decodedCap);
+
+        // common FFD
+        decodedCap = {
+            alternatePANCoordinator: false,
+            deviceType: 1,
+            powerSource: 1,
+            rxOnWhenIdle: true,
+            securityCapability: false,
+            allocateAddress: true,
+        };
+        encodedCap = 0x8e;
+
+        expect(encodeMACCapabilities(decodedCap)).toStrictEqual(encodedCap);
+        expect(decodeMACCapabilities(encodedCap)).toStrictEqual(decodedCap);
+
+        // common COORD
+        decodedCap = {
+            alternatePANCoordinator: true,
+            deviceType: 1,
+            powerSource: 1,
+            rxOnWhenIdle: true,
+            securityCapability: false,
+            allocateAddress: true,
+        };
+        encodedCap = 0x8f;
+
+        expect(encodeMACCapabilities(decodedCap)).toStrictEqual(encodedCap);
+        expect(decodeMACCapabilities(encodedCap)).toStrictEqual(decodedCap);
     });
 
     it("NETDEF_ACK_FRAME_TO_COORD", () => {

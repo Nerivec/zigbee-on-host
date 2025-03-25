@@ -11,7 +11,7 @@ import { decodeHdlcFrame } from "../src/spinel/hdlc";
 import { SpinelPropertyId } from "../src/spinel/properties";
 import { SPINEL_HEADER_FLG_SPINEL, type SpinelFrame, decodeSpinelFrame, encodeSpinelFrame } from "../src/spinel/spinel";
 import { SpinelStatus } from "../src/spinel/statuses";
-import { MACAssociationStatus, type MACHeader, decodeMACFrameControl, decodeMACHeader } from "../src/zigbee/mac";
+import { MACAssociationStatus, type MACCapabilities, type MACHeader, decodeMACFrameControl, decodeMACHeader } from "../src/zigbee/mac";
 import { ZigbeeConsts } from "../src/zigbee/zigbee";
 import { type ZigbeeNWKLinkStatus, ZigbeeNWKManyToOne, ZigbeeNWKStatus } from "../src/zigbee/zigbee-nwk";
 import type { ZigbeeNWKGPHeader } from "../src/zigbee/zigbee-nwkgp";
@@ -63,6 +63,22 @@ import {
 const randomBigInt = (): bigint => BigInt(`0x${randomBytes(8).toString("hex")}`);
 
 const RESET_POWER_ON_FRAME_HEX = "7e80060070ee747e";
+const COMMON_FFD_MAC_CAP: MACCapabilities = {
+    alternatePANCoordinator: false,
+    deviceType: 1,
+    powerSource: 1,
+    rxOnWhenIdle: true,
+    securityCapability: false,
+    allocateAddress: true,
+};
+const COMMON_RFD_MAC_CAP: MACCapabilities = {
+    alternatePANCoordinator: false,
+    deviceType: 0,
+    powerSource: 0,
+    rxOnWhenIdle: false,
+    securityCapability: false,
+    allocateAddress: true,
+};
 
 describe("OT RCP Driver", () => {
     let wiresharkSeqNum: number;
@@ -392,10 +408,34 @@ describe("OT RCP Driver", () => {
             driver.netParams.networkKeySequenceNumber = 1;
             driver.netParams.tcKey = Buffer.from([0x51, 0x69, 0x62, 0x58, 0x53, 0x67, 0x64, 0x56, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
             driver.netParams.tcKeyFrameCounter = 896723;
-            driver.deviceTable.set(1234n, { address16: 1, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
-            driver.deviceTable.set(12656887476334n, { address16: 3457, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
-            driver.deviceTable.set(12328965645634n, { address16: 9674, rxOnWhenIdle: false, authorized: true, neighbor: false, recentLQAs: [] });
-            driver.deviceTable.set(234367481234n, { address16: 54748, rxOnWhenIdle: true, authorized: false, neighbor: true, recentLQAs: [] });
+            driver.deviceTable.set(1234n, {
+                address16: 1,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
+                authorized: true,
+                neighbor: true,
+                recentLQAs: [],
+            });
+            driver.deviceTable.set(12656887476334n, {
+                address16: 3457,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
+                authorized: true,
+                neighbor: true,
+                recentLQAs: [],
+            });
+            driver.deviceTable.set(12328965645634n, {
+                address16: 9674,
+                capabilities: structuredClone(COMMON_RFD_MAC_CAP),
+                authorized: true,
+                neighbor: false,
+                recentLQAs: [],
+            });
+            driver.deviceTable.set(234367481234n, {
+                address16: 54748,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
+                authorized: false,
+                neighbor: true,
+                recentLQAs: [],
+            });
             driver.sourceRouteTable.set(1, [
                 { pathCost: 1, relayAddresses: [] },
                 { pathCost: 2, relayAddresses: [3457] },
@@ -442,28 +482,28 @@ describe("OT RCP Driver", () => {
             expect(driver.deviceTable.size).toStrictEqual(4);
             expect(driver.deviceTable.get(1234n)).toStrictEqual({
                 address16: 1,
-                rxOnWhenIdle: true,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
                 recentLQAs: [],
             });
             expect(driver.deviceTable.get(12656887476334n)).toStrictEqual({
                 address16: 3457,
-                rxOnWhenIdle: true,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
                 recentLQAs: [],
             });
             expect(driver.deviceTable.get(12328965645634n)).toStrictEqual({
                 address16: 9674,
-                rxOnWhenIdle: false,
+                capabilities: structuredClone(COMMON_RFD_MAC_CAP),
                 authorized: true,
                 neighbor: false,
                 recentLQAs: [],
             });
             expect(driver.deviceTable.get(234367481234n)).toStrictEqual({
                 address16: 54748,
-                rxOnWhenIdle: true,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: false,
                 neighbor: true,
                 recentLQAs: [],
@@ -517,7 +557,13 @@ describe("OT RCP Driver", () => {
             driver.netParams.networkKeySequenceNumber = 1;
             driver.netParams.tcKey = Buffer.from([0x51, 0x69, 0x62, 0x58, 0x53, 0x67, 0x64, 0x56, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
             driver.netParams.tcKeyFrameCounter = 896723;
-            driver.deviceTable.set(1234n, { address16: 1, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
+            driver.deviceTable.set(1234n, {
+                address16: 1,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
+                authorized: true,
+                neighbor: true,
+                recentLQAs: [],
+            });
             const sourceRouteTableEntries: SourceRouteTableEntry[] = [];
 
             for (let i = 0; i < 255; i++) {
@@ -1015,7 +1061,7 @@ describe("OT RCP Driver", () => {
             const source64 = BigInt("0xa4c1386d9b280fdf");
             driver.deviceTable.set(source64, {
                 address16: 0xa18f,
-                rxOnWhenIdle: true,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: false,
                 neighbor: true,
                 recentLQAs: [],
@@ -1126,7 +1172,7 @@ describe("OT RCP Driver", () => {
             expect(sendZigbeeAPSTransportKeyNWKSpy).toHaveBeenCalledTimes(1);
             expect(driver.deviceTable.get(11871832136131022815n)).toStrictEqual({
                 address16: 0xa18f,
-                rxOnWhenIdle: true,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: false,
                 neighbor: true,
                 recentLQAs: [],
@@ -1135,7 +1181,7 @@ describe("OT RCP Driver", () => {
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_DEVICE_ANNOUNCE_BCAST, Buffer.from([0xd8, 0xff, 0x00, 0x00])), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
-            expect(emitSpy).toHaveBeenNthCalledWith(1, "deviceJoined", 0xa18f, 11871832136131022815n, true);
+            expect(emitSpy).toHaveBeenNthCalledWith(1, "deviceJoined", 0xa18f, 11871832136131022815n, structuredClone(COMMON_FFD_MAC_CAP));
             expect(emitSpy).toHaveBeenNthCalledWith(2, "frame", 0xa18f, undefined, expect.any(Object), expect.any(Buffer), 200);
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_NODE_DESC_REQ_FROM_DEVICE, Buffer.from([0xce, 0xff, 0x00, 0x00])), "utf8", () => {});
@@ -1165,7 +1211,7 @@ describe("OT RCP Driver", () => {
 
             expect(driver.deviceTable.get(11871832136131022815n)).toStrictEqual({
                 address16: 0xa18f,
-                rxOnWhenIdle: true,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
                 recentLQAs: [200, 153, 178, 188],
@@ -1213,7 +1259,13 @@ describe("OT RCP Driver", () => {
             driver.parser.on("data", driver.onFrame.bind(driver));
             // joined devices
             // 5c:c7:c1:ff:fe:5e:70:ea
-            driver.deviceTable.set(6685525477083214058n, { address16: 0x3ab1, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
+            driver.deviceTable.set(6685525477083214058n, {
+                address16: 0x3ab1,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
+                authorized: true,
+                neighbor: true,
+                recentLQAs: [],
+            });
             driver.address16ToAddress64.set(0x3ab1, 6685525477083214058n);
             // not set on purpose to observe change from actual route record
             // driver.sourceRouteTable.set(0x3ab1, [{relayAddresses: [], pathCost: 1}]);
@@ -1348,27 +1400,63 @@ describe("OT RCP Driver", () => {
             driver.parser.on("data", driver.onFrame.bind(driver));
             // joined devices
             // 80:4b:50:ff:fe:a4:b9:73
-            driver.deviceTable.set(9244571720527165811n, { address16: 0x96ba, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
+            driver.deviceTable.set(9244571720527165811n, {
+                address16: 0x96ba,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
+                authorized: true,
+                neighbor: true,
+                recentLQAs: [],
+            });
             driver.address16ToAddress64.set(0x96ba, 9244571720527165811n);
             // driver.sourceRouteTable.set(0x96ba, [{relayAddresses: [], pathCost: 1}]);
             // 70:ac:08:ff:fe:d0:4a:58
-            driver.deviceTable.set(8118874123826907736n, { address16: 0x91d2, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
+            driver.deviceTable.set(8118874123826907736n, {
+                address16: 0x91d2,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
+                authorized: true,
+                neighbor: true,
+                recentLQAs: [],
+            });
             driver.address16ToAddress64.set(0x91d2, 8118874123826907736n);
             // driver.sourceRouteTable.set(0x91d2, [{relayAddresses: [], pathCost: 1}]);
             // 00:12:4b:00:24:c2:e1:e1
-            driver.deviceTable.set(5149013569626593n, { address16: 0xcb47, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
+            driver.deviceTable.set(5149013569626593n, {
+                address16: 0xcb47,
+                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
+                authorized: true,
+                neighbor: true,
+                recentLQAs: [],
+            });
             driver.address16ToAddress64.set(0xcb47, 5149013569626593n);
             // mimic no source route entry for 0xcb47
             // 00:12:4b:00:29:27:fd:8c
-            driver.deviceTable.set(5149013643361676n, { address16: 0x6887, rxOnWhenIdle: false, authorized: true, neighbor: false, recentLQAs: [] });
+            driver.deviceTable.set(5149013643361676n, {
+                address16: 0x6887,
+                capabilities: structuredClone(COMMON_RFD_MAC_CAP),
+                authorized: true,
+                neighbor: false,
+                recentLQAs: [],
+            });
             driver.address16ToAddress64.set(0x6887, 5149013643361676n);
             // driver.sourceRouteTable.set(0x6887, [{relayAddresses: [0x96ba], pathCost: 2}]);
             // 00:12:4b:00:25:49:f4:42
-            driver.deviceTable.set(5149013578478658n, { address16: 0x9ed5, rxOnWhenIdle: false, authorized: true, neighbor: false, recentLQAs: [] });
+            driver.deviceTable.set(5149013578478658n, {
+                address16: 0x9ed5,
+                capabilities: structuredClone(COMMON_RFD_MAC_CAP),
+                authorized: true,
+                neighbor: false,
+                recentLQAs: [],
+            });
             driver.address16ToAddress64.set(0x9ed5, 5149013578478658n);
             // driver.sourceRouteTable.set(0x9ed5, [{relayAddresses: [0x91d2], pathCost: 2}]);
             // 00:12:4b:00:25:02:d0:3b
-            driver.deviceTable.set(5149013573816379n, { address16: 0x4b8e, rxOnWhenIdle: false, authorized: true, neighbor: false, recentLQAs: [] });
+            driver.deviceTable.set(5149013573816379n, {
+                address16: 0x4b8e,
+                capabilities: structuredClone(COMMON_RFD_MAC_CAP),
+                authorized: true,
+                neighbor: false,
+                recentLQAs: [],
+            });
             driver.address16ToAddress64.set(0x4b8e, 5149013573816379n);
             // driver.sourceRouteTable.set(0x4b8e, [{relayAddresses: [0xcb47], pathCost: 2}]);
 
@@ -1907,7 +1995,7 @@ describe("OT RCP Driver", () => {
             offset += 8;
             expectedLQITable.writeUInt16LE(0x96ba, offset);
             offset += 2;
-            expectedLQITable.writeUInt8(0x03 /* TODO */ | 0x01, offset);
+            expectedLQITable.writeUInt8(0x01 | 0x01, offset);
             offset += 1;
             expectedLQITable.writeUInt8(0x02 /* TODO */, offset);
             offset += 1;
@@ -1922,7 +2010,7 @@ describe("OT RCP Driver", () => {
             offset += 8;
             expectedLQITable.writeUInt16LE(0x91d2, offset);
             offset += 2;
-            expectedLQITable.writeUInt8(0x03 /* TODO */ | 0x01, offset);
+            expectedLQITable.writeUInt8(0x01 | 0x01, offset);
             offset += 1;
             expectedLQITable.writeUInt8(0x02 /* TODO */, offset);
             offset += 1;
@@ -1937,7 +2025,7 @@ describe("OT RCP Driver", () => {
             offset += 8;
             expectedLQITable.writeUInt16LE(0xcb47, offset);
             offset += 2;
-            expectedLQITable.writeUInt8(0x03 /* TODO */ | 0x01, offset);
+            expectedLQITable.writeUInt8(0x01 | 0x01, offset);
             offset += 1;
             expectedLQITable.writeUInt8(0x02 /* TODO */, offset);
             offset += 1;
@@ -2158,7 +2246,7 @@ describe("OT RCP Driver", () => {
 
         driver.parser._transform(
             Buffer.from(
-                "7e8006714000618804c0570000a2410832fdffa2411efa7f3123feff818e58282d500b087f3123feff818e5800c0bb0ae9c0a6b2e3d3d7389cbc88af5bdca842c96c8ca9eea5e18000000a0014ffc287fbfc0200000001000005000000000000470c7e",
+                "7e8006712f006188e0c05700005ccb091200005ccb016a7f3123feff818e58280b700b087f3123feff818e5800f4d67c4f305990e3ea8000000a0014ff8a719b440000000001000005000000000000484d7e",
                 "hex",
             ),
             "utf8",

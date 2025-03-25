@@ -311,6 +311,52 @@ export type MACHeader = {
 };
 
 /**
+ * Bits:
+ * - [alternatePANCoordinator: 1]
+ * - [deviceType: 1]
+ * - [powerSource: 1]
+ * - [rxOnWhenIdle: 1]
+ * - [reserved1: 1]
+ * - [reserved2: 1]
+ * - [securityCapability: 1]
+ * - [securityCapability: 1]
+ */
+export type MACCapabilities = {
+    /**
+     * The alternate PAN coordinator sub-field is one bit in length and shall be set to 1 if this node is capable of becoming a PAN coordinator.
+     * Otherwise, the alternative PAN coordinator sub-field shall be set to 0.
+     */
+    alternatePANCoordinator: boolean;
+    /**
+     * The device type sub-field is one bit in length and shall be set to 1 if this node is a full function device (FFD).
+     * Otherwise, the device type sub-field shall be set to 0, indicating a reduced function device (RFD).
+     */
+    deviceType: number;
+    /**
+     * The power source sub-field is one bit in length and shall be set to 1 if the current power source is mains power.
+     * Otherwise, the power source sub-field shall be set to 0.
+     * This information is derived from the node current power source field of the node power descriptor.
+     */
+    powerSource: number;
+    /**
+     * The receiver on when idle sub-field is one bit in length and shall be set to 1 if the device does not disable its receiver to
+     * conserve power during idle periods.
+     * Otherwise, the receiver on when idle sub-field shall be set to 0 (see also section 2.3.2.4.)
+     */
+    rxOnWhenIdle: boolean;
+    // reserved1: number;
+    // reserved2: number;
+    /**
+     * The security capability sub-field is one bit in length and shall be set to 1 if the device is capable of sending and receiving
+     * frames secured using the security suite specified in [B1].
+     * Otherwise, the security capability sub-field shall be set to 0.
+     */
+    securityCapability: boolean;
+    /** The allocate address sub-field is one bit in length and shall be set to 0 or 1. */
+    allocateAddress: boolean;
+};
+
+/**
  * if the security enabled subfield is set to 1 in the frame control field, the frame payload is protected as defined by the security suite selected for that relationship.
  */
 export type MACPayload = Buffer;
@@ -668,6 +714,32 @@ function decodeMACHeaderIEs(data: Buffer, offset: number, auxSecHeader: MACAuxSe
 // function decodeMACHeaderPayloadIEs(data: Buffer, offset: number, headerIE: MACHeaderIE): [MACHeaderPayloadIE[], offset: number] {
 //     return [[], offset];
 // }
+
+export function decodeMACCapabilities(capabilities: number): MACCapabilities {
+    return {
+        alternatePANCoordinator: Boolean(capabilities & 0x01),
+        deviceType: (capabilities & 0x02) >> 1,
+        powerSource: (capabilities & 0x04) >> 2,
+        rxOnWhenIdle: Boolean((capabilities & 0x08) >> 3),
+        // reserved1: (capabilities & 0x10) >> 4,
+        // reserved2: (capabilities & 0x20) >> 5,
+        securityCapability: Boolean((capabilities & 0x40) >> 6),
+        allocateAddress: Boolean((capabilities & 0x80) >> 7),
+    };
+}
+
+export function encodeMACCapabilities(capabilities: MACCapabilities): number {
+    return (
+        ((capabilities.alternatePANCoordinator ? 1 : 0) & 0x01) |
+        ((capabilities.deviceType << 1) & 0x02) |
+        ((capabilities.powerSource << 2) & 0x04) |
+        (((capabilities.rxOnWhenIdle ? 1 : 0) << 3) & 0x08) |
+        // (capabilities.reserved1 << 4) & 0x10) |
+        // (capabilities.reserved2 << 5) & 0x20) |
+        (((capabilities.securityCapability ? 1 : 0) << 6) & 0x40) |
+        (((capabilities.allocateAddress ? 1 : 0) << 7) & 0x80)
+    );
+}
 
 export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACFrameControl): [MACHeader, offset: number] {
     let sequenceNumber: number | undefined;
