@@ -13,7 +13,7 @@ import { SPINEL_HEADER_FLG_SPINEL, type SpinelFrame, decodeSpinelFrame, encodeSp
 import { SpinelStatus } from "../src/spinel/statuses";
 import { MACAssociationStatus, type MACCapabilities, type MACHeader, decodeMACFrameControl, decodeMACHeader } from "../src/zigbee/mac";
 import { ZigbeeConsts } from "../src/zigbee/zigbee";
-import { type ZigbeeNWKLinkStatus, ZigbeeNWKManyToOne, ZigbeeNWKStatus } from "../src/zigbee/zigbee-nwk";
+import { ZigbeeNWKConsts, type ZigbeeNWKLinkStatus, ZigbeeNWKManyToOne, ZigbeeNWKStatus } from "../src/zigbee/zigbee-nwk";
 import type { ZigbeeNWKGPHeader } from "../src/zigbee/zigbee-nwkgp";
 import {
     A_CHANNEL,
@@ -647,6 +647,419 @@ describe("OT RCP Driver", () => {
 
             expect(assignedAddresses.length).toStrictEqual(new Set(assignedAddresses).size);
             expect(new Set(assignedAddresses).size).toStrictEqual(ZigbeeConsts.BCAST_MIN - 1);
+        });
+
+        it("handles allow joins timer", async () => {
+            const disallowJoinsSpy = vi.spyOn(driver, "disallowJoins");
+
+            driver.allowJoins(5, true);
+
+            expect(disallowJoinsSpy).toHaveBeenCalledTimes(0);
+
+            await vi.advanceTimersByTimeAsync(6000);
+
+            expect(disallowJoinsSpy).toHaveBeenCalledTimes(1);
+
+            disallowJoinsSpy.mockClear();
+
+            driver.allowJoins(5, true);
+            driver.allowJoins(0, false);
+            await vi.advanceTimersByTimeAsync(6000);
+
+            expect(disallowJoinsSpy).toHaveBeenCalledTimes(1); // cleared timer
+
+            disallowJoinsSpy.mockClear();
+
+            driver.allowJoins(5, true);
+            driver.disallowJoins();
+            await vi.advanceTimersByTimeAsync(6000);
+
+            expect(disallowJoinsSpy).toHaveBeenCalledTimes(1); // cleared timer
+        });
+
+        it("handles GP commissioning mode timer", async () => {
+            const gpExitCommissioningModeSpy = vi.spyOn(driver, "gpExitCommissioningMode");
+
+            driver.gpEnterCommissioningMode(5);
+
+            expect(gpExitCommissioningModeSpy).toHaveBeenCalledTimes(0);
+
+            await vi.advanceTimersByTimeAsync(6000);
+
+            expect(gpExitCommissioningModeSpy).toHaveBeenCalledTimes(1);
+
+            gpExitCommissioningModeSpy.mockClear();
+
+            driver.gpEnterCommissioningMode(5);
+            driver.gpEnterCommissioningMode(0);
+            await vi.advanceTimersByTimeAsync(6000);
+
+            expect(gpExitCommissioningModeSpy).toHaveBeenCalledTimes(1); // cleared timer
+
+            gpExitCommissioningModeSpy.mockClear();
+
+            driver.gpEnterCommissioningMode(5);
+            driver.gpExitCommissioningMode();
+            await vi.advanceTimersByTimeAsync(6000);
+
+            expect(gpExitCommissioningModeSpy).toHaveBeenCalledTimes(1); // cleared timer
+        });
+
+        it("associates", async () => {
+            const assignNetworkAddressSpy = vi.spyOn(driver, "assignNetworkAddress");
+
+            //-- INITIAL JOIN
+            // joins not allowed
+            let network16 = driver.assignNetworkAddress();
+            let network64 = randomBigInt();
+            let [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            driver.allowJoins(0xfe, true);
+
+            // neighbor device, joins allowed
+            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+            expect(driver.deviceTable.get(network64)).toBeDefined();
+            expect(driver.address16ToAddress64.get(network16)).toBeDefined();
+            expect(driver.indirectTransmissions.get(network64)).toBeUndefined();
+            expect(driver.sourceRouteTable.get(network16)).toBeUndefined();
+            expect(driver.pendingAssociations.get(network64)).toBeUndefined();
+
+            // neighbor device, forced denied
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true, true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            // neighbor device, forced allowed
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true, false, true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+
+            // device, joins allowed
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), false);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+            expect(driver.deviceTable.get(network64)).toBeDefined();
+            expect(driver.address16ToAddress64.get(network16)).toBeDefined();
+            expect(driver.indirectTransmissions.get(network64)).toBeDefined();
+            expect(driver.sourceRouteTable.get(network16)).toBeUndefined();
+            expect(driver.pendingAssociations.get(network64)).toBeUndefined();
+
+            // device, forced denied
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), false, true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            // device, forced allowed
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), false, false, true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+
+            // conflict, already present
+            network16 = driver.deviceTable.values().next().value!.address16;
+            network64 = driver.address16ToAddress64.get(network16)!;
+            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            // conflict, on network16
+            network16 = driver.deviceTable.values().next().value!.address16;
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
+            expect(newAddr16).not.toStrictEqual(network16);
+            expect(newAddr16).not.toStrictEqual(0xffff);
+
+            // conflict, on network16/network64
+            network16 = driver.deviceTable.values().next().value!.address16;
+            network64 = driver.address16ToAddress64.get(network16)!;
+            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            // by network64 only
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(undefined, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).not.toStrictEqual(0xffff);
+
+            // by network16 only
+            network16 = driver.deviceTable.values().next().value!.address16;
+            [status, newAddr16] = await driver.associate(network16, undefined, true, structuredClone(COMMON_FFD_MAC_CAP), false);
+
+            expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
+            expect(newAddr16).not.toStrictEqual(network16);
+            expect(newAddr16).not.toStrictEqual(0xffff);
+
+            // mocked PAN full by network16 only
+            network64 = randomBigInt();
+            assignNetworkAddressSpy.mockReturnValueOnce(0xffff);
+            [status, newAddr16] = await driver.associate(undefined, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.PAN_FULL);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            // mocked PAN full by network64 only
+            network16 = driver.deviceTable.values().next().value!.address16;
+            assignNetworkAddressSpy.mockReturnValueOnce(0xffff);
+            [status, newAddr16] = await driver.associate(network16, undefined, true, structuredClone(COMMON_FFD_MAC_CAP), false);
+
+            expect(status).toStrictEqual(MACAssociationStatus.PAN_FULL);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            driver.disallowJoins(); // doesn't matter, but check with disabled just to confirm
+
+            //-- REJOIN
+            expect(driver.deviceTable.size).toBeGreaterThan(0);
+            expect(driver.address16ToAddress64.size).toBeGreaterThan(0);
+
+            // unknown neighbor device
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_FFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            // unknown neighbor device, forced denied
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true, true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            // unknown neighbor device, forced allowed
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true, false, true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+
+            // unknown device
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false);
+
+            expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            // unknown neighbor device, forced denied
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false, true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            // unknown neighbor device, forced allowed
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false, false, true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+
+            // existing neighbor device
+            network16 = driver.deviceTable.values().next().value!.address16;
+            network64 = driver.address16ToAddress64.get(network16)!;
+            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_FFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+
+            // existing neighbor device, forced denied
+            network16 = driver.deviceTable.values().next().value!.address16;
+            network64 = driver.address16ToAddress64.get(network16)!;
+            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true, true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            // existing neighbor device, forced allowed
+            network16 = driver.deviceTable.values().next().value!.address16;
+            network64 = driver.address16ToAddress64.get(network16)!;
+            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true, false, true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+
+            // existing device
+            network16 = driver.deviceTable.values().next().value!.address16;
+            network64 = driver.address16ToAddress64.get(network16)!;
+            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+
+            // existing device, forced denied
+            network16 = driver.deviceTable.values().next().value!.address16;
+            network64 = driver.address16ToAddress64.get(network16)!;
+            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false, true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            // existing device, forced allowed
+            network16 = driver.deviceTable.values().next().value!.address16;
+            network64 = driver.address16ToAddress64.get(network16)!;
+            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false, false, true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+
+            // existing, conflicting, on network16
+            network16 = driver.deviceTable.values().next().value!.address16;
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
+            expect(newAddr16).not.toStrictEqual(network16);
+            expect(newAddr16).not.toStrictEqual(0xffff);
+
+            // existing, by network64 only
+            network64 = driver.address16ToAddress64.get(network16)!;
+            [status, newAddr16] = await driver.associate(undefined, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).not.toStrictEqual(0xffff);
+
+            // existing, by network16 only
+            network16 = driver.deviceTable.values().next().value!.address16;
+            [status, newAddr16] = await driver.associate(network16, undefined, false, structuredClone(COMMON_RFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
+            expect(newAddr16).not.toStrictEqual(network16);
+            expect(newAddr16).not.toStrictEqual(0xffff);
+
+            // existing device, by network64 only, mocked PAN full
+            network64 = randomBigInt();
+            assignNetworkAddressSpy.mockReturnValueOnce(0xffff);
+            [status, newAddr16] = await driver.associate(undefined, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.PAN_FULL);
+            expect(newAddr16).toStrictEqual(0xffff);
+
+            // existing device, by network16 only, mocked PAN full
+            network16 = driver.deviceTable.values().next().value!.address16;
+            assignNetworkAddressSpy.mockReturnValueOnce(0xffff);
+            [status, newAddr16] = await driver.associate(network16, undefined, false, structuredClone(COMMON_FFD_MAC_CAP), false);
+
+            expect(status).toStrictEqual(MACAssociationStatus.PAN_FULL);
+            expect(newAddr16).toStrictEqual(0xffff);
+        });
+
+        it("disassociates", async () => {
+            driver.allowJoins(0xfe, true);
+
+            // neighbor FFD
+            let network16 = driver.assignNetworkAddress();
+            let network64 = randomBigInt();
+            let [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+            expect(driver.deviceTable.get(network64)).toBeDefined();
+            expect(driver.address16ToAddress64.get(network16)).toBeDefined();
+            expect(driver.indirectTransmissions.get(network64)).toBeUndefined();
+            expect(driver.sourceRouteTable.get(network16)).toBeUndefined();
+            expect(driver.pendingAssociations.get(network64)).toBeUndefined();
+
+            await driver.disassociate(network16, undefined);
+
+            expect(driver.deviceTable.get(network64)).toBeUndefined();
+            expect(driver.address16ToAddress64.get(network16)).toBeUndefined();
+            expect(driver.indirectTransmissions.get(network64)).toBeUndefined();
+            expect(driver.sourceRouteTable.get(network16)).toBeUndefined();
+            expect(driver.pendingAssociations.get(network64)).toBeUndefined();
+
+            // FFD
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), false);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+            expect(driver.deviceTable.get(network64)).toBeDefined();
+            expect(driver.address16ToAddress64.get(network16)).toBeDefined();
+            expect(driver.indirectTransmissions.get(network64)).toBeUndefined();
+            expect(driver.sourceRouteTable.get(network16)).toBeUndefined();
+            expect(driver.pendingAssociations.get(network64)).toBeUndefined();
+
+            await driver.disassociate(undefined, network64);
+
+            expect(driver.deviceTable.get(network64)).toBeUndefined();
+            expect(driver.address16ToAddress64.get(network16)).toBeUndefined();
+            expect(driver.indirectTransmissions.get(network64)).toBeUndefined();
+            expect(driver.sourceRouteTable.get(network16)).toBeUndefined();
+            expect(driver.pendingAssociations.get(network64)).toBeUndefined();
+
+            // neighbor RFD
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+            expect(driver.deviceTable.get(network64)).toBeDefined();
+            expect(driver.address16ToAddress64.get(network16)).toBeDefined();
+            expect(driver.indirectTransmissions.get(network64)).toBeDefined();
+            expect(driver.sourceRouteTable.get(network16)).toBeUndefined();
+            expect(driver.pendingAssociations.get(network64)).toBeUndefined();
+
+            await driver.disassociate(network16, undefined);
+
+            expect(driver.deviceTable.get(network64)).toBeUndefined();
+            expect(driver.address16ToAddress64.get(network16)).toBeUndefined();
+            expect(driver.indirectTransmissions.get(network64)).toBeUndefined();
+            expect(driver.sourceRouteTable.get(network16)).toBeUndefined();
+            expect(driver.pendingAssociations.get(network64)).toBeUndefined();
+
+            // RFD
+            network16 = driver.assignNetworkAddress();
+            network64 = randomBigInt();
+            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), false);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
+            expect(driver.deviceTable.get(network64)).toBeDefined();
+            expect(driver.address16ToAddress64.get(network16)).toBeDefined();
+            expect(driver.indirectTransmissions.get(network64)).toBeDefined();
+            expect(driver.sourceRouteTable.get(network16)).toBeUndefined();
+            expect(driver.pendingAssociations.get(network64)).toBeUndefined();
+
+            await driver.disassociate(undefined, network64);
+
+            expect(driver.deviceTable.get(network64)).toBeUndefined();
+            expect(driver.address16ToAddress64.get(network16)).toBeUndefined();
+            expect(driver.indirectTransmissions.get(network64)).toBeUndefined();
+            expect(driver.sourceRouteTable.get(network16)).toBeUndefined();
+            expect(driver.pendingAssociations.get(network64)).toBeUndefined();
         });
     });
 
@@ -2237,7 +2650,7 @@ describe("OT RCP Driver", () => {
             },
             {
                 eui64: 5562607920115904346n,
-                panId: 22464,
+                panId: 22464, //2145,
                 extendedPANId: Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0),
                 channel: 20,
                 nwkUpdateId: 0,

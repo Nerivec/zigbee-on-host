@@ -1628,22 +1628,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     // #region Zigbee NWK layer
 
     /**
-     * 05-3474-23 #3.6.1.10
-     */
-    public assignNetworkAddress(): number {
-        let newNetworkAddress = 0xffff;
-        let unique = false;
-
-        do {
-            // maximum exclusive, minimum inclusive
-            newNetworkAddress = Math.floor(Math.random() * (ZigbeeConsts.BCAST_MIN - 0x0001) + 0x0001);
-            unique = this.address16ToAddress64.get(newNetworkAddress) === undefined;
-        } while (!unique);
-
-        return newNetworkAddress;
-    }
-
-    /**
      * @param cmdId
      * @param finalPayload expected to contain the full payload (including cmdId)
      * @param macDest16
@@ -3663,7 +3647,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 undefined, // no MAC cap through router
                 false, // not neighbor
                 false,
-                true, // was allowed by parent
+                true, // was allowed by parent, expected valid
             );
         } else if (status === 0x02) {
             // left
@@ -4401,6 +4385,22 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     }
 
     /**
+     * 05-3474-23 #3.6.1.10
+     */
+    public assignNetworkAddress(): number {
+        let newNetworkAddress = 0xffff;
+        let unique = false;
+
+        do {
+            // maximum exclusive, minimum inclusive
+            newNetworkAddress = Math.floor(Math.random() * (ZigbeeConsts.BCAST_MIN - 0x0001) + 0x0001);
+            unique = this.address16ToAddress64.get(newNetworkAddress) === undefined;
+        } while (!unique);
+
+        return newNetworkAddress;
+    }
+
+    /**
      * @param source16
      * @param source64 Assumed valid if assocType === 0x00
      * @param initialJoin If false, rejoin.
@@ -4429,21 +4429,30 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         } else if (!allowOverride) {
             if (initialJoin) {
                 if (this.#trustCenterPolicies.allowJoins) {
-                    if (source16 === undefined) {
-                        // MAC join (no source16)
+                    if (source16 === undefined || source16 === ZigbeeConsts.COORDINATOR_ADDRESS || source16 >= ZigbeeConsts.BCAST_MIN) {
+                        // MAC join (no `source16`)
                         newAddress16 = this.assignNetworkAddress();
 
                         if (newAddress16 === 0xffff) {
                             status = MACAssociationStatus.PAN_FULL;
                         }
-                    } else if (this.address16ToAddress64.get(source16) !== undefined) {
-                        // join with already taken source16
-                        newAddress16 = this.assignNetworkAddress();
+                    } else if (source64 !== undefined && this.deviceTable.get(source64) !== undefined) {
+                        // initial join should not conflict on 64, don't allow join if it does
+                        newAddress16 = 0xffff;
+                        status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                    } else {
+                        const existingAddress64 = this.address16ToAddress64.get(source16);
 
-                        if (newAddress16 === 0xffff) {
-                            status = MACAssociationStatus.PAN_FULL;
-                        } else if (newAddress16 !== source16) {
-                            status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                        if (existingAddress64 !== undefined && source64 !== existingAddress64) {
+                            // join with already taken source16
+                            newAddress16 = this.assignNetworkAddress();
+
+                            if (newAddress16 === 0xffff) {
+                                status = MACAssociationStatus.PAN_FULL;
+                            } else {
+                                // tell device to use the newly generated value
+                                status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                            }
                         }
                     }
                 } else {
@@ -4452,22 +4461,50 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 }
             } else {
                 // rejoin
+                if (source16 === undefined || source16 === ZigbeeConsts.COORDINATOR_ADDRESS || source16 >= ZigbeeConsts.BCAST_MIN) {
+                    // rejoin without 16, generate one (XXX: never happens?)
+                    newAddress16 = this.assignNetworkAddress();
+
+                    if (newAddress16 === 0xffff) {
+                        status = MACAssociationStatus.PAN_FULL;
+                    }
+                } else {
+                    const existingAddress64 = this.address16ToAddress64.get(source16);
+
+                    if (existingAddress64 === undefined) {
+                        // device unknown
+                        // XXX: correct way to handle this?
+                        newAddress16 = 0xffff;
+                        status = MACAssociationStatus.PAN_ACCESS_DENIED;
+                    } else if (existingAddress64 !== source64) {
+                        // rejoin with already taken source16
+                        newAddress16 = this.assignNetworkAddress();
+
+                        if (newAddress16 === 0xffff) {
+                            status = MACAssociationStatus.PAN_FULL;
+                        } else {
+                            // tell device to use the newly generated value
+                            status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                        }
+                    }
+                }
                 // if rejoin, network address will be stored
                 // if (this.trustCenterPolicies.allowRejoinsWithWellKnownKey) {
                 // }
-                // TODO: handle rejoin from device that previously left and was removed from known devices (could conflict on 16)
             }
         }
 
         // something went wrong above
+        /* v8 ignore start */
         if (newAddress16 === undefined) {
             newAddress16 = 0xffff;
             status = MACAssociationStatus.PAN_ACCESS_DENIED;
         }
+        /* v8 ignore stop */
 
         logger.debug(
             () =>
-                `DEVICE_JOINING[src=${source16}:${source64} newAddr16=${newAddress16} initialJoin=${initialJoin} cap=${capabilities}] replying with status=${status}`,
+                `DEVICE_JOINING[src=${source16}:${source64} newAddr16=${newAddress16} initialJoin=${initialJoin} deviceType=${capabilities?.deviceType} powerSource=${capabilities?.powerSource} rxOnWhenIdle=${capabilities?.rxOnWhenIdle}] replying with status=${status}`,
             NS,
         );
 
