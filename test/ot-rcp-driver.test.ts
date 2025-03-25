@@ -7,9 +7,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { DEFAULT_WIRESHARK_IP, DEFAULT_ZEP_UDP_PORT, createWiresharkZEPFrame } from "../src/dev/wireshark";
 import { OTRCPDriver, type SourceRouteTableEntry } from "../src/drivers/ot-rcp-driver";
 import { SpinelCommandId } from "../src/spinel/commands";
-import { decodeHdlcFrame } from "../src/spinel/hdlc";
 import { SpinelPropertyId } from "../src/spinel/properties";
-import { SPINEL_HEADER_FLG_SPINEL, type SpinelFrame, decodeSpinelFrame, encodeSpinelFrame } from "../src/spinel/spinel";
+import { SPINEL_HEADER_FLG_SPINEL, encodeSpinelFrame } from "../src/spinel/spinel";
 import { SpinelStatus } from "../src/spinel/statuses";
 import { MACAssociationStatus, type MACCapabilities, type MACHeader, decodeMACFrameControl, decodeMACHeader } from "../src/zigbee/mac";
 import { ZigbeeConsts } from "../src/zigbee/zigbee";
@@ -62,7 +61,6 @@ import {
 
 const randomBigInt = (): bigint => BigInt(`0x${randomBytes(8).toString("hex")}`);
 
-const RESET_POWER_ON_FRAME_HEX = "7e80060070ee747e";
 const COMMON_FFD_MAC_CAP: MACCapabilities = {
     alternatePANCoordinator: false,
     deviceType: 1,
@@ -79,6 +77,61 @@ const COMMON_RFD_MAC_CAP: MACCapabilities = {
     securityCapability: false,
     allocateAddress: true,
 };
+
+const START_FRAMES_SILABS = {
+    protocolVersion: "7e8106010403db0a7e",
+    ncpVersion:
+        "7e820602534c2d4f50454e5448524541442f322e352e322e305f4769744875622d3166636562323235623b2045465233323b204d617220313920323032352031333a34353a343400b5dc7e",
+    interfaceType: "7e83060303573a7e",
+    rcpAPIVersion: "7e8406b0010a681f7e",
+    rcpMinHostAPIVersion: "7e8506b101048ea77e",
+    resetPowerOn: "7e80060070ee747e",
+};
+const START_FRAMES_TI = {
+    protocolVersion: "7e8106010403db0a7e",
+    ncpVersion:
+        "7e8206024f50454e5448524541442f312e342e302d4b6f656e6b6b2d323032352e322e313b204343313358585f4343323658583b2046656220203320323032352032313a30303a303200ef147e",
+    interfaceType: "7e83060303573a7e",
+    rcpAPIVersion: "7e8406b0010be10e7e",
+    rcpMinHostAPIVersion: "7e8506b101048ea77e",
+    resetPowerOn: "7e80060070ee747e",
+};
+const FORM_FRAMES_SILABS = {
+    phyEnabled: "7e87062001f2627e",
+    phyChan: "7e88062114ff8e7e",
+    phyTxPowerSet: "7e8906257d339b817e",
+    mac154LAddr: "7e8a06344d325a6e6f486f5a8f327e",
+    mac154SAddr: "7e8b0635000047f67e",
+    mac154PANId: "7e8c0636d98579727e",
+    macRxOnWhenIdleMode: "7e8d060000e68c7e",
+    macRawStreamEnabled: "7e8e06370108437e",
+    phyTxPowerGet: "7e8106257d3343647e",
+    phyRSSIGet: "7e820626983d517e",
+    phyRXSensitivityGet: "7e8306279c7a127e",
+    phyCCAThresholdGet: "7e840624b5f0d37e",
+};
+const FORM_FRAMES_TI = {
+    phyEnabled: "7e87062001f2627e",
+    phyChan: "7e88062114ff8e7e",
+    phyTxPowerSet: "7e890625052cf47e",
+    mac154LAddr: "7e8a06344d325a6e6f486f5a8f327e",
+    mac154SAddr: "7e8b0635000047f67e",
+    mac154PANId: "7e8c0636d9c57d5d307e",
+    macRxOnWhenIdleMode: "7e8d060000e68c7e",
+    macRawStreamEnabled: "7e8e06370108437e",
+    phyTxPowerGet: "7e81062505f47d317e",
+    phyRSSIGet: "7e820626ef05567e",
+    phyRXSensitivityGet: "7e830627a6a38c7e",
+    phyCCAThresholdGet: "7e8406000297567e",
+};
+// const STOP_FRAMES_SILABS = {
+//     macRawStreamEnabled: "7e8b063700d63c7e",
+//     phyEnabled: "7e8c0620006eb37e",
+// }
+// const STOP_FRAMES_TI = {
+//     macRawStreamEnabled: "7e8c063700f76b7e",
+//     phyEnabled: "7e8d062000d5af7e",
+// }
 
 describe("OT RCP Driver", () => {
     let wiresharkSeqNum: number;
@@ -146,9 +199,7 @@ describe("OT RCP Driver", () => {
         return Buffer.from(encHdlcFrame.data.subarray(0, encHdlcFrame.length));
     };
 
-    const mockGetPropertyPayload = (hex: string): SpinelFrame => decodeSpinelFrame(decodeHdlcFrame(Buffer.from(hex, "hex")));
-
-    const mockStart = async (driver: OTRCPDriver, loadState = true, timeoutReset = false) => {
+    const mockStart = async (driver: OTRCPDriver, loadState = true, timeoutReset = false, frames = START_FRAMES_SILABS) => {
         if (driver) {
             let loadStateSpy: ReturnType<typeof vi.spyOn> | undefined;
 
@@ -156,40 +207,42 @@ describe("OT RCP Driver", () => {
                 loadStateSpy = vi.spyOn(driver, "loadState").mockResolvedValue(undefined);
             }
 
-            const getPropertySpy = vi
-                .spyOn(driver, "getProperty")
-                .mockResolvedValueOnce(mockGetPropertyPayload("7e8106010403db0a7e")) // PROTOCOL_VERSION
-                .mockResolvedValueOnce(
-                    mockGetPropertyPayload(
-                        "7e820602534c2d4f50454e5448524541442f322e352e322e305f4769744875622d3166636562323235623b2045465233323b204d617220313920323032352031333a34353a343400b5dc7e",
-                    ),
-                ) // NCP_VERSION
-                .mockResolvedValueOnce(mockGetPropertyPayload("7e83060303573a7e")) // INTERFACE_TYPE
-                .mockResolvedValueOnce(mockGetPropertyPayload("7e8406b0010a681f7e")) // RCP_API_VERSION
-                .mockResolvedValueOnce(mockGetPropertyPayload("7e8506b101048ea77e")); // RCP_MIN_HOST_API_VERSION
+            let i = -1;
+            const orderedFrames = [
+                frames.protocolVersion,
+                frames.ncpVersion,
+                frames.interfaceType,
+                frames.rcpAPIVersion,
+                frames.rcpMinHostAPIVersion,
+                frames.resetPowerOn,
+            ];
 
-            const waitForResetSpy = vi.spyOn(driver, "waitForReset").mockImplementationOnce(async () => {
-                const p = driver.waitForReset();
+            const reply = async () => {
+                await vi.advanceTimersByTimeAsync(5);
 
-                if (timeoutReset) {
-                    await vi.advanceTimersByTimeAsync(5500);
-                } else {
-                    driver.parser._transform(Buffer.from(RESET_POWER_ON_FRAME_HEX, "hex"), "utf8", () => {});
-                    await vi.advanceTimersByTimeAsync(10);
+                // skip cancel byte
+                if (i >= 0) {
+                    if (i === 5 && timeoutReset) {
+                        await vi.advanceTimersByTimeAsync(5500);
+                    }
+
+                    driver.parser._transform(Buffer.from(orderedFrames[i], "hex"), "utf8", () => {});
+                    await vi.advanceTimersByTimeAsync(5);
                 }
 
-                await p;
-            });
+                i++;
 
+                if (i === orderedFrames.length) {
+                    driver.writer.removeListener("data", reply);
+                }
+            };
+
+            driver.writer.on("data", reply);
             await driver.start();
-
-            nextTidFromStartup += 1; // sendCommand RESET
-
             loadStateSpy?.mockRestore();
-            getPropertySpy.mockRestore();
-            waitForResetSpy.mockRestore();
-
             await vi.advanceTimersByTimeAsync(100); // flush
+
+            nextTidFromStartup = driver.currentSpinelTID + 1;
         }
     };
 
@@ -207,17 +260,41 @@ describe("OT RCP Driver", () => {
 
             await vi.advanceTimersByTimeAsync(100); // flush
         }
+
+        nextTidFromStartup = 1;
     };
 
-    const mockFormNetwork = async (driver: OTRCPDriver, registerTimers = false) => {
+    const mockFormNetwork = async (driver: OTRCPDriver, registerTimers = false, frames = FORM_FRAMES_SILABS) => {
         if (driver) {
-            const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
-            const getPropertySpy = vi
-                .spyOn(driver, "getProperty")
-                .mockResolvedValueOnce(mockGetPropertyPayload("7e8106257d3343647e")) // PHY_TX_POWER
-                .mockResolvedValueOnce(mockGetPropertyPayload("7e82062695d88a7e")) // PHY_RSSI
-                .mockResolvedValueOnce(mockGetPropertyPayload("7e8306279c7a127e")) // PHY_RX_SENSITIVITY
-                .mockResolvedValueOnce(mockGetPropertyPayload("7e840624b5f0d37e")); // PHY_CCA_THRESHOLD
+            let i = 0;
+            const orderedFrames = [
+                frames.phyEnabled,
+                frames.phyChan,
+                frames.phyTxPowerSet,
+                frames.mac154LAddr,
+                frames.mac154SAddr,
+                frames.mac154PANId,
+                frames.macRxOnWhenIdleMode,
+                frames.macRawStreamEnabled,
+                frames.phyTxPowerGet,
+                frames.phyRSSIGet,
+                frames.phyRXSensitivityGet,
+                frames.phyCCAThresholdGet,
+            ];
+
+            const reply = async () => {
+                await vi.advanceTimersByTimeAsync(5);
+                driver.parser._transform(Buffer.from(orderedFrames[i], "hex"), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(5);
+
+                i++;
+
+                if (i === orderedFrames.length) {
+                    driver.writer.removeListener("data", reply);
+                }
+            };
+
+            driver.writer.on("data", reply);
 
             let registerTimersSpy: ReturnType<typeof vi.spyOn> | undefined;
 
@@ -229,11 +306,11 @@ describe("OT RCP Driver", () => {
 
             await driver.formNetwork();
 
-            setPropertySpy.mockRestore();
-            getPropertySpy.mockRestore();
             registerTimersSpy?.mockRestore();
 
             await vi.advanceTimersByTimeAsync(100); // flush
+
+            nextTidFromStartup = driver.currentSpinelTID + 1;
         }
     };
 
@@ -269,7 +346,7 @@ describe("OT RCP Driver", () => {
             expect(sendZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(1 + 1); // *2 by spy mock
             expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1 + 1); // *2 by spy mock
 
-            nextTidFromStartup += 2;
+            nextTidFromStartup = driver.currentSpinelTID + 1;
 
             return [linksSpy, manyToOneSpy, destination16Spy];
         }
@@ -601,9 +678,11 @@ describe("OT RCP Driver", () => {
             await expect(driver.resetNetwork()).rejects.toThrow("Cannot reset network after state already loaded");
         });
 
-        it("forms network", async () => {
-            await mockStart(driver);
-            await mockFormNetwork(driver);
+        it("starts & forms network - Silabs", async () => {
+            const consoleInfoSpy = vi.spyOn(console, "info");
+
+            await mockStart(driver, true, false, START_FRAMES_SILABS);
+            await mockFormNetwork(driver, false, FORM_FRAMES_SILABS);
 
             expect(driver.isNetworkUp()).toStrictEqual(true);
             expect(driver.protocolVersionMajor).toStrictEqual(4);
@@ -612,6 +691,33 @@ describe("OT RCP Driver", () => {
             expect(driver.interfaceType).toStrictEqual(3);
             expect(driver.rcpAPIVersion).toStrictEqual(10);
             expect(driver.rcpMinHostAPIVersion).toStrictEqual(4);
+
+            expect(consoleInfoSpy).toHaveBeenCalledWith(
+                expect.stringContaining(
+                    "ot-rcp-driver: ======== Network started (PHY: txPower=19dBm rssi=-104dBm rxSensitivity=-100dBm ccaThreshold=-75dBm) ========",
+                ),
+            );
+        });
+
+        it("starts & forms network - TI", async () => {
+            const consoleInfoSpy = vi.spyOn(console, "info");
+
+            await mockStart(driver, true, false, START_FRAMES_TI);
+            await mockFormNetwork(driver, false, FORM_FRAMES_TI);
+
+            expect(driver.isNetworkUp()).toStrictEqual(true);
+            expect(driver.protocolVersionMajor).toStrictEqual(4);
+            expect(driver.protocolVersionMinor).toStrictEqual(3);
+            expect(driver.ncpVersion).toStrictEqual("OPENTHREAD/1.4.0-Koenkk-2025.2.1; CC13XX_CC26XX; Feb  3 2025 21:00:02");
+            expect(driver.interfaceType).toStrictEqual(3);
+            expect(driver.rcpAPIVersion).toStrictEqual(11);
+            expect(driver.rcpMinHostAPIVersion).toStrictEqual(4);
+
+            expect(consoleInfoSpy).toHaveBeenCalledWith(
+                expect.stringContaining(
+                    "ot-rcp-driver: ======== Network started (PHY: txPower=5dBm rssi=-17dBm rxSensitivity=-90dBm ccaThreshold=undefineddBm) ========",
+                ),
+            );
         });
 
         it("throws when trying to form network before state is loaded", async () => {

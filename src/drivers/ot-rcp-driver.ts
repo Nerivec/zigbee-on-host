@@ -881,6 +881,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         return this.#rcpMinHostAPIVersion;
     }
 
+    get currentSpinelTID(): number {
+        return this.#spinelTID + 1;
+    }
+
     // #endregion
 
     // #region TIDs/counters
@@ -1058,10 +1062,12 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // logger.debug(() => `<--- HDLC[length=${hdlcFrame.length}]`, NS);
         const spinelFrame = decodeSpinelFrame(hdlcFrame);
 
+        /* v8 ignore start */
         if (spinelFrame.header.flg !== SPINEL_HEADER_FLG_SPINEL) {
             // non-Spinel frame (likely BLE HCI)
             return;
         }
+        /* v8 ignore stop */
 
         logger.debug(() => `<--- SPINEL[tid=${spinelFrame.header.tid} cmdId=${spinelFrame.commandId} len=${spinelFrame.payload.byteLength}]`, NS);
 
@@ -4222,7 +4228,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.setProperty(writePropertyC(SpinelPropertyId.PHY_CHAN, this.netParams.channel));
 
         // TODO: ?
-        // await this.setPHYCCAThreshold(10);
+        // try { await this.setPHYCCAThreshold(10); } catch (error) {}
         await this.setPHYTXPower(this.netParams.txPower);
 
         await this.setProperty(writePropertyE(SpinelPropertyId.MAC_15_4_LADDR, this.netParams.eui64));
@@ -4235,7 +4241,13 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const txPower = await this.getPHYTXPower();
         const radioRSSI = await this.getPHYRSSI();
         this.rssiMin = await this.getPHYRXSensitivity();
-        const ccaThreshold = await this.getPHYCCAThreshold();
+        let ccaThreshold: number | undefined;
+
+        try {
+            ccaThreshold = await this.getPHYCCAThreshold();
+        } catch (error) {
+            logger.debug(() => `PHY_CCA_THRESHOLD: ${error}`, NS);
+        }
 
         logger.info(
             `======== Network started (PHY: txPower=${txPower}dBm rssi=${radioRSSI}dBm rxSensitivity=${this.rssiMin}dBm ccaThreshold=${ccaThreshold}dBm) ========`,
@@ -5354,6 +5366,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     /**
      * The CCA (clear-channel assessment) threshold.
+     * NOTE: Currently not implemented in: ot-ti
      * @returns dBm (int8)
      */
     public async getPHYCCAThreshold(): Promise<number> {
@@ -5366,6 +5379,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * The CCA (clear-channel assessment) threshold.
      * Set to -128 to disable.
      * The value will be rounded down to a value that is supported by the underlying radio hardware.
+     * NOTE: Currently not implemented in: ot-ti
      * @param ccaThreshold dBm (>= -128 and <= 127)
      */
     public async setPHYCCAThreshold(ccaThreshold: number): Promise<void> {
