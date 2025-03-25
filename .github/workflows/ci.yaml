@@ -40,9 +40,7 @@ jobs:
 
       - run: npm run build:prod
 
-      # coverage disabled in early stages
-      # - run: npm run test:cov
-      - run: npm run test
+      - run: npm run test:cov
 
       # get some "in-workflow" reference numbers for future comparison
       # TODO: send results to PR as needed

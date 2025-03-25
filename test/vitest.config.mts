@@ -18,7 +18,11 @@ export default defineConfig({
             reporter: ["text", "html"],
             reportOnFailure: false,
             thresholds: {
-                100: true,
+                /** current dev status, should maintain above this */
+                statements: 70,
+                functions: 75,
+                branches: 75,
+                lines: 70,
             },
         },
     },
