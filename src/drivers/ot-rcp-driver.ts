@@ -17,6 +17,7 @@ import {
     getPackedUInt,
     readPropertyStreamRaw,
     readPropertyU,
+    readPropertyc,
     readPropertyi,
     readPropertyii,
     writePropertyC,
@@ -31,15 +32,18 @@ import { SpinelStatus } from "../spinel/statuses.js";
 import { logger } from "../utils/logger.js";
 import {
     MACAssociationStatus,
+    type MACCapabilities,
     MACCommandId,
     MACFrameAddressMode,
     MACFrameType,
     MACFrameVersion,
     type MACHeader,
     ZigbeeMACConsts,
+    decodeMACCapabilities,
     decodeMACFrameControl,
     decodeMACHeader,
     decodeMACPayload,
+    encodeMACCapabilities,
     encodeMACFrame,
     encodeMACFrameZigbee,
     encodeMACZigbeeBeacon,
@@ -99,10 +103,10 @@ const NS = "ot-rcp-driver";
 interface AdapterDriverEventMap {
     macFrame: [payload: Buffer, rssi?: number];
     fatalError: [message: string];
-    frame: [sender16: number | undefined, sender64: bigint | undefined, apsHeader: ZigbeeAPSHeader, apsPayload: ZigbeeAPSPayload, rssi: number];
-    gpFrame: [cmdId: number, payload: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, rssi: number];
-    deviceJoined: [source16: number, source64: bigint];
-    deviceRejoined: [source16: number, source64: bigint];
+    frame: [sender16: number | undefined, sender64: bigint | undefined, apsHeader: ZigbeeAPSHeader, apsPayload: ZigbeeAPSPayload, lqa: number];
+    gpFrame: [cmdId: number, payload: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, lqa: number];
+    deviceJoined: [source16: number, source64: bigint, capabilities: MACCapabilities];
+    deviceRejoined: [source16: number, source64: bigint, capabilities: MACCapabilities];
     deviceLeft: [source16: number, source64: bigint];
     deviceAuthorized: [source16: number, source64: bigint];
 }
@@ -367,11 +371,16 @@ export type DeviceTableEntry = {
     // address64: bigint; // mapped
     address16: number;
     /** Indicates whether the device keeps its receiver on when idle */
-    rxOnWhenIdle: boolean;
+    capabilities: MACCapabilities | undefined;
     /** Indicates whether the device verified its key */
     authorized: boolean;
     /** Indicates whether the device is a neighbor */
     neighbor: boolean;
+    /**
+     * List of recently observed LQAs.
+     * Note: this is runtime-only
+     */
+    recentLQAs: number[];
 };
 
 export type SourceRouteTableEntry = {
@@ -672,33 +681,50 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public readonly parser: OTRCPParser;
     public readonly streamRawConfig: StreamRawConfig;
     public readonly savePath: string;
-    private emitMACFrames: boolean;
+    #emitMACFrames: boolean;
+
+    #protocolVersionMajor = 0;
+    #protocolVersionMinor = 0;
+    #ncpVersion = "";
+    #interfaceType = 0;
+    #rcpAPIVersion = 0;
+    #rcpMinHostAPIVersion = 0;
+
+    /** The minimum observed RSSI */
+    public rssiMin = -100;
+    /** The maximum observed RSSI */
+    public rssiMax = -25;
+
+    /** The minimum observed LQI */
+    public lqiMin = 15;
+    /** The maximum observed LQI */
+    public lqiMax = 250;
 
     /**
      * Transaction ID used in Spinel frame
      *
      * NOTE: 0 is used for "no response expected/needed" (e.g. unsolicited update commands from NCP to host)
      */
-    private spinelTID: number;
+    #spinelTID: number;
     /** Sequence number used in outgoing MAC frames */
-    private macSeqNum: number;
+    #macSeqNum: number;
     /** Sequence number used in outgoing NWK frames */
-    private nwkSeqNum: number;
+    #nwkSeqNum: number;
     /** Counter used in outgoing APS frames */
-    private apsCounter: number;
+    #apsCounter: number;
     /** Sequence number used in outgoing ZDO frames */
-    private zdoSeqNum: number;
+    #zdoSeqNum: number;
     /** Whether source routing is currently enabled */
-    private sourceRouting: boolean;
+    #sourceRouting: boolean;
     /**
      * 8-bit sequence number for route requests. Incremented by 1 every time the NWK layer on a particular device issues a route request.
      */
-    private routeRequestId: number;
+    #routeRequestId: number;
 
     /** If defined, indicates we're waiting for the property with the specific payload to come in */
-    private resetWaiter: { timer: NodeJS.Timeout; resolve: (frame: SpinelFrame) => void } | undefined;
+    #resetWaiter: { timer: NodeJS.Timeout; resolve: (frame: SpinelFrame) => void } | undefined;
     /** TID currently being awaited */
-    private readonly tidWaiters: Map<
+    readonly #tidWaiters: Map<
         number,
         {
             timer: NodeJS.Timeout;
@@ -707,13 +733,13 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         }
     >;
 
-    private stateLoaded: boolean;
-    private networkUp: boolean;
+    #stateLoaded: boolean;
+    #networkUp: boolean;
 
-    private saveStateTimeout: NodeJS.Timeout | undefined;
-    private pendingChangeChannel: NodeJS.Timeout | undefined;
-    private nwkLinkStatusTimeout: NodeJS.Timeout | undefined;
-    private manyToOneRouteRequestTimeout: NodeJS.Timeout | undefined;
+    #saveStateTimeout: NodeJS.Timeout | undefined;
+    #pendingChangeChannel: NodeJS.Timeout | undefined;
+    #nwkLinkStatusTimeout: NodeJS.Timeout | undefined;
+    #manyToOneRouteRequestTimeout: NodeJS.Timeout | undefined;
 
     /** Associations pending DATA_RQ from device */
     public readonly pendingAssociations: Map<bigint, { func: () => Promise<void>; timestamp: number }>;
@@ -722,22 +748,22 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     //---- Trust Center (see 05-3474-R #4.7.1)
 
-    private readonly trustCenterPolicies: TrustCenterPolicies;
-    private macAssociationPermit: boolean;
-    private allowJoinTimeout: NodeJS.Timeout | undefined;
+    readonly #trustCenterPolicies: TrustCenterPolicies;
+    #macAssociationPermit: boolean;
+    #allowJoinTimeout: NodeJS.Timeout | undefined;
 
     //----- Green Power (see 14-0563-18)
 
-    private gpCommissioningMode: boolean;
-    private gpCommissioningWindowTimeout: NodeJS.Timeout | undefined;
-    private gpLastMACSequenceNumber: number;
-    private gpLastSecurityFrameCounter: number;
+    #gpCommissioningMode: boolean;
+    #gpCommissioningWindowTimeout: NodeJS.Timeout | undefined;
+    #gpLastMACSequenceNumber: number;
+    #gpLastSecurityFrameCounter: number;
 
     //---- NWK
 
     public netParams: NetworkParameters;
     /** pre-computed hash of default TC link key for VERIFY_KEY. set by `loadState` */
-    private tcVerifyKeyHash!: Buffer;
+    #tcVerifyKeyHash!: Buffer;
     /** Master table of all known devices on the network. mapping by network64 */
     public readonly deviceTable: Map<bigint, DeviceTableEntry>;
     /** Lookup synced with deviceTable, maps network address to IEEE address */
@@ -749,9 +775,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     //---- APS
 
     /** mapping by network16 */
-    public readonly apsDeviceKeyPairSet: Map<number, APSDeviceKeyPairSet>;
+    // public readonly apsDeviceKeyPairSet: Map<number, APSDeviceKeyPairSet>;
     /** mapping by network16 */
-    public readonly apsBindingTable: Map<number, APSBindingTable>;
+    // public readonly apsBindingTable: Map<number, APSBindingTable>;
 
     //---- Attribute
 
@@ -766,29 +792,29 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         }
 
         this.savePath = join(saveDir, "zoh.save");
-        this.emitMACFrames = emitMACFrames;
+        this.#emitMACFrames = emitMACFrames;
         this.streamRawConfig = streamRawConfig;
         this.writer = new OTRCPWriter({ highWaterMark: CONFIG_HIGHWATER_MARK });
         this.parser = new OTRCPParser({ readableHighWaterMark: CONFIG_HIGHWATER_MARK });
 
-        this.spinelTID = -1; // start at 0 but effectively 1 returned by first nextTID() call
-        this.resetWaiter = undefined;
-        this.tidWaiters = new Map();
+        this.#spinelTID = -1; // start at 0 but effectively 1 returned by first nextTID() call
+        this.#resetWaiter = undefined;
+        this.#tidWaiters = new Map();
 
-        this.macSeqNum = 0; // start at 1
-        this.nwkSeqNum = 0; // start at 1
-        this.apsCounter = 0; // start at 1
-        this.zdoSeqNum = 0; // start at 1
-        this.sourceRouting = true;
-        this.routeRequestId = 0; // start at 1
+        this.#macSeqNum = 0; // start at 1
+        this.#nwkSeqNum = 0; // start at 1
+        this.#apsCounter = 0; // start at 1
+        this.#zdoSeqNum = 0; // start at 1
+        this.#sourceRouting = true;
+        this.#routeRequestId = 0; // start at 1
 
-        this.stateLoaded = false;
-        this.networkUp = false;
+        this.#stateLoaded = false;
+        this.#networkUp = false;
         this.pendingAssociations = new Map();
         this.indirectTransmissions = new Map();
 
         //---- Trust Center
-        this.trustCenterPolicies = {
+        this.#trustCenterPolicies = {
             allowJoins: false,
             installCode: InstallCodePolicy.NOT_REQUIRED,
             allowRejoinsWithWellKnownKey: true,
@@ -800,24 +826,24 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             allowRemoteTCPolicyChange: false,
             allowVirtualDevices: false,
         };
-        this.macAssociationPermit = false;
+        this.#macAssociationPermit = false;
 
         //---- Green Power
-        this.gpCommissioningMode = false;
-        this.gpLastMACSequenceNumber = -1;
-        this.gpLastSecurityFrameCounter = -1;
+        this.#gpCommissioningMode = false;
+        this.#gpLastMACSequenceNumber = -1;
+        this.#gpLastSecurityFrameCounter = -1;
 
         //---- NWK
         this.netParams = netParams;
-        this.tcVerifyKeyHash = Buffer.alloc(0); // set by `loadState`
+        this.#tcVerifyKeyHash = Buffer.alloc(0); // set by `loadState`
 
         this.deviceTable = new Map();
         this.address16ToAddress64 = new Map();
         this.sourceRouteTable = new Map();
 
         //---- APS
-        this.apsDeviceKeyPairSet = new Map();
-        this.apsBindingTable = new Map();
+        // this.apsDeviceKeyPairSet = new Map();
+        // this.apsBindingTable = new Map();
 
         //---- Attributes
         this.configAttributes = {
@@ -829,39 +855,67 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         };
     }
 
+    // #region Getters/Setters
+
+    get protocolVersionMajor(): number {
+        return this.#protocolVersionMajor;
+    }
+
+    get protocolVersionMinor(): number {
+        return this.#protocolVersionMinor;
+    }
+
+    get ncpVersion(): string {
+        return this.#ncpVersion;
+    }
+
+    get interfaceType(): number {
+        return this.#interfaceType;
+    }
+
+    get rcpAPIVersion(): number {
+        return this.#rcpAPIVersion;
+    }
+
+    get rcpMinHostAPIVersion(): number {
+        return this.#rcpMinHostAPIVersion;
+    }
+
+    // #endregion
+
     // #region TIDs/counters
 
     /**
      * @returns increased TID offsetted by +1. [1-14] range for the "actually-used" value (0 is reserved)
      */
     private nextSpinelTID(): number {
-        this.spinelTID = (this.spinelTID + 1) % CONFIG_TID_MASK;
+        this.#spinelTID = (this.#spinelTID + 1) % CONFIG_TID_MASK;
 
-        return this.spinelTID + 1;
+        return this.#spinelTID + 1;
     }
 
     private nextMACSeqNum(): number {
-        this.macSeqNum = (this.macSeqNum + 1) & 0xff;
+        this.#macSeqNum = (this.#macSeqNum + 1) & 0xff;
 
-        return this.macSeqNum;
+        return this.#macSeqNum;
     }
 
     private nextNWKSeqNum(): number {
-        this.nwkSeqNum = (this.nwkSeqNum + 1) & 0xff;
+        this.#nwkSeqNum = (this.#nwkSeqNum + 1) & 0xff;
 
-        return this.nwkSeqNum;
+        return this.#nwkSeqNum;
     }
 
     private nextAPSCounter(): number {
-        this.apsCounter = (this.apsCounter + 1) & 0xff;
+        this.#apsCounter = (this.#apsCounter + 1) & 0xff;
 
-        return this.apsCounter;
+        return this.#apsCounter;
     }
 
     private nextZDOSeqNum(): number {
-        this.zdoSeqNum = (this.zdoSeqNum + 1) & 0xff;
+        this.#zdoSeqNum = (this.#zdoSeqNum + 1) & 0xff;
 
-        return this.zdoSeqNum;
+        return this.#zdoSeqNum;
     }
 
     private nextTCKeyFrameCounter(): number {
@@ -877,9 +931,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     }
 
     private nextRouteRequestId(): number {
-        this.routeRequestId = (this.routeRequestId + 1) & 0xff;
+        this.#routeRequestId = (this.#routeRequestId + 1) & 0xff;
 
-        return this.routeRequestId;
+        return this.#routeRequestId;
     }
 
     private decrementRadius(radius: number): number {
@@ -902,43 +956,44 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // flush
         this.writer.writeBuffer(Buffer.from([HdlcReservedByte.FLAG]));
 
+        // Example output:
+        //   Protocol version: 4.3
+        //   NCP version: SL-OPENTHREAD/2.5.2.0_GitHub-1fceb225b; EFR32; Mar 19 2025 13:45:44
+        //   Interface type: 3
+        //   RCP API version: 10
+        //   RCP min host API version: 4
+
         // check the protocol version to see if it is supported
         let response = await this.getProperty(SpinelPropertyId.PROTOCOL_VERSION);
-        const [major, minor] = readPropertyii(SpinelPropertyId.PROTOCOL_VERSION, response.payload);
+        [this.#protocolVersionMajor, this.#protocolVersionMinor] = readPropertyii(SpinelPropertyId.PROTOCOL_VERSION, response.payload);
 
-        logger.info(`Protocol version: ${major}.${minor}`, NS);
+        logger.info(`Protocol version: ${this.#protocolVersionMajor}.${this.#protocolVersionMinor}`, NS);
 
         // check the NCP version to see if a firmware update may be necessary
         response = await this.getProperty(SpinelPropertyId.NCP_VERSION);
         // recommended format: STACK-NAME/STACK-VERSION[BUILD_INFO][; OTHER_INFO]; BUILD_DATE_AND_TIME
-        const ncpVersion = readPropertyU(SpinelPropertyId.NCP_VERSION, response.payload);
+        this.#ncpVersion = readPropertyU(SpinelPropertyId.NCP_VERSION, response.payload).replaceAll("\u0000", "");
 
-        logger.info(`NCP version: ${ncpVersion}`, NS);
+        logger.info(`NCP version: ${this.#ncpVersion}`, NS);
 
         // check interface type to make sure that it is what we expect
         response = await this.getProperty(SpinelPropertyId.INTERFACE_TYPE);
-        const interfaceType = readPropertyi(SpinelPropertyId.INTERFACE_TYPE, response.payload);
+        this.#interfaceType = readPropertyi(SpinelPropertyId.INTERFACE_TYPE, response.payload);
 
-        logger.info(`Interface type: ${interfaceType}`, NS);
+        logger.info(`Interface type: ${this.#interfaceType}`, NS);
 
         response = await this.getProperty(SpinelPropertyId.RCP_API_VERSION);
-        const rcpAPIVersion = readPropertyi(SpinelPropertyId.RCP_API_VERSION, response.payload);
+        this.#rcpAPIVersion = readPropertyi(SpinelPropertyId.RCP_API_VERSION, response.payload);
 
-        logger.info(`RCP API version: ${rcpAPIVersion}`, NS);
+        logger.info(`RCP API version: ${this.#rcpAPIVersion}`, NS);
 
         response = await this.getProperty(SpinelPropertyId.RCP_MIN_HOST_API_VERSION);
-        const rcpMinHostAPIVersion = readPropertyi(SpinelPropertyId.RCP_MIN_HOST_API_VERSION, response.payload);
+        this.#rcpMinHostAPIVersion = readPropertyi(SpinelPropertyId.RCP_MIN_HOST_API_VERSION, response.payload);
 
-        logger.info(`RCP min host API version: ${rcpMinHostAPIVersion}`, NS);
+        logger.info(`RCP min host API version: ${this.#rcpMinHostAPIVersion}`, NS);
 
         await this.sendCommand(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.STACK]), false);
-
-        await new Promise<SpinelFrame>((resolve, reject) => {
-            this.resetWaiter = {
-                timer: setTimeout(() => reject(new Error("Reset timeout after 5000ms")), 5000),
-                resolve,
-            };
-        });
+        await this.waitForReset();
 
         logger.info("======== Driver started ========", NS);
     }
@@ -950,20 +1005,21 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.gpExitCommissioningMode();
 
         // pre-emptive
-        this.networkUp = false;
+        this.#networkUp = false;
 
         // TODO: clear all timeouts/intervals
-        clearTimeout(this.saveStateTimeout);
-        clearTimeout(this.pendingChangeChannel);
-        clearTimeout(this.nwkLinkStatusTimeout);
-        clearTimeout(this.manyToOneRouteRequestTimeout);
+        clearTimeout(this.#resetWaiter?.timer);
+        clearTimeout(this.#saveStateTimeout);
+        clearTimeout(this.#pendingChangeChannel);
+        clearTimeout(this.#nwkLinkStatusTimeout);
+        clearTimeout(this.#manyToOneRouteRequestTimeout);
 
-        for (const [, waiter] of this.tidWaiters) {
+        for (const [, waiter] of this.#tidWaiters) {
             clearTimeout(waiter.timer);
-            // waiter.reject(new Error("Driver stopping"));
+            waiter.reject(new Error("Driver stopping"));
         }
 
-        this.tidWaiters.clear();
+        this.#tidWaiters.clear();
 
         // TODO: proper spinel/radio shutdown?
         await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false));
@@ -974,12 +1030,21 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         logger.info("======== Driver stopped ========", NS);
     }
 
+    public async waitForReset(): Promise<void> {
+        await new Promise<SpinelFrame>((resolve, reject) => {
+            this.#resetWaiter = {
+                timer: setTimeout(() => reject(new Error("Reset timeout after 5000ms")), 5000),
+                resolve,
+            };
+        });
+    }
+
     /**
      * Performs a software reset into bootloader.
      * Will stop network if up.
      */
     public async resetIntoBootloader(): Promise<void> {
-        if (this.networkUp) {
+        if (this.#networkUp) {
             await this.stop();
         }
 
@@ -1001,7 +1066,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         logger.debug(() => `<--- SPINEL[tid=${spinelFrame.header.tid} cmdId=${spinelFrame.commandId} len=${spinelFrame.payload.byteLength}]`, NS);
 
         // resolve waiter if any (never for tid===0 since unsolicited frames)
-        const waiter = spinelFrame.header.tid > 0 ? this.tidWaiters.get(spinelFrame.header.tid) : undefined;
+        const waiter = spinelFrame.header.tid > 0 ? this.#tidWaiters.get(spinelFrame.header.tid) : undefined;
         let status: SpinelStatus = SpinelStatus.OK;
 
         if (waiter) {
@@ -1022,14 +1087,15 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 case SpinelPropertyId.LAST_STATUS: {
                     [status] = getPackedUInt(spinelFrame.payload, pOffset);
 
-                    logger.debug(() => `<--- SPINEL LAST_STATUS[${SpinelStatus[status]}]`, NS);
+                    // verbose, waiter will provide feedback
+                    // logger.debug(() => `<--- SPINEL LAST_STATUS[${SpinelStatus[status]}]`, NS);
 
                     // TODO: getting RESET_POWER_ON after RESET instead of RESET_SOFTWARE??
-                    if (this.resetWaiter && (status === SpinelStatus.RESET_SOFTWARE || status === SpinelStatus.RESET_POWER_ON)) {
-                        clearTimeout(this.resetWaiter.timer);
-                        this.resetWaiter.resolve(spinelFrame);
+                    if (this.#resetWaiter && (status === SpinelStatus.RESET_SOFTWARE || status === SpinelStatus.RESET_POWER_ON)) {
+                        clearTimeout(this.#resetWaiter.timer);
+                        this.#resetWaiter.resolve(spinelFrame);
 
-                        this.resetWaiter = undefined;
+                        this.#resetWaiter = undefined;
                     }
 
                     break;
@@ -1045,7 +1111,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             }
         }
 
-        this.tidWaiters.delete(spinelFrame.header.tid);
+        this.#tidWaiters.delete(spinelFrame.header.tid);
     }
 
     /**
@@ -1053,11 +1119,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      */
     public async onStreamRawFrame(payload: Buffer, metadata: SpinelStreamRawMetadata | undefined): Promise<void> {
         // discard MAC frames before network is started
-        if (!this.networkUp) {
+        if (!this.#networkUp) {
             return;
         }
 
-        if (this.emitMACFrames) {
+        if (this.#emitMACFrames) {
             setImmediate(() => {
                 this.emit("macFrame", payload, metadata?.rssi);
             });
@@ -1141,7 +1207,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                             nwkGPHeader,
                         );
 
-                        this.processZigbeeNWKGPFrame(nwkGPPayload, macHeader, nwkGPHeader, metadata?.rssi ?? 0);
+                        this.processZigbeeNWKGPFrame(nwkGPPayload, macHeader, nwkGPHeader, this.computeLQA(metadata?.rssi ?? this.rssiMin));
                     } else {
                         logger.debug(() => `<-x- NWKGP Invalid frame addressing ${macFCF.destAddrMode} (${macHeader.destination16})`, NS);
                         return;
@@ -1159,6 +1225,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                         return;
                     }
 
+                    const sourceLQA = this.computeDeviceLQA(nwkHeader.source16, nwkHeader.source64, metadata?.rssi ?? this.rssiMin);
                     const nwkPayload = decodeZigbeeNWKPayload(
                         macPayload,
                         nwkHOutOffset,
@@ -1187,7 +1254,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                             apsHeader,
                         );
 
-                        await this.onZigbeeAPSFrame(apsPayload, macHeader, nwkHeader, apsHeader, metadata?.rssi ?? 0);
+                        await this.onZigbeeAPSFrame(apsPayload, macHeader, nwkHeader, apsHeader, sourceLQA);
                     } else if (nwkFCF.frameType === ZigbeeNWKFrameType.CMD) {
                         await this.processZigbeeNWKCommandFrame(nwkPayload, macHeader, nwkHeader);
                     } else if (nwkFCF.frameType === ZigbeeNWKFrameType.INTERPAN) {
@@ -1232,7 +1299,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public async waitForTID(tid: number, timeout: number): Promise<SpinelFrame> {
         return await new Promise<SpinelFrame>((resolve, reject) => {
             // TODO reject if tid already present? (shouldn't happen as long as concurrency is fine...)
-            this.tidWaiters.set(tid, {
+            this.#tidWaiters.set(tid, {
                 timer: setTimeout(() => reject(new Error(`-x-> SPINEL[tid=${tid}] Timeout after ${timeout}ms`)), timeout),
                 resolve,
                 reject,
@@ -1255,20 +1322,25 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     // #region MAC Layer
 
+    /**
+     * Send MAC 802.15.4 frame.
+     * @param seqNum
+     * @param payload
+     * @param dest16
+     * @param dest64
+     */
     public async sendMACFrame(seqNum: number, payload: Buffer, dest16: number | undefined, dest64: bigint | undefined): Promise<void> {
         const func = async (): Promise<void> => {
             try {
                 logger.debug(() => `===> MAC[seqNum=${seqNum} dst=${dest16}:${dest64}]`, NS);
 
-                if (this.emitMACFrames) {
+                if (this.#emitMACFrames) {
                     setImmediate(() => {
                         this.emit("macFrame", payload);
                     });
                 }
 
                 await this.setProperty(writePropertyStreamRaw(payload, this.streamRawConfig));
-
-                logger.debug(() => `<=== MAC[seqNum=${seqNum} dst=${dest16}:${dest64}]`, NS);
             } catch (error) {
                 logger.error(`=x=> MAC[seqNum=${seqNum} dst=${dest16}:${dest64}] ${(error as Error).message}`, NS);
             }
@@ -1293,7 +1365,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     });
 
                     logger.debug(
-                        () => `=|=> MAC[seqNum=${seqNum} dst=${dest16}:${dest64}] set for indirect transmission (count: ${addrTXs.length})`,
+                        () => `=|=> MAC[seqNum=${seqNum} dst=${dest16}:${dest64}] set for indirect transmission (count=${addrTXs.length})`,
                         NS,
                     );
                 } else {
@@ -1351,8 +1423,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public async processMACCommandFrame(data: Buffer, macHeader: MACHeader): Promise<void> {
         let offset = 0;
 
-        logger.debug(() => `<=== MAC CMD[cmdId=${macHeader.commandId} macSrc=${macHeader.source16}:${macHeader.source64}]`, NS);
-
         switch (macHeader.commandId!) {
             case MACCommandId.ASSOC_REQ: {
                 offset = await this.processMACAssocReq(data, offset, macHeader);
@@ -1377,7 +1447,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             // COORD_REALIGN
             // GTS_REQ
             default: {
-                logger.error(`<=x= MAC CMD Unsupported ${macHeader.commandId}.`, NS);
+                logger.error(`<=x= MAC CMD[cmdId=${macHeader.commandId} macSrc=${macHeader.source16}:${macHeader.source64}] Unsupported`, NS);
                 return;
             }
         }
@@ -1392,16 +1462,17 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const capabilities = data.readUInt8(offset);
         offset += 1;
 
-        logger.debug(() => `<=== MAC ASSOC_REQ[cap=${capabilities}]`, NS);
+        logger.debug(() => `<=== MAC ASSOC_REQ[macSrc=${macHeader.source16}:${macHeader.source64} cap=${capabilities}]`, NS);
 
         if (macHeader.source64 === undefined) {
-            logger.debug(() => `<=x= MAC ASSOC_REQ[cap=${capabilities}] Invalid source64`, NS);
+            logger.debug(() => `<=x= MAC ASSOC_REQ[macSrc=${macHeader.source16}:${macHeader.source64} cap=${capabilities}] Invalid source64`, NS);
         } else {
+            const decodedCap = decodeMACCapabilities(capabilities);
             const [status, newAddress16] = await this.associate(
                 undefined,
                 macHeader.source64,
                 true /* initial join */,
-                capabilities,
+                decodedCap,
                 true /* neighbor */,
             );
 
@@ -1425,13 +1496,16 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         return offset;
     }
 
-    public processMACAssocRsp(data: Buffer, offset: number, _macHeader: MACHeader): number {
+    public processMACAssocRsp(data: Buffer, offset: number, macHeader: MACHeader): number {
         const address = data.readUInt16LE(offset);
         offset += 2;
         const status = data.readUInt8(offset);
         offset += 1;
 
-        logger.debug(() => `<=== MAC ASSOC_RSP[addr16=${address} status=${MACAssociationStatus[status]}]`, NS);
+        logger.debug(
+            () => `<=== MAC ASSOC_RSP[macSrc=${macHeader.source16}:${macHeader.source64} addr16=${address} status=${MACAssociationStatus[status]}]`,
+            NS,
+        );
 
         return offset;
     }
@@ -1459,9 +1533,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         logger.debug(() => "<=== MAC BEACON_REQ[]", NS);
 
         const macSeqNum = this.nextMACSeqNum();
-
-        logger.debug(() => `===> MAC BEACON[seqNum=${macSeqNum}]`, NS);
-
         const macFrame = encodeMACFrame(
             {
                 frameControl: {
@@ -1485,7 +1556,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     finalCAPSlot: 0x0f, // XXX: value from sniff, matches above...
                     batteryExtension: false,
                     panCoordinator: true,
-                    associationPermit: this.macAssociationPermit,
+                    associationPermit: this.#macAssociationPermit,
                 },
                 gtsInfo: { permit: false },
                 pendAddr: {},
@@ -1499,10 +1570,12 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 deviceDepth: 0, // coordinator
                 endDeviceCapacity: true,
                 extendedPANId: this.netParams.extendedPANId,
-                txOffset: 0xffffff, // TODO: value from sniffed frames
+                txOffset: 0xffffff, // XXX: value from sniffed frames
                 updateId: 0,
             }),
         );
+
+        logger.debug(() => `===> MAC BEACON[seqNum=${macSeqNum}]`, NS);
 
         await this.sendMACFrame(macSeqNum, macFrame, undefined, undefined);
 
@@ -1510,16 +1583,16 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     }
 
     public async processMACDataReq(_data: Buffer, offset: number, macHeader: MACHeader): Promise<number> {
-        logger.debug(() => "<=== MAC DATA_RQ[]", NS);
+        logger.debug(() => `<=== MAC DATA_RQ[macSrc=${macHeader.source16}:${macHeader.source64}]`, NS);
 
-        let addr = macHeader.source64;
+        let address64 = macHeader.source64;
 
-        if (addr === undefined && macHeader.source16 !== undefined) {
-            addr = this.address16ToAddress64.get(macHeader.source16);
+        if (address64 === undefined && macHeader.source16 !== undefined) {
+            address64 = this.address16ToAddress64.get(macHeader.source16);
         }
 
-        if (addr !== undefined) {
-            const pendingAssoc = this.pendingAssociations.get(addr);
+        if (address64 !== undefined) {
+            const pendingAssoc = this.pendingAssociations.get(address64);
 
             if (pendingAssoc) {
                 if (pendingAssoc.timestamp + ZigbeeConsts.MAC_INDIRECT_TRANSMISSION_TIMEOUT > Date.now()) {
@@ -1527,9 +1600,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 }
 
                 // always delete, ensures no stale
-                this.pendingAssociations.delete(addr);
+                this.pendingAssociations.delete(address64);
             } else {
-                const addrTXs = this.indirectTransmissions.get(addr);
+                const addrTXs = this.indirectTransmissions.get(address64);
 
                 if (addrTXs !== undefined) {
                     let tx = addrTXs.shift();
@@ -1553,22 +1626,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     // #endregion
 
     // #region Zigbee NWK layer
-
-    /**
-     * 05-3474-23 #3.6.1.10
-     */
-    public assignNetworkAddress(): number {
-        let newNetworkAddress = 0xffff;
-        let unique = false;
-
-        do {
-            // maximum exclusive, minimum inclusive
-            newNetworkAddress = Math.floor(Math.random() * (ZigbeeConsts.BCAST_MIN - 0x0001) + 0x0001);
-            unique = this.address16ToAddress64.get(newNetworkAddress) === undefined;
-        } while (!unique);
-
-        return newNetworkAddress;
-    }
 
     /**
      * @param cmdId
@@ -1647,7 +1704,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 frameControl: {
                     frameType: MACFrameType.DATA,
                     securityEnabled: false,
-                    framePending: false,
+                    framePending: nwkDest64 !== undefined && this.indirectTransmissions.get(nwkDest64)?.length !== 0,
                     ackRequest: macDest16 !== ZigbeeMACConsts.BCAST_ADDR,
                     panIdCompression: true,
                     seqNumSuppress: false,
@@ -1673,12 +1730,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         let offset = 0;
         const cmdId = data.readUInt8(offset);
         offset += 1;
-
-        logger.debug(
-            () =>
-                `<=== NWK CMD[cmdId=${cmdId} macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64}]`,
-            NS,
-        );
 
         switch (cmdId) {
             case ZigbeeNWKCommandId.ROUTE_REQ: {
@@ -1742,7 +1793,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 break;
             }
             default: {
-                logger.error(`<=x= NWK CMD Unsupported ${cmdId}.`, NS);
+                logger.error(
+                    `<=x= NWK CMD[cmdId=${cmdId} macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64}] Unsupported`,
+                    NS,
+                );
                 return;
             }
         }
@@ -1773,7 +1827,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             offset += 8;
         }
 
-        logger.debug(() => `<=== NWK ROUTE_REQ[id=${id} dst=${destination16}:${destination64} pCost=${pathCost} mto=${manyToOne}]`, NS);
+        logger.debug(
+            () =>
+                `<=== NWK ROUTE_REQ[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} id=${id} dst=${destination16}:${destination64} pCost=${pathCost} mto=${manyToOne}]`,
+            NS,
+        );
 
         if (destination16 < ZigbeeConsts.BCAST_MIN) {
             await this.sendZigbeeNWKRouteReply(
@@ -1835,7 +1893,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #3.4.2
      */
-    public processZigbeeNWKRouteReply(data: Buffer, offset: number, _macHeader: MACHeader, _nwkHeader: ZigbeeNWKHeader): number {
+    public processZigbeeNWKRouteReply(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const options = data.readUInt8(offset);
         offset += 1;
         const id = data.readUInt8(offset);
@@ -1863,7 +1921,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // const [tlvs, tlvsOutOffset] = decodeZigbeeNWKTLVs(data, offset);
 
         logger.debug(
-            () => `<=== NWK ROUTE_REPLY[id=${id} orig=${originator16}:${originator64} rsp=${responder16}:${responder64} pCost=${pathCost}]`,
+            () =>
+                `<=== NWK ROUTE_REPLY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} id=${id} orig=${originator16}:${originator64} rsp=${responder16}:${responder64} pCost=${pathCost}]`,
             NS,
         );
         // TODO
@@ -1945,7 +2004,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #3.4.3
      */
-    public processZigbeeNWKStatus(data: Buffer, offset: number, _macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
+    public processZigbeeNWKStatus(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const status = data.readUInt8(offset);
         offset += 1;
         let destination: number | undefined;
@@ -1958,7 +2017,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // TODO
         // const [tlvs, tlvsOutOffset] = decodeZigbeeNWKTLVs(data, offset);
 
-        logger.debug(() => `<=== NWK NWK_STATUS[status=${ZigbeeNWKStatus[status]} dst16=${destination} src16=${nwkHeader.source16}]`, NS);
+        logger.debug(
+            () =>
+                `<=== NWK NWK_STATUS[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} status=${ZigbeeNWKStatus[status]} dst16=${destination} src16=${nwkHeader.source16}]`,
+            NS,
+        );
         // TODO
         // network address update notification from here?
 
@@ -2001,14 +2064,18 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #3.4.4
      */
-    public async processZigbeeNWKLeave(data: Buffer, offset: number, _macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
+    public async processZigbeeNWKLeave(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
         const options = data.readUInt8(offset);
         offset += 1;
         const removeChildren = Boolean(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REMOVE_CHILDREN);
         const request = Boolean(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REQUEST);
         const rejoin = Boolean(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REJOIN);
 
-        logger.debug(() => `<=== NWK LEAVE[remChildren=${removeChildren} req=${request} rejoin=${rejoin}]`, NS);
+        logger.debug(
+            () =>
+                `<=== NWK LEAVE[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} remChildren=${removeChildren} req=${request} rejoin=${rejoin}]`,
+            NS,
+        );
 
         if (!rejoin && !request) {
             await this.disassociate(nwkHeader.source16, nwkHeader.source64);
@@ -2049,7 +2116,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #3.4.5
      */
-    public processZigbeeNWKRouteRecord(data: Buffer, offset: number, _macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
+    public processZigbeeNWKRouteRecord(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const relayCount = data.readUInt8(offset);
         offset += 1;
         const relays: number[] = [];
@@ -2061,7 +2128,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             relays.push(relay);
         }
 
-        logger.debug(() => `<=== NWK ROUTE_RECORD[relays=${relays}]`, NS);
+        logger.debug(
+            () =>
+                `<=== NWK ROUTE_RECORD[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} relays=${relays}]`,
+            NS,
+        );
 
         const source16 =
             nwkHeader.source16 === undefined
@@ -2097,20 +2168,54 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const capabilities = data.readUInt8(offset);
         offset += 1;
 
-        logger.debug(() => `<=== NWK REJOIN_REQ[cap=${capabilities}]`, NS);
+        const decodedCap = decodeMACCapabilities(capabilities);
 
-        // XXX: if !header.frameControl.security => Trust Center Rejoin
-        //      => Unsecured Packets at the network layer claiming to be from existing neighbors (coordinators, routers or end devices) must not rewrite legitimate data in the nwkNeighborTable.
-        //      send NWK key again in that case?
+        logger.debug(
+            () =>
+                `<=== NWK REJOIN_REQ[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} cap=${capabilities}]`,
+            NS,
+        );
+
+        let deny = false;
+
+        if (!nwkHeader.frameControl.security) {
+            // Trust Center Rejoin
+            let source64 = nwkHeader.source64;
+
+            if (source64 === undefined) {
+                if (nwkHeader.source16 === undefined) {
+                    // invalid, drop completely, should never happen
+                    return offset;
+                }
+
+                source64 = this.address16ToAddress64.get(nwkHeader.source16);
+            }
+
+            if (source64 === undefined) {
+                // can't identify device
+                deny = true;
+            } else {
+                const device = this.deviceTable.get(source64);
+
+                // XXX: Unsecured Packets at the network layer claiming to be from existing neighbors (coordinators, routers or end devices) must not rewrite legitimate data in the nwkNeighborTable.
+                //      if apsTrustCenterAddress is all FF (distributed) / all 00 (pre-TRANSPORT_KEY), reject with PAN_ACCESS_DENIED
+                if (!device?.authorized) {
+                    // device unknown or unauthorized
+                    deny = true;
+                }
+            }
+        }
+
         const [status, newAddress16] = await this.associate(
             nwkHeader.source16!,
             nwkHeader.source64,
             false /* rejoin */,
-            capabilities,
+            decodedCap,
             macHeader.source16 === nwkHeader.source16,
+            deny,
         );
 
-        await this.sendZigbeeNWKRejoinResp(nwkHeader.source16!, newAddress16, status);
+        await this.sendZigbeeNWKRejoinResp(nwkHeader.source16!, newAddress16, status, decodedCap);
 
         // NOTE: a device does not have to verify its trust center link key with the APSME-VERIFY-KEY services after a rejoin.
 
@@ -2123,16 +2228,23 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * 05-3474-R #3.4.7
      * Optional
      */
-    public processZigbeeNWKRejoinResp(data: Buffer, offset: number, _macHeader: MACHeader, _nwkHeader: ZigbeeNWKHeader): number {
+    public processZigbeeNWKRejoinResp(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const newAddress = data.readUInt16LE(offset);
         offset += 2;
         const status = data.readUInt8(offset);
         offset += 1;
 
         if (status !== MACAssociationStatus.SUCCESS) {
-            logger.error(`<=x= NWK REJOIN_RESP[newAddr16=${newAddress} status=${MACAssociationStatus[status]}]`, NS);
+            logger.error(
+                `<=x= NWK REJOIN_RESP[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} newAddr16=${newAddress} status=${MACAssociationStatus[status]}]`,
+                NS,
+            );
         } else {
-            logger.debug(() => `<=== NWK REJOIN_RESP[newAddr16=${newAddress}]`, NS);
+            logger.debug(
+                () =>
+                    `<=== NWK REJOIN_RESP[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} newAddr16=${newAddress}]`,
+                NS,
+            );
         }
 
         return offset;
@@ -2143,8 +2255,16 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * Optional
      *
      * @param requestSource16 new network address assigned to the rejoining device
+     * @param newAddress16
+     * @param status
+     * @param capabilities
      */
-    public async sendZigbeeNWKRejoinResp(requestSource16: number, newAddress16: number, status: MACAssociationStatus | number): Promise<void> {
+    public async sendZigbeeNWKRejoinResp(
+        requestSource16: number,
+        newAddress16: number,
+        status: MACAssociationStatus | number,
+        capabilities: MACCapabilities,
+    ): Promise<void> {
         logger.debug(() => `===> NWK REJOIN_RESP[reqSrc16=${requestSource16} newAddr16=${newAddress16} status=${status}]`, NS);
 
         const finalPayload = Buffer.from([ZigbeeNWKCommandId.REJOIN_RESP, newAddress16 & 0xff, (newAddress16 >> 8) & 0xff, status]);
@@ -2155,19 +2275,21 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             true, // nwkSecurity TODO: ??
             ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
             requestSource16, // nwkDest16
-            undefined, // nwkDest64
+            this.address16ToAddress64.get(newAddress16), // nwkDest64
             CONFIG_NWK_MAX_HOPS, // nwkRadius
         );
 
-        setImmediate(() => {
-            this.emit("deviceRejoined", newAddress16, this.address16ToAddress64.get(newAddress16)!);
-        });
+        if (status === MACAssociationStatus.SUCCESS) {
+            setImmediate(() => {
+                this.emit("deviceRejoined", newAddress16, this.address16ToAddress64.get(newAddress16)!, capabilities);
+            });
+        }
     }
 
     /**
      * 05-3474-R #3.4.8
      */
-    public processZigbeeNWKLinkStatus(data: Buffer, offset: number, _macHeader: MACHeader, _nwkHeader: ZigbeeNWKHeader): number {
+    public processZigbeeNWKLinkStatus(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         // Bit: 0 – 4        5            6           7
         //      Entry count  First frame  Last frame  Reserved
         const options = data.readUInt8(offset);
@@ -2197,7 +2319,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 linksStr += `{${link.address}|in:${link.incomingCost}|out:${link.outgoingCost}}`;
             }
 
-            return `<=== NWK LINK_STATUS[first=${firstFrame} last=${lastFrame} links=${linksStr}]`;
+            return `<=== NWK LINK_STATUS[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} first=${firstFrame} last=${lastFrame} links=${linksStr}]`;
         }, NS);
 
         // TODO: NeighborTableEntry.age = 0 // max 0xff
@@ -2281,7 +2403,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * 05-3474-R #3.4.9
      *  deprecated in R23, should no longer be sent by R23 devices
      */
-    public processZigbeeNWKReport(data: Buffer, offset: number, _macHeader: MACHeader, _nwkHeader: ZigbeeNWKHeader): number {
+    public processZigbeeNWKReport(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const options = data.readUInt8(offset);
         offset += 1;
         const reportCount = options & ZigbeeNWKConsts.CMD_NWK_REPORT_COUNT_MASK;
@@ -2301,7 +2423,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             }
         }
 
-        logger.debug(() => `<=== NWK NWK_REPORT[extPANId=${extendedPANId} repType=${reportType} conflictPANIds=${conflictPANIds}]`, NS);
+        logger.debug(
+            () =>
+                `<=== NWK NWK_REPORT[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} extPANId=${extendedPANId} repType=${reportType} conflictPANIds=${conflictPANIds}]`,
+            NS,
+        );
 
         return offset;
     }
@@ -2311,7 +2437,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #3.4.10
      */
-    public processZigbeeNWKUpdate(data: Buffer, offset: number, _macHeader: MACHeader, _nwkHeader: ZigbeeNWKHeader): number {
+    public processZigbeeNWKUpdate(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const options = data.readUInt8(offset);
         offset += 1;
         const updateCount = options & ZigbeeNWKConsts.CMD_NWK_UPDATE_COUNT_MASK;
@@ -2333,7 +2459,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             }
         }
 
-        logger.debug(() => `<=== NWK NWK_UPDATE[extPANId=${extendedPANId} id=${updateId} type=${updateType} panIds=${panIds}]`, NS);
+        logger.debug(
+            () =>
+                `<=== NWK NWK_UPDATE[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} extPANId=${extendedPANId} id=${updateId} type=${updateType} panIds=${panIds}]`,
+            NS,
+        );
         // TODO
 
         return offset;
@@ -2344,7 +2474,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #3.4.11
      */
-    public async processZigbeeNWKEdTimeoutRequest(data: Buffer, offset: number, _macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
+    public async processZigbeeNWKEdTimeoutRequest(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
         // 0 => 10 seconds
         // 1 => 2 minutes
         // 2 => 4 minutes
@@ -2366,7 +2496,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const configuration = data.readUInt8(offset);
         offset += 1;
 
-        logger.debug(() => `<=== NWK ED_TIMEOUT_REQUEST[reqTimeout=${requestedTimeout} conf=${configuration}]`, NS);
+        logger.debug(
+            () =>
+                `<=== NWK ED_TIMEOUT_REQUEST[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} reqTimeout=${requestedTimeout} conf=${configuration}]`,
+            NS,
+        );
 
         await this.sendZigbeeNWKEdTimeoutResponse(nwkHeader.source16!, requestedTimeout);
 
@@ -2378,7 +2512,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #3.4.12
      */
-    public processZigbeeNWKEdTimeoutResponse(data: Buffer, offset: number, _macHeader: MACHeader, _nwkHeader: ZigbeeNWKHeader): number {
+    public processZigbeeNWKEdTimeoutResponse(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         // SUCCESS 0x00 The End Device Timeout Request message was accepted by the parent.
         // INCORRECT_VALUE 0x01 The received timeout value in the End Device Timeout Request command was outside the allowed range.
         // UNSUPPORTED_FEATURE 0x02 The requested feature is not supported by the parent router.
@@ -2390,7 +2524,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const parentInfo = data.readUInt8(offset);
         offset += 1;
 
-        logger.debug(() => `<=== NWK ED_TIMEOUT_RESPONSE[status=${status} parentInfo=${parentInfo}]`, NS);
+        logger.debug(
+            () =>
+                `<=== NWK ED_TIMEOUT_RESPONSE[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} status=${status} parentInfo=${parentInfo}]`,
+            NS,
+        );
         // TODO
 
         return offset;
@@ -2424,7 +2562,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     /**
      * 05-3474-R #3.4.13
      */
-    public processZigbeeNWKLinkPwrDelta(data: Buffer, offset: number, _macHeader: MACHeader, _nwkHeader: ZigbeeNWKHeader): number {
+    public processZigbeeNWKLinkPwrDelta(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const options = data.readUInt8(offset);
         offset += 1;
         // 0 Notification An unsolicited notification. These frames are typically sent periodically from an RxOn device. If the device is a FFD, it is broadcast to all RxOn devices (0xfffd), and includes power information for all neighboring RxOn devices. If the device is an RFD with RxOn, it is sent unicast to its Parent, and includes only power information for the Parent device.
@@ -2445,7 +2583,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             deltas.push({ device, delta });
         }
 
-        logger.debug(() => `<=== NWK LINK_PWR_DELTA[type=${type} deltas=${deltas}]`, NS);
+        logger.debug(
+            () =>
+                `<=== NWK LINK_PWR_DELTA[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${type} deltas=${deltas}]`,
+            NS,
+        );
         // TODO
 
         return offset;
@@ -2470,10 +2612,16 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const capabilities = data.readUInt8(offset);
         offset += 1;
 
+        const decodedCap = decodeMACCapabilities(capabilities);
+
         // TODO
         // const [tlvs, tlvsOutOffset] = decodeZigbeeNWKTLVs(data, offset);
 
-        logger.debug(() => `<=== NWK COMMISSIONING_REQUEST[assocType=${assocType} cap=${capabilities}]`, NS);
+        logger.debug(
+            () =>
+                `<=== NWK COMMISSIONING_REQUEST[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} assocType=${assocType} cap=${capabilities}]`,
+            NS,
+        );
 
         // NOTE: send Remove Device CMD to TC deny the join (or let timeout): `sendZigbeeAPSRemoveDevice`
 
@@ -2481,7 +2629,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             nwkHeader.source16!,
             nwkHeader.source64,
             assocType === 0x00 /* initial join */,
-            capabilities,
+            decodedCap,
             macHeader.source16 === nwkHeader.source16,
             nwkHeader.frameControl.security /* deny if true */,
         );
@@ -2507,7 +2655,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * 05-3474-23 #3.4.15
      * Optional
      */
-    public processZigbeeNWKCommissioningResponse(data: Buffer, offset: number, _macHeader: MACHeader, _nwkHeader: ZigbeeNWKHeader): number {
+    public processZigbeeNWKCommissioningResponse(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const newAddress = data.readUInt16LE(offset);
         offset += 2;
         // `ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT`, or MACAssociationStatus
@@ -2516,11 +2664,15 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
         if (status !== MACAssociationStatus.SUCCESS) {
             logger.error(
-                `<=x= NWK COMMISSIONING_RESPONSE[newAddr16=${newAddress} status=${MACAssociationStatus[status] ?? "NWK_ADDR_CONFLICT"}]`,
+                `<=x= NWK COMMISSIONING_RESPONSE[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} newAddr16=${newAddress} status=${MACAssociationStatus[status] ?? "NWK_ADDR_CONFLICT"}]`,
                 NS,
             );
         } else {
-            logger.debug(() => `<=== NWK COMMISSIONING_RESPONSE[newAddr16=${newAddress}]`, NS);
+            logger.debug(
+                () =>
+                    `<=== NWK COMMISSIONING_RESPONSE[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} newAddr16=${newAddress}]`,
+                NS,
+            );
         }
 
         // TODO
@@ -2563,17 +2715,17 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         let duplicate = false;
 
         if (nwkHeader.securityFrameCounter !== undefined) {
-            if (nwkHeader.securityFrameCounter === this.gpLastSecurityFrameCounter) {
+            if (nwkHeader.securityFrameCounter === this.#gpLastSecurityFrameCounter) {
                 duplicate = true;
             }
 
-            this.gpLastSecurityFrameCounter = nwkHeader.securityFrameCounter;
+            this.#gpLastSecurityFrameCounter = nwkHeader.securityFrameCounter;
         } else if (macHeader.sequenceNumber !== undefined) {
-            if (macHeader.sequenceNumber === this.gpLastMACSequenceNumber) {
+            if (macHeader.sequenceNumber === this.#gpLastMACSequenceNumber) {
                 duplicate = true;
             }
 
-            this.gpLastMACSequenceNumber = macHeader.sequenceNumber;
+            this.#gpLastMACSequenceNumber = macHeader.sequenceNumber;
         }
 
         return duplicate;
@@ -2587,14 +2739,14 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * @param rssi
      * @returns
      */
-    public processZigbeeNWKGPFrame(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, rssi: number): void {
+    public processZigbeeNWKGPFrame(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, lqa: number): void {
         let offset = 0;
         const cmdId = data.readUInt8(offset);
         offset += 1;
         const framePayload = data.subarray(offset);
 
         if (
-            !this.gpCommissioningMode &&
+            !this.#gpCommissioningMode &&
             (cmdId === ZigbeeNWKGPCommandId.COMMISSIONING || cmdId === ZigbeeNWKGPCommandId.SUCCESS || cmdId === ZigbeeNWKGPCommandId.CHANNEL_REQUEST)
         ) {
             logger.debug(() => `<=~= NWKGP[cmdId=${cmdId} src=${nwkHeader.sourceId}:${macHeader.source64}] Not in commissioning mode`, NS);
@@ -2605,7 +2757,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         logger.debug(() => `<=== NWKGP[cmdId=${cmdId} src=${nwkHeader.sourceId}:${macHeader.source64}]`, NS);
 
         setImmediate(() => {
-            this.emit("gpFrame", cmdId, framePayload, macHeader, nwkHeader, rssi);
+            this.emit("gpFrame", cmdId, framePayload, macHeader, nwkHeader, lqa);
         });
     }
 
@@ -2725,7 +2877,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 frameControl: {
                     frameType: MACFrameType.DATA,
                     securityEnabled: false,
-                    framePending: false,
+                    framePending: this.indirectTransmissions.get(nwkDest64 ?? this.address16ToAddress64.get(nwkDest16)!)?.length !== 0,
                     ackRequest: macDest16 !== ZigbeeMACConsts.BCAST_ADDR,
                     panIdCompression: true,
                     seqNumSuppress: false,
@@ -2874,7 +3026,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 frameControl: {
                     frameType: MACFrameType.DATA,
                     securityEnabled: false,
-                    framePending: false,
+                    framePending: this.indirectTransmissions.get(nwkDest64 ?? this.address16ToAddress64.get(nwkDest16)!)?.length !== 0,
                     ackRequest: macDest16 !== ZigbeeMACConsts.BCAST_ADDR,
                     panIdCompression: true,
                     seqNumSuppress: false,
@@ -2982,7 +3134,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 frameControl: {
                     frameType: MACFrameType.DATA,
                     securityEnabled: false,
-                    framePending: false,
+                    framePending: this.indirectTransmissions.get(nwkHeader.source64 ?? this.address16ToAddress64.get(nwkDest16)!)?.length !== 0,
                     ackRequest: true,
                     panIdCompression: true,
                     seqNumSuppress: false,
@@ -3009,7 +3161,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
         apsHeader: ZigbeeAPSHeader,
-        rssi: number,
+        lqa: number,
     ): Promise<void> {
         switch (apsHeader.frameControl.frameType) {
             case ZigbeeAPSFrameType.ACK: {
@@ -3023,29 +3175,61 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     return;
                 }
 
-                let processed = false;
+                logger.debug(
+                    () =>
+                        `<=== APS DATA[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} seqNum=${nwkHeader.seqNum} profileId=${apsHeader.profileId} clusterId=${apsHeader.clusterId} srcEp=${apsHeader.sourceEndpoint} dstEp=${apsHeader.destEndpoint} bcast=${macHeader.destination16 === ZigbeeMACConsts.BCAST_ADDR || (nwkHeader.destination16 !== undefined && nwkHeader.destination16 >= ZigbeeConsts.BCAST_MIN)}]`,
+                    NS,
+                );
 
                 if (apsHeader.profileId === ZigbeeConsts.ZDO_PROFILE_ID) {
-                    processed = await this.filterZDO(data, apsHeader.clusterId!, nwkHeader.source16, nwkHeader.source64);
-                }
+                    if (apsHeader.clusterId === ZigbeeConsts.END_DEVICE_ANNOUNCE) {
+                        let offset = 1; // skip seq num
+                        const address16 = data.readUInt16LE(offset);
+                        offset += 2;
+                        const address64 = data.readBigUInt64LE(offset);
+                        offset += 8;
+                        const capabilities = data.readUInt8(offset);
+                        offset += 1;
 
-                if (!processed) {
-                    if (nwkHeader.source16 === undefined && nwkHeader.source64 === undefined) {
-                        logger.debug(() => "<=~= APS Ignoring frame with no sender info", NS);
-                        return;
+                        const device = this.deviceTable.get(address64);
+
+                        if (!device) {
+                            // unknown device, should have been added by `associate`, something's not right, ignore it
+                            return;
+                        }
+
+                        const decodedCap = decodeMACCapabilities(capabilities);
+                        // just in case
+                        device.capabilities = decodedCap;
+
+                        // TODO: ideally, this shouldn't trigger (prevents early interview process from app) until AFTER authorized=true
+                        setImmediate(() => {
+                            // if device is authorized, it means it completed the TC link key update, so, a rejoin
+                            this.emit(device.authorized ? "deviceRejoined" : "deviceJoined", address16, address64, decodedCap);
+                        });
+                    } else {
+                        const isRequest = (apsHeader.clusterId! & 0x8000) === 0;
+
+                        if (isRequest) {
+                            if (this.isZDORequestForCoordinator(apsHeader.clusterId!, nwkHeader.destination16, nwkHeader.destination64, data)) {
+                                await this.respondToCoordinatorZDORequest(data, apsHeader.clusterId!, nwkHeader.source16, nwkHeader.source64);
+                            }
+
+                            // don't emit received ZDO requests
+                            return;
+                        }
                     }
-
-                    logger.debug(
-                        () =>
-                            `<=== APS DATA[src=${nwkHeader.source16}:${nwkHeader.source64} seqNum=${nwkHeader.seqNum} profileId=${apsHeader.profileId} clusterId=${apsHeader.clusterId} srcEp=${apsHeader.sourceEndpoint} dstEp=${apsHeader.destEndpoint}]`,
-                        NS,
-                    );
-
-                    setImmediate(() => {
-                        // TODO: always lookup source64 if undef?
-                        this.emit("frame", nwkHeader.source16, nwkHeader.source64, apsHeader, data, rssi);
-                    });
                 }
+
+                if (nwkHeader.source16 === undefined && nwkHeader.source64 === undefined) {
+                    logger.debug(() => "<=~= APS Ignoring frame with no sender info", NS);
+                    return;
+                }
+
+                setImmediate(() => {
+                    // TODO: always lookup source64 if undef?
+                    this.emit("frame", nwkHeader.source16, nwkHeader.source64, apsHeader, data, lqa);
+                });
 
                 break;
             }
@@ -3068,12 +3252,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         let offset = 0;
         const cmdId = data.readUInt8(offset);
         offset += 1;
-
-        logger.debug(
-            () =>
-                `<=== APS CMD[cmdId=${cmdId} macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64}]`,
-            NS,
-        );
 
         switch (cmdId) {
             case ZigbeeAPSCommandId.TRANSPORT_KEY: {
@@ -3116,6 +3294,13 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 offset = this.processZigbeeAPSRelayMessageUpstream(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
+            default: {
+                logger.error(
+                    `<=x= APS CMD[cmdId=${cmdId} macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64}] Unsupported`,
+                    NS,
+                );
+                return;
+            }
         }
 
         // excess data in packet
@@ -3130,8 +3315,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public processZigbeeAPSTransportKey(
         data: Buffer,
         offset: number,
-        _macHeader: MACHeader,
-        _nwkHeader: ZigbeeNWKHeader,
+        macHeader: MACHeader,
+        nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
     ): number {
         const keyType = data.readUInt8(offset);
@@ -3149,7 +3334,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 const source = data.readBigUInt64LE(offset);
                 offset += 8;
 
-                logger.debug(() => `<=== APS TRANSPORT_KEY[type=${keyType} key=${key} seqNum=${seqNum} dst64=${destination} src64=${source}]`, NS);
+                logger.debug(
+                    () =>
+                        `<=== APS TRANSPORT_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType} key=${key} seqNum=${seqNum} dst64=${destination} src64=${source}]`,
+                    NS,
+                );
 
                 break;
             }
@@ -3163,7 +3352,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 // TODO
                 // const [tlvs, tlvsOutOffset] = decodeZigbeeAPSTLVs(data, offset);
 
-                logger.debug(() => `<=== APS TRANSPORT_KEY[type=${keyType} key=${key} dst64=${destination} src64=${source}]`, NS);
+                logger.debug(
+                    () =>
+                        `<=== APS TRANSPORT_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType} key=${key} dst64=${destination} src64=${source}]`,
+                    NS,
+                );
                 break;
             }
             case ZigbeeAPSConsts.CMD_KEY_APP_MASTER:
@@ -3176,7 +3369,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 // TODO
                 // const [tlvs, tlvsOutOffset] = decodeZigbeeAPSTLVs(data, offset);
 
-                logger.debug(() => `<=== APS TRANSPORT_KEY[type=${keyType} key=${key} partner64=${partner} initiatorFlag=${initiatorFlag}]`, NS);
+                logger.debug(
+                    () =>
+                        `<=== APS TRANSPORT_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType} key=${key} partner64=${partner} initiatorFlag=${initiatorFlag}]`,
+                    NS,
+                );
                 break;
             }
         }
@@ -3362,7 +3559,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public async processZigbeeAPSUpdateDevice(
         data: Buffer,
         offset: number,
-        _macHeader: MACHeader,
+        macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
     ): Promise<number> {
@@ -3377,7 +3574,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // TODO
         // const [tlvs, tlvsOutOffset] = decodeZigbeeAPSTLVs(data, offset);
 
-        logger.debug(() => `<=== APS UPDATE_DEVICE[dev=${device16}:${device64} status=${status} src16=${nwkHeader.source16}]`, NS);
+        logger.debug(
+            () =>
+                `<=== APS UPDATE_DEVICE[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} dev=${device16}:${device64} status=${status} src16=${nwkHeader.source16}]`,
+            NS,
+        );
 
         // 0x00 = Standard Device Secured Rejoin
         // 0x01 = Standard Device Unsecured Join
@@ -3388,11 +3589,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             await this.associate(
                 device16,
                 device64,
-                true /* initial join */,
-                0x00,
-                false /* not neighbor */,
+                true, // initial join
+                undefined, // no MAC cap through router
+                false, // not neighbor
                 false,
-                true /* was allowed by parent */,
+                true, // was allowed by parent
             );
 
             const tApsCmdPayload = Buffer.alloc(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
@@ -3439,7 +3640,15 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             await this.sendZigbeeAPSTunnel(nwkHeader.source16!, device64, tApsCmdFrame);
         } else if (status === 0x03) {
             // rejoin
-            await this.associate(device16, device64, false /* rejoin */, 0x00, false /* not neighbor */, false, true /* was allowed by parent */);
+            await this.associate(
+                device16,
+                device64,
+                false, // rejoin
+                undefined, // no MAC cap through router
+                false, // not neighbor
+                false,
+                true, // was allowed by parent, expected valid
+            );
         } else if (status === 0x02) {
             // left
             // TODO: according to spec, this is "informative" only, should not take any action?
@@ -3503,14 +3712,18 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public processZigbeeAPSRemoveDevice(
         data: Buffer,
         offset: number,
-        _macHeader: MACHeader,
-        _nwkHeader: ZigbeeNWKHeader,
+        macHeader: MACHeader,
+        nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
     ): number {
         const target = data.readBigUInt64LE(offset);
         offset += 8;
 
-        logger.debug(() => `<=== APS REMOVE_DEVICE[target64=${target}]`, NS);
+        logger.debug(
+            () =>
+                `<=== APS REMOVE_DEVICE[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} target64=${target}]`,
+            NS,
+        );
 
         return offset;
     }
@@ -3549,7 +3762,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public async processZigbeeAPSRequestKey(
         data: Buffer,
         offset: number,
-        _macHeader: MACHeader,
+        macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
         apsHeader: ZigbeeAPSHeader,
     ): Promise<number> {
@@ -3574,9 +3787,13 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 const partner = data.readBigUInt64LE(offset);
                 offset += 8;
 
-                logger.debug(() => `<=== APS REQUEST_KEY[type=${keyType} partner64=${partner}]`, NS);
+                logger.debug(
+                    () =>
+                        `<=== APS REQUEST_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType} partner64=${partner}]`,
+                    NS,
+                );
 
-                if (this.trustCenterPolicies.allowAppKeyRequest === ApplicationKeyRequestPolicy.ALLOWED) {
+                if (this.#trustCenterPolicies.allowAppKeyRequest === ApplicationKeyRequestPolicy.ALLOWED) {
                     await this.sendZigbeeAPSTransportKeyAPP(
                         nwkHeader.source16!,
                         this.getOrGenerateAPPLinkKey(nwkHeader.source16!, partner),
@@ -3586,16 +3803,23 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 }
                 // TODO ApplicationKeyRequestPolicy.ONLY_APPROVED
             } else if (keyType === ZigbeeAPSConsts.CMD_KEY_TC_LINK) {
-                logger.debug(() => `<=== APS REQUEST_KEY[type=${keyType}]`, NS);
+                logger.debug(
+                    () =>
+                        `<=== APS REQUEST_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType}]`,
+                    NS,
+                );
 
-                if (this.trustCenterPolicies.allowTCKeyRequest === TrustCenterKeyRequestPolicy.ALLOWED) {
+                if (this.#trustCenterPolicies.allowTCKeyRequest === TrustCenterKeyRequestPolicy.ALLOWED) {
                     await this.sendZigbeeAPSTransportKeyTC(nwkHeader.source16!, this.netParams.tcKey, device64);
                 }
                 // TODO TrustCenterKeyRequestPolicy.ONLY_PROVISIONAL
                 //      this.apsDeviceKeyPairSet => find deviceAddress === this.deviceTable.get(nwkHeader.source).address64 => check provisional or drop msg
             }
         } else {
-            logger.warning(`Received key request from unknown device src16=${nwkHeader.source16}`, NS);
+            logger.warning(
+                `<=x= APS REQUEST_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType}] Unknown device`,
+                NS,
+            );
         }
 
         return offset;
@@ -3648,14 +3872,18 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public processZigbeeAPSSwitchKey(
         data: Buffer,
         offset: number,
-        _macHeader: MACHeader,
-        _nwkHeader: ZigbeeNWKHeader,
+        macHeader: MACHeader,
+        nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
     ): number {
         const seqNum = data.readUInt8(offset);
         offset += 1;
 
-        logger.debug(() => `<=== APS SWITCH_KEY[seqNum=${seqNum}]`, NS);
+        logger.debug(
+            () =>
+                `<=== APS SWITCH_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} seqNum=${seqNum}]`,
+            NS,
+        );
 
         return offset;
     }
@@ -3689,8 +3917,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public processZigbeeAPSTunnel(
         data: Buffer,
         offset: number,
-        _macHeader: MACHeader,
-        _nwkHeader: ZigbeeNWKHeader,
+        macHeader: MACHeader,
+        nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
     ): number {
         const destination = data.readBigUInt64LE(offset);
@@ -3698,7 +3926,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const tunneledAPSFrame = data.subarray(offset);
         offset += tunneledAPSFrame.byteLength;
 
-        logger.debug(() => `<=== APS TUNNEL[dst=${destination} tAPSFrame=${tunneledAPSFrame}]`, NS);
+        logger.debug(
+            () =>
+                `<=== APS TUNNEL[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} dst=${destination} tAPSFrame=${tunneledAPSFrame}]`,
+            NS,
+        );
 
         return offset;
     }
@@ -3752,11 +3984,15 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         offset += ZigbeeAPSConsts.CMD_KEY_LENGTH;
 
         if (macHeader.source16 !== ZigbeeMACConsts.BCAST_ADDR) {
-            logger.debug(() => `<=== APS VERIFY_KEY[type=${keyType} src64=${source} hash=${keyHash.toString("hex")}]`, NS);
+            logger.debug(
+                () =>
+                    `<=== APS VERIFY_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType} src64=${source} hash=${keyHash.toString("hex")}]`,
+                NS,
+            );
 
             if (keyType === ZigbeeAPSConsts.CMD_KEY_TC_LINK) {
                 // TODO: not valid if operating in distributed network
-                const status = this.tcVerifyKeyHash.equals(keyHash) ? 0x00 /* SUCCESS */ : 0xad; /* SECURITY_FAILURE */
+                const status = this.#tcVerifyKeyHash.equals(keyHash) ? 0x00 /* SUCCESS */ : 0xad; /* SECURITY_FAILURE */
 
                 await this.sendZigbeeAPSConfirmKey(nwkHeader.source16!, status, keyType, source);
             } else if (keyType === ZigbeeAPSConsts.CMD_KEY_APP_MASTER) {
@@ -3811,8 +4047,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public processZigbeeAPSConfirmKey(
         data: Buffer,
         offset: number,
-        _macHeader: MACHeader,
-        _nwkHeader: ZigbeeNWKHeader,
+        macHeader: MACHeader,
+        nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
     ): number {
         const status = data.readUInt8(offset);
@@ -3822,7 +4058,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const destination = data.readBigUInt64LE(offset);
         offset += 8;
 
-        logger.debug(() => `<=== APS CONFIRM_KEY[status=${status} type=${keyType} dst64=${destination}]`, NS);
+        logger.debug(
+            () =>
+                `<=== APS CONFIRM_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} status=${status} type=${keyType} dst64=${destination}]`,
+            NS,
+        );
 
         return offset;
     }
@@ -3888,8 +4128,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public processZigbeeAPSRelayMessageDownstream(
         data: Buffer,
         offset: number,
-        _macHeader: MACHeader,
-        _nwkHeader: ZigbeeNWKHeader,
+        macHeader: MACHeader,
+        nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
     ): number {
         // this includes only TLVs
@@ -3901,7 +4141,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // The message SHALL start with the APS Header of the intended recipient.
         // const message = ??;
 
-        logger.debug(() => `<=== APS RELAY_MESSAGE_DOWNSTREAM[dst64=${destination64}]`, NS);
+        logger.debug(
+            () =>
+                `<=== APS RELAY_MESSAGE_DOWNSTREAM[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} dst64=${destination64}]`,
+            NS,
+        );
 
         return offset;
     }
@@ -3914,8 +4158,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public processZigbeeAPSRelayMessageUpstream(
         data: Buffer,
         offset: number,
-        _macHeader: MACHeader,
-        _nwkHeader: ZigbeeNWKHeader,
+        macHeader: MACHeader,
+        nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
     ): number {
         // this includes only TLVs
@@ -3927,7 +4171,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // The message SHALL start with the APS Header of the intended recipient.
         // const message = ??;
 
-        logger.debug(() => `<=== APS RELAY_MESSAGE_UPSTREAM[src64=${source64}]`, NS);
+        logger.debug(
+            () =>
+                `<=== APS RELAY_MESSAGE_UPSTREAM[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} src64=${source64}]`,
+            NS,
+        );
 
         return offset;
     }
@@ -3954,7 +4202,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     }
 
     public isNetworkUp(): boolean {
-        return this.networkUp;
+        return this.#networkUp;
     }
 
     /**
@@ -3965,7 +4213,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public async formNetwork(): Promise<void> {
         logger.info("======== Network starting ========", NS);
 
-        if (!this.stateLoaded) {
+        if (!this.#stateLoaded) {
             throw new Error("Cannot form network before state is loaded");
         }
 
@@ -3973,11 +4221,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.setProperty(writePropertyb(SpinelPropertyId.PHY_ENABLED, true));
         await this.setProperty(writePropertyC(SpinelPropertyId.PHY_CHAN, this.netParams.channel));
 
-        // -128 == disable
         // TODO: ?
-        // await this.spinel.setProperty(writePropertyc(SpinelPropertyId.PHY_CCA_THRESHOLD, 10));
-
-        await this.setProperty(writePropertyc(SpinelPropertyId.PHY_TX_POWER, this.netParams.txPower));
+        // await this.setPHYCCAThreshold(10);
+        await this.setPHYTXPower(this.netParams.txPower);
 
         await this.setProperty(writePropertyE(SpinelPropertyId.MAC_15_4_LADDR, this.netParams.eui64));
         await this.setProperty(writePropertyS(SpinelPropertyId.MAC_15_4_SADDR, ZigbeeConsts.COORDINATOR_ADDRESS));
@@ -3986,9 +4232,17 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RX_ON_WHEN_IDLE_MODE, true));
         await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, true));
 
-        logger.info("======== Network started ========", NS);
+        const txPower = await this.getPHYTXPower();
+        const radioRSSI = await this.getPHYRSSI();
+        this.rssiMin = await this.getPHYRXSensitivity();
+        const ccaThreshold = await this.getPHYCCAThreshold();
 
-        this.networkUp = true;
+        logger.info(
+            `======== Network started (PHY: txPower=${txPower}dBm rssi=${radioRSSI}dBm rxSensitivity=${this.rssiMin}dBm ccaThreshold=${ccaThreshold}dBm) ========`,
+            NS,
+        );
+
+        this.#networkUp = true;
 
         await this.registerTimers();
     }
@@ -4001,7 +4255,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public async resetNetwork(): Promise<void> {
         logger.info("======== Network resetting ========", NS);
 
-        if (this.stateLoaded) {
+        if (this.#stateLoaded) {
             throw new Error("Cannot reset network after state already loaded");
         }
 
@@ -4012,6 +4266,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.address16ToAddress64.clear();
         this.indirectTransmissions.clear();
         this.sourceRouteTable.clear();
+        this.pendingAssociations.clear();
 
         logger.info("======== Network reset ========", NS);
     }
@@ -4024,16 +4279,16 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     }
 
     public async savePeriodicState(): Promise<void> {
-        clearTimeout(this.saveStateTimeout);
+        clearTimeout(this.#saveStateTimeout);
         await this.saveState();
 
-        this.saveStateTimeout = setTimeout(async () => {
+        this.#saveStateTimeout = setTimeout(async () => {
             await this.savePeriodicState();
         }, CONFIG_SAVE_STATE_TIME);
     }
 
     public async sendPeriodicZigbeeNWKLinkStatus(): Promise<void> {
-        clearTimeout(this.nwkLinkStatusTimeout);
+        clearTimeout(this.#nwkLinkStatusTimeout);
         const links: ZigbeeNWKLinkStatus[] = [];
 
         for (const [device64, entry] of this.deviceTable.entries()) {
@@ -4051,7 +4306,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
         await this.sendZigbeeNWKLinkStatus(links);
 
-        this.nwkLinkStatusTimeout = setTimeout(
+        this.#nwkLinkStatusTimeout = setTimeout(
             async () => {
                 await this.sendPeriodicZigbeeNWKLinkStatus();
             },
@@ -4063,10 +4318,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * TODO: trigger manually upon receipt of a route failure
      */
     public async sendPeriodicManyToOneRouteRequest(): Promise<void> {
-        clearTimeout(this.manyToOneRouteRequestTimeout);
+        clearTimeout(this.#manyToOneRouteRequestTimeout);
         await this.sendZigbeeNWKRouteReq(ZigbeeNWKManyToOne.WITH_SOURCE_ROUTING, ZigbeeConsts.BCAST_DEFAULT);
 
-        this.manyToOneRouteRequestTimeout = setTimeout(async () => {
+        this.#manyToOneRouteRequestTimeout = setTimeout(async () => {
             await this.sendPeriodicManyToOneRouteRequest();
         }, CONFIG_NWK_CONCENTRATOR_DISCOVERY_TIME);
     }
@@ -4075,16 +4330,16 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * @param duration The length of time in seconds during which the trust center will allow joins.
      * The value 0x00 and 0xff indicate that permission is disabled or enabled, respectively, without a specified time limit.
      * 0xff is clamped to 0xfe for security reasons
-     * @param macAssociationPermit If true, also allow association on coordinator itself.
+     * @param macAssociationPermit If true, also allow association on coordinator itself. Ignored if duration 0.
      */
     public allowJoins(duration: number, macAssociationPermit: boolean): void {
         if (duration > 0) {
-            clearTimeout(this.allowJoinTimeout);
-            this.trustCenterPolicies.allowJoins = true;
-            this.trustCenterPolicies.allowRejoinsWithWellKnownKey = true;
-            this.macAssociationPermit = macAssociationPermit;
+            clearTimeout(this.#allowJoinTimeout);
+            this.#trustCenterPolicies.allowJoins = true;
+            this.#trustCenterPolicies.allowRejoinsWithWellKnownKey = true;
+            this.#macAssociationPermit = macAssociationPermit;
 
-            this.allowJoinTimeout = setTimeout(this.disallowJoins.bind(this), Math.min(duration, 0xfe) * 1000);
+            this.#allowJoinTimeout = setTimeout(this.disallowJoins.bind(this), Math.min(duration, 0xfe) * 1000);
 
             logger.info(`Allowed joins for ${duration} seconds (self=${macAssociationPermit})`, NS);
         } else {
@@ -4096,24 +4351,24 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * Revert allowing joins (keeps `allowRejoinsWithWellKnownKey=true`).
      */
     public disallowJoins(): void {
-        clearTimeout(this.allowJoinTimeout);
+        clearTimeout(this.#allowJoinTimeout);
 
-        this.trustCenterPolicies.allowJoins = false;
-        this.trustCenterPolicies.allowRejoinsWithWellKnownKey = true;
-        this.macAssociationPermit = false;
+        this.#trustCenterPolicies.allowJoins = false;
+        this.#trustCenterPolicies.allowRejoinsWithWellKnownKey = true;
+        this.#macAssociationPermit = false;
 
         logger.info("Disallowed joins", NS);
     }
 
     /**
      * Put the coordinator in Green Power commissioning mode.
-     * @param commissioningWindow Defaults to 180 if unspecified. Max 254
+     * @param commissioningWindow Defaults to 180 if unspecified. Max 254. 0 means exit.
      */
     public gpEnterCommissioningMode(commissioningWindow = 180): void {
         if (commissioningWindow > 0) {
-            this.gpCommissioningMode = true;
+            this.#gpCommissioningMode = true;
 
-            this.gpCommissioningWindowTimeout = setTimeout(this.gpExitCommissioningMode.bind(this), Math.min(commissioningWindow, 0xfe) * 1000);
+            this.#gpCommissioningWindowTimeout = setTimeout(this.gpExitCommissioningMode.bind(this), Math.min(commissioningWindow, 0xfe) * 1000);
 
             logger.info(`Entered Green Power commissioning mode for ${commissioningWindow} seconds`, NS);
         } else {
@@ -4122,11 +4377,27 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     }
 
     public gpExitCommissioningMode(): void {
-        clearTimeout(this.gpCommissioningWindowTimeout);
+        clearTimeout(this.#gpCommissioningWindowTimeout);
 
-        this.gpCommissioningMode = false;
+        this.#gpCommissioningMode = false;
 
         logger.info("Exited Green Power commissioning mode", NS);
+    }
+
+    /**
+     * 05-3474-23 #3.6.1.10
+     */
+    public assignNetworkAddress(): number {
+        let newNetworkAddress = 0xffff;
+        let unique = false;
+
+        do {
+            // maximum exclusive, minimum inclusive
+            newNetworkAddress = Math.floor(Math.random() * (ZigbeeConsts.BCAST_MIN - 0x0001) + 0x0001);
+            unique = this.address16ToAddress64.get(newNetworkAddress) === undefined;
+        } while (!unique);
+
+        return newNetworkAddress;
     }
 
     /**
@@ -4139,11 +4410,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * @param allowOverride Treat as MACAssociationStatus.SUCCESS
      * @returns
      */
-    private async associate(
+    public async associate(
         source16: number | undefined,
         source64: bigint | undefined,
         initialJoin: boolean,
-        capabilities: number,
+        capabilities: MACCapabilities | undefined,
         neighbor: boolean,
         denyOverride?: boolean,
         allowOverride?: boolean,
@@ -4151,28 +4422,38 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // 0xffff when not successful and should not be retried
         let newAddress16 = source16;
         let status: MACAssociationStatus | number = MACAssociationStatus.SUCCESS;
+        let unknownRejoin = false;
 
         if (denyOverride) {
             newAddress16 = 0xffff;
             status = MACAssociationStatus.PAN_ACCESS_DENIED;
         } else if (!allowOverride) {
             if (initialJoin) {
-                if (this.trustCenterPolicies.allowJoins) {
-                    if (source16 === undefined) {
-                        // MAC join (no source16)
+                if (this.#trustCenterPolicies.allowJoins) {
+                    if (source16 === undefined || source16 === ZigbeeConsts.COORDINATOR_ADDRESS || source16 >= ZigbeeConsts.BCAST_MIN) {
+                        // MAC join (no `source16`)
                         newAddress16 = this.assignNetworkAddress();
 
                         if (newAddress16 === 0xffff) {
                             status = MACAssociationStatus.PAN_FULL;
                         }
-                    } else if (this.address16ToAddress64.get(source16) !== undefined) {
-                        // join with already taken source16
-                        newAddress16 = this.assignNetworkAddress();
+                    } else if (source64 !== undefined && this.deviceTable.get(source64) !== undefined) {
+                        // initial join should not conflict on 64, don't allow join if it does
+                        newAddress16 = 0xffff;
+                        status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                    } else {
+                        const existingAddress64 = this.address16ToAddress64.get(source16);
 
-                        if (newAddress16 === 0xffff) {
-                            status = MACAssociationStatus.PAN_FULL;
-                        } else if (newAddress16 !== source16) {
-                            status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                        if (existingAddress64 !== undefined && source64 !== existingAddress64) {
+                            // join with already taken source16
+                            newAddress16 = this.assignNetworkAddress();
+
+                            if (newAddress16 === 0xffff) {
+                                status = MACAssociationStatus.PAN_FULL;
+                            } else {
+                                // tell device to use the newly generated value
+                                status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                            }
                         }
                     }
                 } else {
@@ -4181,40 +4462,65 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 }
             } else {
                 // rejoin
+                if (source16 === undefined || source16 === ZigbeeConsts.COORDINATOR_ADDRESS || source16 >= ZigbeeConsts.BCAST_MIN) {
+                    // rejoin without 16, generate one (XXX: never happens?)
+                    newAddress16 = this.assignNetworkAddress();
+
+                    if (newAddress16 === 0xffff) {
+                        status = MACAssociationStatus.PAN_FULL;
+                    }
+                } else {
+                    const existingAddress64 = this.address16ToAddress64.get(source16);
+
+                    if (existingAddress64 === undefined) {
+                        // device unknown
+                        unknownRejoin = true;
+                    } else if (existingAddress64 !== source64) {
+                        // rejoin with already taken source16
+                        newAddress16 = this.assignNetworkAddress();
+
+                        if (newAddress16 === 0xffff) {
+                            status = MACAssociationStatus.PAN_FULL;
+                        } else {
+                            // tell device to use the newly generated value
+                            status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                        }
+                    }
+                }
                 // if rejoin, network address will be stored
                 // if (this.trustCenterPolicies.allowRejoinsWithWellKnownKey) {
                 // }
-                // TODO: handle rejoin from device that previously left and was removed from known devices (could conflict on 16)
             }
         }
 
         // something went wrong above
+        /* v8 ignore start */
         if (newAddress16 === undefined) {
             newAddress16 = 0xffff;
             status = MACAssociationStatus.PAN_ACCESS_DENIED;
         }
+        /* v8 ignore stop */
 
         logger.debug(
             () =>
-                `DEVICE_JOINING[src=${source16}:${source64} newAddr16=${newAddress16} initialJoin=${initialJoin} cap=${capabilities}] replying with status=${status}`,
+                `DEVICE_JOINING[src=${source16}:${source64} newAddr16=${newAddress16} initialJoin=${initialJoin} deviceType=${capabilities?.deviceType} powerSource=${capabilities?.powerSource} rxOnWhenIdle=${capabilities?.rxOnWhenIdle}] replying with status=${status}`,
             NS,
         );
 
         if (status === MACAssociationStatus.SUCCESS) {
-            if (initialJoin) {
-                const rxOnWhenIdle = Boolean((capabilities & 0x08) >> 3);
-
+            if (initialJoin || unknownRejoin) {
                 this.deviceTable.set(source64!, {
                     address16: newAddress16,
-                    rxOnWhenIdle, // TODO: only valid if not triggered by `processZigbeeAPSUpdateDevice`
+                    capabilities, // TODO: only valid if not triggered by `processZigbeeAPSUpdateDevice`
                     // on initial join success, device is considered joined but unauthorized after MAC Assoc / NWK Commissioning response is sent
                     authorized: false,
                     neighbor,
+                    recentLQAs: [],
                 });
                 this.address16ToAddress64.set(newAddress16, source64!);
 
                 // `processZigbeeAPSUpdateDevice` has no `capabilities` info, device is joined through router, so, no indirect tx for coordinator
-                if (!rxOnWhenIdle && capabilities !== 0x00) {
+                if (capabilities && !capabilities.rxOnWhenIdle) {
                     this.indirectTransmissions.set(source64!, []);
                 }
 
@@ -4228,7 +4534,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         return [status, newAddress16];
     }
 
-    private async disassociate(source16: number | undefined, source64: bigint | undefined): Promise<void> {
+    public async disassociate(source16: number | undefined, source64: bigint | undefined): Promise<void> {
         if (source64 === undefined && source16 !== undefined) {
             source64 = this.address16ToAddress64.get(source16);
         } else if (source16 === undefined && source64 !== undefined) {
@@ -4240,6 +4546,18 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             this.deviceTable.delete(source64);
             this.address16ToAddress64.delete(source16);
             this.indirectTransmissions.delete(source64);
+            this.sourceRouteTable.delete(source16);
+            this.pendingAssociations.delete(source64); // should never amount to a delete
+
+            // XXX: should only be needed for `rxOnWhenIdle`, but for now always trigger (tricky bit, not always correct)
+            for (const [addr16, entries] of this.sourceRouteTable) {
+                // entries using this device as relay are no longer valid
+                const filteredEntries = entries.filter((entry) => !entry.relayAddresses.includes(source16));
+
+                if (filteredEntries.length !== entries.length) {
+                    this.sourceRouteTable.set(addr16, filteredEntries);
+                }
+            }
 
             logger.debug(() => `DEVICE_LEFT[src=${source16}:${source64}]`, NS);
 
@@ -4303,7 +4621,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         destination16: number | undefined,
         destination64: bigint | undefined,
     ): [relayIndex: number | undefined, relayAddresses: number[] | undefined, pathCost: number | undefined] {
-        if (!this.sourceRouting || (destination16 !== undefined && destination16 >= ZigbeeConsts.BCAST_MIN)) {
+        if (!this.#sourceRouting || (destination16 !== undefined && destination16 >= ZigbeeConsts.BCAST_MIN)) {
             return [undefined, undefined, undefined];
         }
 
@@ -4355,126 +4673,414 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     // TODO: interference detection (& optionally auto channel changing)
 
     /**
-     * Check if ZDO message is aimed at coordinator, and if it should be emitted.
+     * Apply logistic curve on standard mapping to LQI range [0..255]
+     *
+     * - Silabs EFR32: the RSSI range of [-100..-36] is mapped to an LQI range [0..255]
+     * - TI zstack: `LQI = (MAC_SPEC_ED_MAX * (RSSIdbm - ED_RF_POWER_MIN_DBM)) / (ED_RF_POWER_MAX_DBM - ED_RF_POWER_MIN_DBM);`
+     *     where `MAC_SPEC_ED_MAX = 255`, `ED_RF_POWER_MIN_DBM = -87`, `ED_RF_POWER_MAX_DBM = -10`
+     * - Nordic: RSSI accuracy valid range -90 to -20 dBm
+     */
+    public mapRSSIToLQI(rssi: number): number {
+        if (rssi < this.rssiMin) {
+            return 0;
+        }
+
+        if (rssi > this.rssiMax) {
+            return 255;
+        }
+
+        return Math.floor(255 / (1 + Math.exp(-0.13 * (rssi - (this.rssiMin + 0.45 * (this.rssiMax - this.rssiMin))))));
+    }
+
+    /**
+     * LQA_raw (c, r) = 255 * (c - c_min) / (c_max - c_min) * (r - r_min) / (r_max - r_min)
+     * - c_min is the lowest signal quality ever reported, i.e. for a packet that can barely be received
+     * - c_max is the highest signal quality ever reported, i.e. for a packet received under ideal conditions
+     * - r_min is the lowest signal strength ever reported, i.e. for a packet close to receiver sensitivity
+     * - r_max is the highest signal strength ever reported, i.e. for a packet received from a strong, close-by transmitter
+     * @param signalStrength
+     * @param signalQuality
+     * @returns
+     */
+    public computeLQA(signalStrength: number, signalQuality?: number): number {
+        if (signalQuality === undefined) {
+            signalQuality = this.mapRSSIToLQI(signalStrength);
+        }
+
+        if (signalStrength < this.rssiMin) {
+            signalStrength = this.rssiMin;
+        }
+
+        if (signalStrength > this.rssiMax) {
+            signalStrength = this.rssiMax;
+        }
+
+        if (signalQuality < this.lqiMin) {
+            signalQuality = this.lqiMin;
+        }
+
+        if (signalQuality > this.lqiMax) {
+            signalQuality = this.lqiMax;
+        }
+
+        return Math.floor(
+            (((255 * (signalQuality - this.lqiMin)) / (this.lqiMax - this.lqiMin)) * (signalStrength - this.rssiMin)) / (this.rssiMax - this.rssiMin),
+        );
+    }
+
+    /**
+     * Compute the median LQA for a device from `recentLQAs` or using `signalStrength` directly if device unknown.
+     * If given, stores the computed LQA from given parameters in the `recentLQAs` list of the device before computing median.
+     * @param address16 Used to retrieve `address64` if not given (must be valid if 64 is not)
+     * @param address64 The address 64 of the device
+     * @param signalStrength RSSI. Optional (only use existing entries if not given)
+     * @param signalQuality LQI. Optional (only use existing entries if not given)
+     * @param maxRecent The number of `recentLQAs` to keep for the device (only used if signal params given). Default: 10
+     * @returns The computed LQA
+     * - Always 0 if device not found AND no `signalStrength` given.
+     * - Always 0 if the device does not have any recent LQAs AND no `signalStrength` given
+     */
+    public computeDeviceLQA(
+        address16: number | undefined,
+        address64: bigint | undefined,
+        signalStrength?: number,
+        signalQuality?: number,
+        maxRecent = 10,
+    ): number {
+        if (address64 === undefined && address16 !== undefined) {
+            address64 = this.address16ToAddress64.get(address16);
+        }
+
+        // sanity check
+        if (address64 !== undefined) {
+            const device = this.deviceTable.get(address64);
+
+            if (!device) {
+                return 0;
+            }
+
+            if (signalStrength !== undefined) {
+                const lqa = this.computeLQA(signalStrength, signalQuality);
+
+                if (device.recentLQAs.length > maxRecent) {
+                    // remove oldest LQA if necessary
+                    device.recentLQAs.shift();
+                }
+
+                device.recentLQAs.push(lqa);
+            }
+
+            if (device.recentLQAs.length === 0) {
+                return 0;
+            }
+
+            if (device.recentLQAs.length === 1) {
+                return device.recentLQAs[0];
+            }
+
+            const sortedLQAs = device.recentLQAs.slice(/* copy */).sort((a, b) => a - b);
+            const midIndex = Math.floor(sortedLQAs.length / 2);
+            const median = Math.floor(sortedLQAs.length % 2 === 1 ? sortedLQAs[midIndex] : (sortedLQAs[midIndex - 1] + sortedLQAs[midIndex]) / 2);
+
+            return median;
+        }
+
+        return signalStrength !== undefined ? this.computeLQA(signalStrength, signalQuality) : 0;
+    }
+
+    /**
+     * ZDO response to LQI_TABLE_REQUEST for coordinator
+     * @see 05-3474-23 #2.4.4.3.2
+     * @param startIndex
+     * @returns
+     */
+    public getLQITableResponse(startIndex: number): Buffer {
+        let neighborRouteTableIndex = 0;
+        let neighborTableEntries = 0;
+        // multiple of 7: [extendedPanId, eui64, nwkAddress, deviceTypeByte, permitJoiningByte, depth, lqa, ...repeat]
+        const lqiTableArr: (number | bigint)[] = [];
+
+        // XXX: this is not great...
+        for (const [addr64, entry] of this.deviceTable) {
+            if (entry.neighbor) {
+                if (neighborRouteTableIndex < startIndex) {
+                    // if under `startIndex`, just count
+                    neighborRouteTableIndex += 1;
+                    neighborTableEntries += 1;
+
+                    continue;
+                }
+
+                if (neighborRouteTableIndex >= startIndex + 0xff) {
+                    // if over uint8 size from `startIndex`, just count
+                    neighborRouteTableIndex += 1;
+                    neighborTableEntries += 1;
+
+                    continue;
+                }
+
+                const deviceType = entry.capabilities ? (entry.capabilities.deviceType === 1 ? 0x01 /* ZR */ : 0x02 /* ZED */) : 0x03 /* UNK */;
+                const rxOnWhenIdle = entry.capabilities ? (entry.capabilities.rxOnWhenIdle ? 0x01 /* ON */ : 0x00 /* OFF */) : 0x02 /* UNK */;
+                const relationship = 0x02; // TODO // 0x00 = neighbor is the parent, 0x01 = neighbor is a child, 0x02 = neighbor is a sibling, 0x03 = None of the above
+                const permitJoining = 0x02; // TODO // 0x00 = neighbor is not accepting join requests, 0x01 = neighbor is accepting join requests, 0x02 = unknown
+                const deviceTypeByte =
+                    (deviceType & 0x03) | ((rxOnWhenIdle << 2) & 0x03) | ((relationship << 4) & 0x07) | ((0 /* reserved */ << 7) & 0x01);
+                const permitJoiningByte = (permitJoining & 0x03) | ((0 /* reserved2 */ << 2) & 0x3f);
+                const depth = 1; // TODO // 0x00 indicates that the device is the Zigbee coordinator for the network
+                const lqa = this.computeDeviceLQA(entry.address16, addr64);
+
+                lqiTableArr.push(this.netParams.extendedPANId);
+                lqiTableArr.push(addr64);
+                lqiTableArr.push(entry.address16);
+                lqiTableArr.push(deviceTypeByte);
+                lqiTableArr.push(permitJoiningByte);
+                lqiTableArr.push(depth);
+                lqiTableArr.push(lqa);
+
+                neighborTableEntries += 1;
+                neighborRouteTableIndex += 1;
+            }
+        }
+
+        // have to fit uint8 count-type bytes of ZDO response
+        const clipped = neighborTableEntries > 0xff;
+        const entryCount = lqiTableArr.length / 7;
+        const lqiTable = Buffer.alloc(5 + entryCount * 22);
+        let offset = 0;
+
+        if (clipped) {
+            logger.debug(() => `LQI table clipped at 255 entries to fit ZDO response (actual=${neighborTableEntries})`, NS);
+        }
+
+        lqiTable.writeUInt8(0 /* seq num */, offset);
+        offset += 1;
+        lqiTable.writeUInt8(0 /* SUCCESS */, offset);
+        offset += 1;
+        lqiTable.writeUInt8(neighborTableEntries, offset);
+        offset += 1;
+        lqiTable.writeUInt8(startIndex, offset);
+        offset += 1;
+        lqiTable.writeUInt8(entryCount, offset);
+        offset += 1;
+
+        let entryIndex = 0;
+
+        for (let i = 0; i < entryCount; i++) {
+            lqiTable.writeBigUInt64LE(lqiTableArr[entryIndex] as bigint /* extendedPanId */, offset);
+            offset += 8;
+            lqiTable.writeBigUInt64LE(lqiTableArr[entryIndex + 1] as bigint /* eui64 */, offset);
+            offset += 8;
+            lqiTable.writeUInt16LE(lqiTableArr[entryIndex + 2] as number /* nwkAddress */, offset);
+            offset += 2;
+            lqiTable.writeUInt8(lqiTableArr[entryIndex + 3] as number /* deviceTypeByte */, offset);
+            offset += 1;
+            lqiTable.writeUInt8(lqiTableArr[entryIndex + 4] as number /* permitJoiningByte */, offset);
+            offset += 1;
+            lqiTable.writeUInt8(lqiTableArr[entryIndex + 5] as number /* depth */, offset);
+            offset += 1;
+            lqiTable.writeUInt8(lqiTableArr[entryIndex + 6] as number /* lqa */, offset);
+            offset += 1;
+
+            entryIndex += 7;
+        }
+
+        return lqiTable;
+    }
+
+    /**
+     * ZDO response to ROUTING_TABLE_REQUEST for coordinator
+     * NOTE: Only outputs the best source route for each entry in the table (clipped to max 255 entries).
+     * @see 05-3474-23 #2.4.4.3.3
+     * @param startIndex
+     * @returns
+     */
+    public getRoutingTableResponse(startIndex: number): Buffer {
+        let sourceRouteTableIndex = 0;
+        let routingTableEntries = 0;
+        // multiple of 3: [destination16, statusByte, nextHopAddress, ...repeat]
+        const routingTableArr: number[] = [];
+
+        // XXX: this is not great...
+        for (const [addr16] of this.sourceRouteTable) {
+            const [relayLastIndex, relayAddresses] = this.findBestSourceRoute(addr16, undefined);
+
+            if (relayLastIndex !== undefined && relayAddresses !== undefined) {
+                if (sourceRouteTableIndex < startIndex) {
+                    // if under `startIndex`, just count
+                    sourceRouteTableIndex += 1;
+                    routingTableEntries += 1;
+
+                    continue;
+                }
+
+                if (sourceRouteTableIndex >= startIndex + 0xff) {
+                    // if over uint8 size from `startIndex`, just count
+                    sourceRouteTableIndex += 1;
+                    routingTableEntries += 1;
+
+                    continue;
+                }
+
+                const status = 0x0; // ACTIVE
+                const memoryConstrained = 0; // TODO
+                const manyToOne = 0; // TODO
+                const routeRecordRequired = 0; // TODO
+                const statusByte =
+                    (status & 0x07) |
+                    ((memoryConstrained << 3) & 0x01) |
+                    ((manyToOne << 4) & 0x01) |
+                    ((routeRecordRequired << 5) & 0x01) |
+                    ((0 /* reserved */ << 6) & 0x03);
+                // last entry is next hop
+                const nextHopAddress = relayAddresses[relayLastIndex];
+
+                routingTableArr.push(addr16);
+                routingTableArr.push(statusByte);
+                routingTableArr.push(nextHopAddress);
+
+                routingTableEntries += 1;
+            }
+
+            sourceRouteTableIndex += 1;
+        }
+
+        // have to fit uint8 count-type bytes of ZDO response
+        const clipped = routingTableEntries > 0xff;
+        const entryCount = routingTableArr.length / 3;
+        const routingTable = Buffer.alloc(5 + entryCount * 5);
+        let offset = 0;
+
+        if (clipped) {
+            logger.debug(() => `Routing table clipped at 255 entries to fit ZDO response (actual=${routingTableEntries})`, NS);
+        }
+
+        routingTable.writeUInt8(0 /* seq num */, offset);
+        offset += 1;
+        routingTable.writeUInt8(0 /* SUCCESS */, offset);
+        offset += 1;
+        routingTable.writeUInt8(clipped ? 0xff : routingTableEntries, offset);
+        offset += 1;
+        routingTable.writeUInt8(startIndex, offset);
+        offset += 1;
+        routingTable.writeUInt8(entryCount, offset);
+        offset += 1;
+
+        let entryIndex = 0;
+
+        for (let i = 0; i < entryCount; i++) {
+            routingTable.writeUInt16LE(routingTableArr[entryIndex] /* destination16 */, offset);
+            offset += 2;
+            routingTable.writeUInt8(routingTableArr[entryIndex + 1] /* statusByte */, offset);
+            offset += 1;
+            routingTable.writeUInt16LE(routingTableArr[entryIndex + 2] /* nextHopAddress */, offset);
+            offset += 2;
+
+            entryIndex += 3;
+        }
+
+        return routingTable;
+    }
+
+    public getCoordinatorZDOResponse(clusterId: number, requestData: Buffer): Buffer | undefined {
+        switch (clusterId) {
+            case ZigbeeConsts.NETWORK_ADDRESS_REQUEST: {
+                // TODO: handle reportKids & index, this payload is only for 0, 0
+                return Buffer.from(this.configAttributes.address); // copy
+            }
+            case ZigbeeConsts.IEEE_ADDRESS_REQUEST: {
+                // TODO: handle reportKids & index, this payload is only for 0, 0
+                return Buffer.from(this.configAttributes.address); // copy
+            }
+            case ZigbeeConsts.NODE_DESCRIPTOR_REQUEST: {
+                return Buffer.from(this.configAttributes.nodeDescriptor); // copy
+            }
+            case ZigbeeConsts.POWER_DESCRIPTOR_REQUEST: {
+                return Buffer.from(this.configAttributes.powerDescriptor); // copy
+            }
+            case ZigbeeConsts.SIMPLE_DESCRIPTOR_REQUEST: {
+                return Buffer.from(this.configAttributes.simpleDescriptors); // copy
+            }
+            case ZigbeeConsts.ACTIVE_ENDPOINTS_REQUEST: {
+                return Buffer.from(this.configAttributes.activeEndpoints); // copy
+            }
+            case ZigbeeConsts.LQI_TABLE_REQUEST: {
+                return this.getLQITableResponse(requestData[1 /* 0 is tsn */]);
+            }
+            case ZigbeeConsts.ROUTING_TABLE_REQUEST: {
+                return this.getRoutingTableResponse(requestData[1 /* 0 is tsn */]);
+            }
+        }
+    }
+
+    /**
+     * Check if ZDO request is intended for coordinator.
+     * @param clusterId
+     * @param nwkDst16
+     * @param nwkDst64
+     * @param data
+     * @returns
+     */
+    private isZDORequestForCoordinator(clusterId: number, nwkDst16: number | undefined, nwkDst64: bigint | undefined, data: Buffer): boolean {
+        if (nwkDst16 === ZigbeeConsts.COORDINATOR_ADDRESS || nwkDst64 === this.netParams.eui64) {
+            // target is coordinator
+            return true;
+        }
+
+        if (nwkDst16 !== undefined && nwkDst16 >= ZigbeeConsts.BCAST_MIN) {
+            // target is BCAST and ZDO "of interest" is coordinator
+            switch (clusterId) {
+                case ZigbeeConsts.NETWORK_ADDRESS_REQUEST: {
+                    return data.readBigUInt64LE(1 /* skip seq num */) === this.netParams.eui64;
+                }
+
+                case ZigbeeConsts.IEEE_ADDRESS_REQUEST:
+                case ZigbeeConsts.NODE_DESCRIPTOR_REQUEST:
+                case ZigbeeConsts.POWER_DESCRIPTOR_REQUEST:
+                case ZigbeeConsts.SIMPLE_DESCRIPTOR_REQUEST:
+                case ZigbeeConsts.ACTIVE_ENDPOINTS_REQUEST: {
+                    return data.readUInt16LE(1 /* skip seq num */) === ZigbeeConsts.COORDINATOR_ADDRESS;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Respond to ZDO requests aimed at coordinator if needed.
      * @param data
      * @param clusterId
      * @param macDest16
      * @param nwkDest16
      * @param nwkDest64
-     * @returns True if a request was sent and no further processing is needed
      */
-    private async filterZDO(data: Buffer, clusterId: number, nwkDest16: number | undefined, nwkDest64: bigint | undefined): Promise<boolean> {
-        let finalPayload: Buffer;
+    private async respondToCoordinatorZDORequest(
+        data: Buffer,
+        clusterId: number,
+        nwkDest16: number | undefined,
+        nwkDest64: bigint | undefined,
+    ): Promise<void> {
+        const finalPayload = this.getCoordinatorZDOResponse(clusterId, data);
 
-        switch (clusterId) {
-            case ZigbeeConsts.NETWORK_ADDRESS_REQUEST: {
-                if (data.readBigUInt64LE(1 /* skip seq num */) !== this.netParams.eui64) {
-                    // target of ZDO req is not coordinator, but is request, ignore it
-                    return true;
-                }
+        if (finalPayload) {
+            // set the ZDO sequence number in outgoing payload same as incoming request
+            finalPayload[0] = data[0];
 
-                // TODO: handle reportKids & index, this payload is only for 0, 0
-                finalPayload = Buffer.from(this.configAttributes.address); // copy
-                break;
-            }
-            case ZigbeeConsts.IEEE_ADDRESS_REQUEST: {
-                if (data.readUInt16LE(1 /* skip seq num */) !== ZigbeeConsts.COORDINATOR_ADDRESS) {
-                    // target of ZDO req is not coordinator, but is request, ignore it
-                    return true;
-                }
+            logger.debug(() => `===> COORD_ZDO[seqNum=${finalPayload[0]} clusterId=${clusterId} nwkDst=${nwkDest16}:${nwkDest64}]`, NS);
 
-                // TODO: handle reportKids & index, this payload is only for 0, 0
-                finalPayload = Buffer.from(this.configAttributes.address); // copy
-                break;
-            }
-            case ZigbeeConsts.NODE_DESCRIPTOR_REQUEST: {
-                if (data.readUInt16LE(1 /* skip seq num */) !== ZigbeeConsts.COORDINATOR_ADDRESS) {
-                    // target of ZDO req is not coordinator (nwk addr of interest), but is request, ignore it
-                    return true;
-                }
-
-                finalPayload = Buffer.from(this.configAttributes.nodeDescriptor); // copy
-                break;
-            }
-            case ZigbeeConsts.POWER_DESCRIPTOR_REQUEST: {
-                if (data.readUInt16LE(1 /* skip seq num */) !== ZigbeeConsts.COORDINATOR_ADDRESS) {
-                    // target of ZDO req is not coordinator (nwk addr of interest), but is request, ignore it
-                    return true;
-                }
-
-                finalPayload = Buffer.from(this.configAttributes.powerDescriptor); // copy
-                break;
-            }
-            case ZigbeeConsts.SIMPLE_DESCRIPTOR_REQUEST: {
-                if (data.readUInt16LE(1 /* skip seq num */) !== ZigbeeConsts.COORDINATOR_ADDRESS) {
-                    // target of ZDO req is not coordinator (nwk addr of interest), but is request, ignore it
-                    return true;
-                }
-
-                finalPayload = Buffer.from(this.configAttributes.simpleDescriptors); // copy
-                break;
-            }
-            case ZigbeeConsts.ACTIVE_ENDPOINTS_REQUEST: {
-                if (data.readUInt16LE(1 /* skip seq num */) !== ZigbeeConsts.COORDINATOR_ADDRESS) {
-                    // target of ZDO req is not coordinator (nwk addr of interest), but is request, ignore it
-                    return true;
-                }
-
-                finalPayload = Buffer.from(this.configAttributes.activeEndpoints); // copy
-                break;
-            }
-            case ZigbeeConsts.END_DEVICE_ANNOUNCE: {
-                let offset = 1; // skip seq num
-                const address16 = data.readUInt16LE(offset);
-                offset += 2;
-                const address64 = data.readBigUInt64LE(offset);
-                offset += 8;
-                const capabilities = data.readUInt8(offset);
-                offset += 1;
-
-                const device = this.deviceTable.get(address64);
-
-                if (device) {
-                    // just in case
-                    device.rxOnWhenIdle = Boolean((capabilities & 0x08) >> 3);
-
-                    // TODO: ideally, this shouldn't trigger (prevents early interview process from app) until AFTER authorized=true
-                    setImmediate(() => {
-                        // if device is authorized, it means it completed the TC link key update, so, a rejoin
-                        this.emit(device.authorized ? "deviceRejoined" : "deviceJoined", address16, address64);
-                    });
-
-                    return false;
-                }
-
-                // unknown device, should have been added by `associate`, something's not right, ignore it
-                return true;
-            }
-            default: {
-                // REQUEST type shouldn't continue
-                return (clusterId & 0x8000) === 0;
-            }
+            await this.sendZigbeeAPSData(
+                finalPayload,
+                ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
+                nwkDest16, // nwkDest16
+                nwkDest64, // nwkDest64
+                ZigbeeAPSDeliveryMode.UNICAST, // apsDeliveryMode
+                clusterId | 0x8000, // clusterId
+                ZigbeeConsts.ZDO_PROFILE_ID, // profileId
+                ZigbeeConsts.ZDO_ENDPOINT, // destEndpoint
+                ZigbeeConsts.ZDO_ENDPOINT, // sourceEndpoint
+                undefined, // group
+            );
         }
-
-        // set the ZDO sequence number in outgoing payload same as incoming request
-        finalPayload[0] = data[0];
-
-        logger.debug(() => `===> COORD_ZDO[seqNum=${finalPayload[0]} clusterId=${clusterId} nwkDst=${nwkDest16}:${nwkDest64}]`, NS);
-
-        await this.sendZigbeeAPSData(
-            finalPayload,
-            ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
-            nwkDest16, // nwkDest16
-            nwkDest64, // nwkDest64
-            ZigbeeAPSDeliveryMode.UNICAST, // apsDeliveryMode
-            clusterId | 0x8000, // clusterId
-            ZigbeeConsts.ZDO_PROFILE_ID, // profileId
-            ZigbeeConsts.ZDO_ENDPOINT, // destEndpoint
-            ZigbeeConsts.ZDO_ENDPOINT, // sourceEndpoint
-            undefined, // group
-        );
-
-        return true;
     }
 
     // #endregion
@@ -4525,7 +5131,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             offset += 8;
             state.writeUInt16LE(device.address16, offset);
             offset += 2;
-            state.writeUInt8(device.rxOnWhenIdle ? 1 : 0, offset);
+            state.writeUInt8(device.capabilities ? encodeMACCapabilities(device.capabilities) : 0x00, offset);
             offset += 1;
             state.writeUInt8(device.authorized ? 1 : 0, offset);
             offset += 1;
@@ -4575,7 +5181,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      */
     public async loadState(): Promise<void> {
         // pre-emptive
-        this.stateLoaded = true;
+        this.#stateLoaded = true;
 
         try {
             const state = await readFile(this.savePath);
@@ -4601,7 +5207,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 offset += 8;
                 const address16 = state.readUInt16LE(offset);
                 offset += 2;
-                const rxOnWhenIdle = Boolean(state.readUInt8(offset));
+                const capabilities = state.readUInt8(offset);
                 offset += 1;
                 const authorized = Boolean(state.readUInt8(offset));
                 offset += 1;
@@ -4611,15 +5217,18 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 // reserved
                 offset += 64 - 13; // currently: 51
 
+                const decodedCap = capabilities !== 0 ? decodeMACCapabilities(capabilities) : undefined;
+
                 this.deviceTable.set(address64, {
                     address16,
-                    rxOnWhenIdle,
+                    capabilities: decodedCap,
                     authorized,
                     neighbor,
+                    recentLQAs: [],
                 });
                 this.address16ToAddress64.set(address16, address64);
 
-                if (!rxOnWhenIdle) {
+                if (decodedCap && !decodedCap.rxOnWhenIdle) {
                     this.indirectTransmissions.set(address64, []);
                 }
 
@@ -4665,7 +5274,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             makeKeyedHashByType(ZigbeeKeyType.LOAD, this.netParams.tcKey),
         );
 
-        this.tcVerifyKeyHash = makeKeyedHash(this.netParams.tcKey, 0x03 /* input byte per spec for VERIFY_KEY */);
+        this.#tcVerifyKeyHash = makeKeyedHash(this.netParams.tcKey, 0x03 /* input byte per spec for VERIFY_KEY */);
 
         const [address, nodeDescriptor, powerDescriptor, simpleDescriptors, activeEndpoints] = encodeCoordinatorDescriptors(this.netParams.eui64);
 
@@ -4744,6 +5353,67 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     // #region Wrappers
 
     /**
+     * The CCA (clear-channel assessment) threshold.
+     * @returns dBm (int8)
+     */
+    public async getPHYCCAThreshold(): Promise<number> {
+        const response = await this.getProperty(SpinelPropertyId.PHY_CCA_THRESHOLD);
+
+        return readPropertyc(SpinelPropertyId.PHY_CCA_THRESHOLD, response.payload);
+    }
+
+    /**
+     * The CCA (clear-channel assessment) threshold.
+     * Set to -128 to disable.
+     * The value will be rounded down to a value that is supported by the underlying radio hardware.
+     * @param ccaThreshold dBm (>= -128 and <= 127)
+     */
+    public async setPHYCCAThreshold(ccaThreshold: number): Promise<void> {
+        await this.setProperty(writePropertyc(SpinelPropertyId.PHY_CCA_THRESHOLD, Math.min(Math.max(ccaThreshold, -128), 127)));
+    }
+
+    /**
+     * The transmit power of the radio.
+     * @returns dBm (int8)
+     */
+    public async getPHYTXPower(): Promise<number> {
+        const response = await this.getProperty(SpinelPropertyId.PHY_TX_POWER);
+
+        return readPropertyc(SpinelPropertyId.PHY_TX_POWER, response.payload);
+    }
+
+    /**
+     * The transmit power of the radio.
+     * The value will be rounded down to a value that is supported by the underlying radio hardware.
+     * @param txPower dBm (>= -128 and <= 127)
+     */
+    public async setPHYTXPower(txPower: number): Promise<void> {
+        await this.setProperty(writePropertyc(SpinelPropertyId.PHY_TX_POWER, Math.min(Math.max(txPower, -128), 127)));
+    }
+
+    /**
+     * The current RSSI (Received signal strength indication) from the radio.
+     * This value can be used in energy scans and for determining the ambient noise floor for the operating environment.
+     * @returns dBm (int8)
+     */
+    public async getPHYRSSI(): Promise<number> {
+        const response = await this.getProperty(SpinelPropertyId.PHY_RSSI);
+
+        return readPropertyc(SpinelPropertyId.PHY_RSSI, response.payload);
+    }
+
+    /**
+     * The radio receive sensitivity.
+     * This value can be used as lower bound noise floor for link metrics computation.
+     * @returns dBm (int8)
+     */
+    public async getPHYRXSensitivity(): Promise<number> {
+        const response = await this.getProperty(SpinelPropertyId.PHY_RX_SENSITIVITY);
+
+        return readPropertyc(SpinelPropertyId.PHY_RX_SENSITIVITY, response.payload);
+    }
+
+    /**
      * Wraps ZigBee APS DATA sending for ZDO.
      * @param payload
      * @param nwkDest16
@@ -4772,7 +5442,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             // force saving after net params change
             await this.savePeriodicState();
 
-            this.pendingChangeChannel = setTimeout(async () => {
+            this.#pendingChangeChannel = setTimeout(async () => {
                 await this.setProperty(writePropertyC(SpinelPropertyId.PHY_CHAN, this.netParams.channel));
             }, ZigbeeConsts.BCAST_TIME_WINDOW);
         }

@@ -195,11 +195,19 @@ async function convert(dataPath: string): Promise<void> {
         driver.deviceTable.set(BigInt(device.ieeeAddr), {
             address16: device.nwkAddr,
             // this could be... wrong, devices not always use this properly
-            rxOnWhenIdle: device.type === "Router" && device.powerSource !== "Battery",
+            capabilities: {
+                alternatePANCoordinator: false,
+                deviceType: device.type === "Router" ? 0x01 : 0x00,
+                powerSource: device.powerSource !== "Unknown" && device.powerSource !== "Battery" ? 0x01 : 0x00,
+                rxOnWhenIdle: device.type === "Router" && device.powerSource !== "Unknown" && device.powerSource !== "Battery",
+                securityCapability: false,
+                allocateAddress: true,
+            },
             // technically not correct, but reasonable expectation
             authorized: device.interviewCompleted === true,
             // add support for not knowing this in driver (re-evaluation)
             neighbor: backupDevice?.is_child !== true,
+            recentLQAs: [],
         });
     }
 

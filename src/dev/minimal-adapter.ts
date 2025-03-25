@@ -36,34 +36,34 @@ type PortOptions = {
  */
 export class MinimalAdapter {
     public readonly driver: OTRCPDriver;
-    private readonly portOptions: PortOptions;
-    private serialPort?: SerialPort;
-    private socketPort?: Socket;
+    readonly #portOptions: PortOptions;
+    #serialPort?: SerialPort;
+    #socketPort?: Socket;
     /** True when serial/socket is currently closing */
-    private closing: boolean;
+    #closing: boolean;
 
-    private wiresharkSeqNum: number;
-    private wiresharkPort: number;
-    private wiresharkAddress: string;
-    private readonly wiresharkSocket: DgramSocket;
+    #wiresharkSeqNum: number;
+    #wiresharkPort: number;
+    #wiresharkAddress: string;
+    readonly #wiresharkSocket: DgramSocket;
 
     constructor(portOptions: PortOptions, streamRawConfig: StreamRawConfig, netParams: NetworkParameters, sendMACToZEP: boolean) {
-        this.wiresharkSeqNum = 0; // start at 1
-        this.wiresharkSocket = createSocket("udp4");
-        this.wiresharkPort = process.env.WIRESHARK_ZEP_PORT ? Number.parseInt(process.env.WIRESHARK_ZEP_PORT) : DEFAULT_ZEP_UDP_PORT;
-        this.wiresharkAddress = process.env.WIRESHARK_ADDRESS ? process.env.WIRESHARK_ADDRESS : DEFAULT_WIRESHARK_IP;
-        this.wiresharkSocket.bind(this.wiresharkPort);
+        this.#wiresharkSeqNum = 0; // start at 1
+        this.#wiresharkSocket = createSocket("udp4");
+        this.#wiresharkPort = process.env.WIRESHARK_ZEP_PORT ? Number.parseInt(process.env.WIRESHARK_ZEP_PORT) : DEFAULT_ZEP_UDP_PORT;
+        this.#wiresharkAddress = process.env.WIRESHARK_ADDRESS ? process.env.WIRESHARK_ADDRESS : DEFAULT_WIRESHARK_IP;
+        this.#wiresharkSocket.bind(this.#wiresharkPort);
 
         this.driver = new OTRCPDriver(streamRawConfig, netParams, ".", sendMACToZEP);
 
-        this.portOptions = portOptions;
-        this.closing = false;
+        this.#portOptions = portOptions;
+        this.#closing = false;
 
         if (sendMACToZEP) {
             this.driver.on("macFrame", (payload, rssi) => {
                 const wsZEPFrame = createWiresharkZEPFrame(this.driver.netParams.channel, 1, 0, rssi ?? 0, this.nextWiresharkSeqNum(), payload);
 
-                this.wiresharkSocket.send(wsZEPFrame, this.wiresharkPort, this.wiresharkAddress);
+                this.#wiresharkSocket.send(wsZEPFrame, this.#wiresharkPort, this.#wiresharkAddress);
             });
         }
 
@@ -75,21 +75,21 @@ export class MinimalAdapter {
      * Check if port is valid, open, and not closing.
      */
     get portOpen(): boolean {
-        if (this.closing) {
+        if (this.#closing) {
             return false;
         }
 
-        if (isTcpPath(this.portOptions.path!)) {
-            return this.socketPort ? !this.socketPort.closed : false;
+        if (isTcpPath(this.#portOptions.path!)) {
+            return this.#socketPort ? !this.#socketPort.closed : false;
         }
 
-        return this.serialPort ? this.serialPort.isOpen : false;
+        return this.#serialPort ? this.#serialPort.isOpen : false;
     }
 
     private nextWiresharkSeqNum(): number {
-        this.wiresharkSeqNum = (this.wiresharkSeqNum + 1) & 0xffffffff;
+        this.#wiresharkSeqNum = (this.#wiresharkSeqNum + 1) & 0xffffffff;
 
-        return this.wiresharkSeqNum + 1;
+        return this.#wiresharkSeqNum + 1;
     }
 
     /**
@@ -98,19 +98,19 @@ export class MinimalAdapter {
     public async initPort(): Promise<void> {
         await this.closePort(); // will do nothing if nothing's open
 
-        if (isTcpPath(this.portOptions.path!)) {
-            const pathUrl = new URL(this.portOptions.path!);
+        if (isTcpPath(this.#portOptions.path!)) {
+            const pathUrl = new URL(this.#portOptions.path!);
             const hostname = pathUrl.hostname;
             const port = Number.parseInt(pathUrl.port, 10);
 
             logger.debug(() => `Opening TCP socket with ${hostname}:${port}`, NS);
 
-            this.socketPort = new Socket();
+            this.#socketPort = new Socket();
 
-            this.socketPort.setNoDelay(true);
-            this.socketPort.setKeepAlive(true, 15000);
-            this.driver.writer.pipe(this.socketPort);
-            this.socketPort.pipe(this.driver.parser);
+            this.#socketPort.setNoDelay(true);
+            this.#socketPort.setKeepAlive(true, 15000);
+            this.driver.writer.pipe(this.#socketPort);
+            this.#socketPort.pipe(this.driver.parser);
             this.driver.parser.on("data", this.driver.onFrame.bind(this.driver));
 
             return await new Promise((resolve, reject): void => {
@@ -120,27 +120,27 @@ export class MinimalAdapter {
                     reject(err);
                 };
 
-                this.socketPort!.on("connect", () => {
+                this.#socketPort!.on("connect", () => {
                     logger.debug(() => "Socket connected", NS);
                 });
-                this.socketPort!.on("ready", (): void => {
+                this.#socketPort!.on("ready", (): void => {
                     logger.info("Socket ready", NS);
-                    this.socketPort!.removeListener("error", openError);
-                    this.socketPort!.once("close", this.onPortClose.bind(this));
-                    this.socketPort!.on("error", this.onPortError.bind(this));
+                    this.#socketPort!.removeListener("error", openError);
+                    this.#socketPort!.once("close", this.onPortClose.bind(this));
+                    this.#socketPort!.on("error", this.onPortError.bind(this));
 
                     resolve();
                 });
-                this.socketPort!.once("error", openError);
+                this.#socketPort!.once("error", openError);
 
-                this.socketPort!.connect(port, hostname);
+                this.#socketPort!.connect(port, hostname);
             });
         }
 
         const serialOpts = {
-            path: this.portOptions.path!,
-            baudRate: typeof this.portOptions.baudRate === "number" ? this.portOptions.baudRate : 115200,
-            rtscts: typeof this.portOptions.rtscts === "boolean" ? this.portOptions.rtscts : false,
+            path: this.#portOptions.path!,
+            baudRate: typeof this.#portOptions.baudRate === "number" ? this.#portOptions.baudRate : 115200,
+            rtscts: typeof this.#portOptions.rtscts === "boolean" ? this.#portOptions.rtscts : false,
             autoOpen: false,
             parity: "none" as const,
             stopBits: 1 as const,
@@ -156,21 +156,21 @@ export class MinimalAdapter {
         }
 
         logger.debug(() => `Opening serial port with [path=${serialOpts.path} baudRate=${serialOpts.baudRate} rtscts=${serialOpts.rtscts}]`, NS);
-        this.serialPort = new SerialPort(serialOpts);
+        this.#serialPort = new SerialPort(serialOpts);
 
-        this.driver.writer.pipe(this.serialPort);
-        this.serialPort.pipe(this.driver.parser);
+        this.driver.writer.pipe(this.#serialPort);
+        this.#serialPort.pipe(this.driver.parser);
         this.driver.parser.on("data", this.driver.onFrame.bind(this.driver));
 
         try {
             await new Promise<void>((resolve, reject): void => {
-                this.serialPort!.open((err) => (err ? reject(err) : resolve()));
+                this.#serialPort!.open((err) => (err ? reject(err) : resolve()));
             });
 
             logger.info("Serial port opened", NS);
 
-            this.serialPort.once("close", this.onPortClose.bind(this));
-            this.serialPort.on("error", this.onPortError.bind(this));
+            this.#serialPort.once("close", this.onPortClose.bind(this));
+            this.#serialPort.on("error", this.onPortError.bind(this));
         } catch (error) {
             await this.stop();
 
@@ -207,11 +207,11 @@ export class MinimalAdapter {
             throw new Error("Invalid call to start");
         }
 
-        if (this.serialPort) {
+        if (this.#serialPort) {
             // try clearing read/write buffers
             try {
                 await new Promise<void>((resolve, reject): void => {
-                    this.serialPort!.flush((err) => (err ? reject(err) : resolve()));
+                    this.#serialPort!.flush((err) => (err ? reject(err) : resolve()));
                 });
             } catch (err) {
                 logger.error(`Error while flushing serial port before start: ${err}`, NS);
@@ -231,35 +231,35 @@ export class MinimalAdapter {
     }
 
     public async stop(): Promise<void> {
-        this.closing = true;
+        this.#closing = true;
 
         await this.driver.stop();
-        this.wiresharkSocket.close();
+        this.#wiresharkSocket.close();
         await this.closePort();
     }
 
     public async closePort(): Promise<void> {
-        if (this.serialPort?.isOpen) {
+        if (this.#serialPort?.isOpen) {
             try {
                 await new Promise<void>((resolve, reject): void => {
-                    this.serialPort!.flush((err) => (err ? reject(err) : resolve()));
+                    this.#serialPort!.flush((err) => (err ? reject(err) : resolve()));
                 });
 
                 await new Promise<void>((resolve, reject): void => {
-                    this.serialPort!.close((err) => (err ? reject(err) : resolve()));
+                    this.#serialPort!.close((err) => (err ? reject(err) : resolve()));
                 });
             } catch (err) {
                 logger.error(`Failed to close serial port ${err}.`, NS);
             }
 
-            this.serialPort.removeAllListeners();
+            this.#serialPort.removeAllListeners();
 
-            this.serialPort = undefined;
-        } else if (this.socketPort != null && !this.socketPort.closed) {
-            this.socketPort.destroy();
-            this.socketPort.removeAllListeners();
+            this.#serialPort = undefined;
+        } else if (this.#socketPort != null && !this.#socketPort.closed) {
+            this.#socketPort.destroy();
+            this.#socketPort.removeAllListeners();
 
-            this.socketPort = undefined;
+            this.#socketPort = undefined;
         }
     }
 
