@@ -1338,8 +1338,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 }
 
                 await this.setProperty(writePropertyStreamRaw(payload, this.streamRawConfig));
-
-                logger.debug(() => `<=== MAC[seqNum=${seqNum} dst=${dest16}:${dest64}]`, NS);
             } catch (error) {
                 logger.error(`=x=> MAC[seqNum=${seqNum} dst=${dest16}:${dest64}] ${(error as Error).message}`, NS);
             }
@@ -1583,14 +1581,14 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public async processMACDataReq(_data: Buffer, offset: number, macHeader: MACHeader): Promise<number> {
         logger.debug(() => `<=== MAC DATA_RQ[macSrc=${macHeader.source16}:${macHeader.source64}]`, NS);
 
-        let addr = macHeader.source64;
+        let address64 = macHeader.source64;
 
-        if (addr === undefined && macHeader.source16 !== undefined) {
-            addr = this.address16ToAddress64.get(macHeader.source16);
+        if (address64 === undefined && macHeader.source16 !== undefined) {
+            address64 = this.address16ToAddress64.get(macHeader.source16);
         }
 
-        if (addr !== undefined) {
-            const pendingAssoc = this.pendingAssociations.get(addr);
+        if (address64 !== undefined) {
+            const pendingAssoc = this.pendingAssociations.get(address64);
 
             if (pendingAssoc) {
                 if (pendingAssoc.timestamp + ZigbeeConsts.MAC_INDIRECT_TRANSMISSION_TIMEOUT > Date.now()) {
@@ -1598,9 +1596,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 }
 
                 // always delete, ensures no stale
-                this.pendingAssociations.delete(addr);
+                this.pendingAssociations.delete(address64);
             } else {
-                const addrTXs = this.indirectTransmissions.get(addr);
+                const addrTXs = this.indirectTransmissions.get(address64);
 
                 if (addrTXs !== undefined) {
                     let tx = addrTXs.shift();
@@ -3162,27 +3160,58 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
                 logger.debug(
                     () =>
-                        `<=== APS DATA[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} seqNum=${nwkHeader.seqNum} profileId=${apsHeader.profileId} clusterId=${apsHeader.clusterId} srcEp=${apsHeader.sourceEndpoint} dstEp=${apsHeader.destEndpoint}]`,
+                        `<=== APS DATA[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} seqNum=${nwkHeader.seqNum} profileId=${apsHeader.profileId} clusterId=${apsHeader.clusterId} srcEp=${apsHeader.sourceEndpoint} dstEp=${apsHeader.destEndpoint} bcast=${macHeader.destination16 === ZigbeeMACConsts.BCAST_ADDR || (nwkHeader.destination16 !== undefined && nwkHeader.destination16 >= ZigbeeConsts.BCAST_MIN)}]`,
                     NS,
                 );
 
-                let processed = false;
-
                 if (apsHeader.profileId === ZigbeeConsts.ZDO_PROFILE_ID) {
-                    processed = await this.interceptCoordinatorZDORequest(data, apsHeader.clusterId!, nwkHeader.source16, nwkHeader.source64);
-                }
+                    if (apsHeader.clusterId === ZigbeeConsts.END_DEVICE_ANNOUNCE) {
+                        let offset = 1; // skip seq num
+                        const address16 = data.readUInt16LE(offset);
+                        offset += 2;
+                        const address64 = data.readBigUInt64LE(offset);
+                        offset += 8;
+                        const capabilities = data.readUInt8(offset);
+                        offset += 1;
 
-                if (!processed) {
-                    if (nwkHeader.source16 === undefined && nwkHeader.source64 === undefined) {
-                        logger.debug(() => "<=~= APS Ignoring frame with no sender info", NS);
-                        return;
+                        const device = this.deviceTable.get(address64);
+
+                        if (!device) {
+                            // unknown device, should have been added by `associate`, something's not right, ignore it
+                            return;
+                        }
+
+                        // just in case
+                        device.rxOnWhenIdle = Boolean((capabilities & 0x08) >> 3);
+
+                        // TODO: ideally, this shouldn't trigger (prevents early interview process from app) until AFTER authorized=true
+                        setImmediate(() => {
+                            // if device is authorized, it means it completed the TC link key update, so, a rejoin
+                            this.emit(device.authorized ? "deviceRejoined" : "deviceJoined", address16, address64, device.rxOnWhenIdle);
+                        });
+                    } else {
+                        const isRequest = (apsHeader.clusterId! & 0x8000) === 0;
+
+                        if (isRequest) {
+                            if (this.isZDORequestCoordinator(apsHeader.clusterId!, nwkHeader.destination16, nwkHeader.destination64, data)) {
+                                await this.respondCoordinatorZDO(data, apsHeader.clusterId!, nwkHeader.source16, nwkHeader.source64);
+                            }
+
+                            // don't emit received ZDO requests
+                            return;
+                        }
                     }
-
-                    setImmediate(() => {
-                        // TODO: always lookup source64 if undef?
-                        this.emit("frame", nwkHeader.source16, nwkHeader.source64, apsHeader, data, lqa);
-                    });
                 }
+
+                if (nwkHeader.source16 === undefined && nwkHeader.source64 === undefined) {
+                    logger.debug(() => "<=~= APS Ignoring frame with no sender info", NS);
+                    return;
+                }
+
+                setImmediate(() => {
+                    // TODO: always lookup source64 if undef?
+                    this.emit("frame", nwkHeader.source16, nwkHeader.source64, apsHeader, data, lqa);
+                });
 
                 break;
             }
@@ -4876,127 +4905,106 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         return routingTable;
     }
 
+    public getCoordinatorZDOResponse(clusterId: number, requestData: Buffer): Buffer | undefined {
+        switch (clusterId) {
+            case ZigbeeConsts.NETWORK_ADDRESS_REQUEST: {
+                // TODO: handle reportKids & index, this payload is only for 0, 0
+                return Buffer.from(this.configAttributes.address); // copy
+            }
+            case ZigbeeConsts.IEEE_ADDRESS_REQUEST: {
+                // TODO: handle reportKids & index, this payload is only for 0, 0
+                return Buffer.from(this.configAttributes.address); // copy
+            }
+            case ZigbeeConsts.NODE_DESCRIPTOR_REQUEST: {
+                return Buffer.from(this.configAttributes.nodeDescriptor); // copy
+            }
+            case ZigbeeConsts.POWER_DESCRIPTOR_REQUEST: {
+                return Buffer.from(this.configAttributes.powerDescriptor); // copy
+            }
+            case ZigbeeConsts.SIMPLE_DESCRIPTOR_REQUEST: {
+                return Buffer.from(this.configAttributes.simpleDescriptors); // copy
+            }
+            case ZigbeeConsts.ACTIVE_ENDPOINTS_REQUEST: {
+                return Buffer.from(this.configAttributes.activeEndpoints); // copy
+            }
+            case ZigbeeConsts.LQI_TABLE_REQUEST: {
+                return this.getLQITableResponse(requestData[1 /* 0 is tsn */]);
+            }
+            case ZigbeeConsts.ROUTING_TABLE_REQUEST: {
+                return this.getRoutingTableResponse(requestData[1 /* 0 is tsn */]);
+            }
+        }
+    }
+
     /**
-     * Intercept ZDO requests aimed at coordinator if needed and reply as appropriate.
+     * Check if ZDO request is intended for coordinator.
+     * @param clusterId
+     * @param nwkDst16
+     * @param nwkDst64
+     * @param data
+     * @returns
+     */
+    private isZDORequestCoordinator(clusterId: number, nwkDst16: number | undefined, nwkDst64: bigint | undefined, data: Buffer): boolean {
+        if (nwkDst16 === ZigbeeConsts.COORDINATOR_ADDRESS || nwkDst64 === this.netParams.eui64) {
+            // target is coordinator
+            return true;
+        }
+
+        if (nwkDst16 !== undefined && nwkDst16 >= ZigbeeConsts.BCAST_MIN) {
+            // target is BCAST and ZDO "of interest" is coordinator
+            switch (clusterId) {
+                case ZigbeeConsts.NETWORK_ADDRESS_REQUEST: {
+                    return data.readBigUInt64LE(1 /* skip seq num */) === this.netParams.eui64;
+                }
+
+                case ZigbeeConsts.IEEE_ADDRESS_REQUEST:
+                case ZigbeeConsts.NODE_DESCRIPTOR_REQUEST:
+                case ZigbeeConsts.POWER_DESCRIPTOR_REQUEST:
+                case ZigbeeConsts.SIMPLE_DESCRIPTOR_REQUEST:
+                case ZigbeeConsts.ACTIVE_ENDPOINTS_REQUEST: {
+                    return data.readUInt16LE(1 /* skip seq num */) === ZigbeeConsts.COORDINATOR_ADDRESS;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Respond to ZDO requests aimed at coordinator if needed.
      * @param data
      * @param clusterId
      * @param macDest16
      * @param nwkDest16
      * @param nwkDest64
-     * @returns True if a request was sent and no further processing is needed
      */
-    private async interceptCoordinatorZDORequest(data: Buffer, clusterId: number, nwkDest16: number | undefined, nwkDest64: bigint | undefined): Promise<boolean> {
-        let finalPayload: Buffer;
+    private async respondCoordinatorZDO(
+        data: Buffer,
+        clusterId: number,
+        nwkDest16: number | undefined,
+        nwkDest64: bigint | undefined,
+    ): Promise<void> {
+        const finalPayload = this.getCoordinatorZDOResponse(clusterId, data);
 
-        switch (clusterId) {
-            case ZigbeeConsts.NETWORK_ADDRESS_REQUEST: {
-                if (data.readBigUInt64LE(1 /* skip seq num */) !== this.netParams.eui64) {
-                    // target of ZDO req is not coordinator, but is request, ignore it
-                    return true;
-                }
+        if (finalPayload) {
+            // set the ZDO sequence number in outgoing payload same as incoming request
+            finalPayload[0] = data[0];
 
-                // TODO: handle reportKids & index, this payload is only for 0, 0
-                finalPayload = Buffer.from(this.configAttributes.address); // copy
-                break;
-            }
-            case ZigbeeConsts.IEEE_ADDRESS_REQUEST: {
-                if (data.readUInt16LE(1 /* skip seq num */) !== ZigbeeConsts.COORDINATOR_ADDRESS) {
-                    // target of ZDO req is not coordinator, but is request, ignore it
-                    return true;
-                }
+            logger.debug(() => `===> COORD_ZDO[seqNum=${finalPayload[0]} clusterId=${clusterId} nwkDst=${nwkDest16}:${nwkDest64}]`, NS);
 
-                // TODO: handle reportKids & index, this payload is only for 0, 0
-                finalPayload = Buffer.from(this.configAttributes.address); // copy
-                break;
-            }
-            case ZigbeeConsts.NODE_DESCRIPTOR_REQUEST: {
-                if (data.readUInt16LE(1 /* skip seq num */) !== ZigbeeConsts.COORDINATOR_ADDRESS) {
-                    // target of ZDO req is not coordinator (nwk addr of interest), but is request, ignore it
-                    return true;
-                }
-
-                finalPayload = Buffer.from(this.configAttributes.nodeDescriptor); // copy
-                break;
-            }
-            case ZigbeeConsts.POWER_DESCRIPTOR_REQUEST: {
-                if (data.readUInt16LE(1 /* skip seq num */) !== ZigbeeConsts.COORDINATOR_ADDRESS) {
-                    // target of ZDO req is not coordinator (nwk addr of interest), but is request, ignore it
-                    return true;
-                }
-
-                finalPayload = Buffer.from(this.configAttributes.powerDescriptor); // copy
-                break;
-            }
-            case ZigbeeConsts.SIMPLE_DESCRIPTOR_REQUEST: {
-                if (data.readUInt16LE(1 /* skip seq num */) !== ZigbeeConsts.COORDINATOR_ADDRESS) {
-                    // target of ZDO req is not coordinator (nwk addr of interest), but is request, ignore it
-                    return true;
-                }
-
-                finalPayload = Buffer.from(this.configAttributes.simpleDescriptors); // copy
-                break;
-            }
-            case ZigbeeConsts.ACTIVE_ENDPOINTS_REQUEST: {
-                if (data.readUInt16LE(1 /* skip seq num */) !== ZigbeeConsts.COORDINATOR_ADDRESS) {
-                    // target of ZDO req is not coordinator (nwk addr of interest), but is request, ignore it
-                    return true;
-                }
-
-                finalPayload = Buffer.from(this.configAttributes.activeEndpoints); // copy
-                break;
-            }
-            case ZigbeeConsts.END_DEVICE_ANNOUNCE: {
-                let offset = 1; // skip seq num
-                const address16 = data.readUInt16LE(offset);
-                offset += 2;
-                const address64 = data.readBigUInt64LE(offset);
-                offset += 8;
-                const capabilities = data.readUInt8(offset);
-                offset += 1;
-
-                const device = this.deviceTable.get(address64);
-
-                if (device) {
-                    // just in case
-                    device.rxOnWhenIdle = Boolean((capabilities & 0x08) >> 3);
-
-                    // TODO: ideally, this shouldn't trigger (prevents early interview process from app) until AFTER authorized=true
-                    setImmediate(() => {
-                        // if device is authorized, it means it completed the TC link key update, so, a rejoin
-                        this.emit(device.authorized ? "deviceRejoined" : "deviceJoined", address16, address64, device.rxOnWhenIdle);
-                    });
-
-                    return false;
-                }
-
-                // unknown device, should have been added by `associate`, something's not right, ignore it
-                return true;
-            }
-            default: {
-                // REQUEST type shouldn't continue
-                return (clusterId & 0x8000) === 0;
-            }
+            await this.sendZigbeeAPSData(
+                finalPayload,
+                ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
+                nwkDest16, // nwkDest16
+                nwkDest64, // nwkDest64
+                ZigbeeAPSDeliveryMode.UNICAST, // apsDeliveryMode
+                clusterId | 0x8000, // clusterId
+                ZigbeeConsts.ZDO_PROFILE_ID, // profileId
+                ZigbeeConsts.ZDO_ENDPOINT, // destEndpoint
+                ZigbeeConsts.ZDO_ENDPOINT, // sourceEndpoint
+                undefined, // group
+            );
         }
-
-        // set the ZDO sequence number in outgoing payload same as incoming request
-        finalPayload[0] = data[0];
-
-        logger.debug(() => `===> COORD_ZDO[seqNum=${finalPayload[0]} clusterId=${clusterId} nwkDst=${nwkDest16}:${nwkDest64}]`, NS);
-
-        await this.sendZigbeeAPSData(
-            finalPayload,
-            ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
-            nwkDest16, // nwkDest16
-            nwkDest64, // nwkDest64
-            ZigbeeAPSDeliveryMode.UNICAST, // apsDeliveryMode
-            clusterId | 0x8000, // clusterId
-            ZigbeeConsts.ZDO_PROFILE_ID, // profileId
-            ZigbeeConsts.ZDO_ENDPOINT, // destEndpoint
-            ZigbeeConsts.ZDO_ENDPOINT, // sourceEndpoint
-            undefined, // group
-        );
-
-        return true;
     }
 
     // #endregion

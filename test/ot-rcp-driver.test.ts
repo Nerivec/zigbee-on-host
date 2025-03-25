@@ -228,7 +228,7 @@ describe("OT RCP Driver", () => {
             let destination16Spy: number | undefined;
 
             // creates a bottleneck with vitest & promises, noop it
-            const savePeriodicStateSpy = vi.spyOn(driver, "savePeriodicState").mockImplementation(() => Promise.resolve());
+            const savePeriodicStateSpy = vi.spyOn(driver, "savePeriodicState").mockResolvedValue();
             const sendZigbeeNWKLinkStatusSpy = vi.spyOn(driver, "sendZigbeeNWKLinkStatus").mockImplementationOnce(async (links) => {
                 linksSpy = links;
                 const p = driver.sendZigbeeNWKLinkStatus(links);
@@ -1090,7 +1090,7 @@ describe("OT RCP Driver", () => {
 
             const emitSpy = vi.spyOn(driver, "emit");
             // creates a bottleneck with vitest & promises, noop it
-            const savePeriodicStateSpy = vi.spyOn(driver, "savePeriodicState").mockImplementationOnce(() => Promise.resolve());
+            const savePeriodicStateSpy = vi.spyOn(driver, "savePeriodicState").mockResolvedValue();
             const sendMACFrameSpy = vi.spyOn(driver, "sendMACFrame");
             const sendMACAssocRspSpy = vi.spyOn(driver, "sendMACAssocRsp");
             const sendZigbeeAPSTransportKeyNWKSpy = vi.spyOn(driver, "sendZigbeeAPSTransportKeyNWK");
@@ -1135,8 +1135,8 @@ describe("OT RCP Driver", () => {
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_DEVICE_ANNOUNCE_BCAST, Buffer.from([0xd8, 0xff, 0x00, 0x00])), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
-            expect(emitSpy).toHaveBeenCalledWith("deviceJoined", 0xa18f, 11871832136131022815n);
-            expect(emitSpy).toHaveBeenCalledWith("frame", 0xa18f, undefined, expect.any(Object), expect.any(Buffer), 200);
+            expect(emitSpy).toHaveBeenNthCalledWith(1, "deviceJoined", 0xa18f, 11871832136131022815n, true);
+            expect(emitSpy).toHaveBeenNthCalledWith(2, "frame", 0xa18f, undefined, expect.any(Object), expect.any(Buffer), 200);
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_NODE_DESC_REQ_FROM_DEVICE, Buffer.from([0xce, 0xff, 0x00, 0x00])), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
@@ -1456,14 +1456,14 @@ describe("OT RCP Driver", () => {
             const sendMACFrameSpy = vi.spyOn(driver, "sendMACFrame");
 
             //-- NWK CMD
-            sendMACFrameSpy.mockImplementationOnce(() => Promise.resolve());
+            sendMACFrameSpy.mockResolvedValueOnce();
             await driver.sendZigbeeNWKStatus(0x96ba, ZigbeeNWKStatus.SOURCE_ROUTE_FAILURE);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x96ba, 9244571720527165811n);
             expect(findBestSourceRouteSpy).toHaveLastReturnedWith([undefined, undefined, 1]);
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0x96ba, undefined);
 
-            sendMACFrameSpy.mockImplementationOnce(() => Promise.resolve());
+            sendMACFrameSpy.mockResolvedValueOnce();
             await driver.sendZigbeeNWKStatus(0x6887, ZigbeeNWKStatus.SOURCE_ROUTE_FAILURE);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x6887, 5149013643361676n);
@@ -1471,14 +1471,14 @@ describe("OT RCP Driver", () => {
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0x96ba, undefined);
 
             //-- APS CMD
-            sendMACFrameSpy.mockImplementationOnce(() => Promise.resolve());
+            sendMACFrameSpy.mockResolvedValueOnce();
             await driver.sendZigbeeAPSSwitchKey(0x91d2, 1);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x91d2, undefined);
             expect(findBestSourceRouteSpy).toHaveLastReturnedWith([undefined, undefined, 1]);
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0x91d2, undefined);
 
-            sendMACFrameSpy.mockImplementationOnce(() => Promise.resolve());
+            sendMACFrameSpy.mockResolvedValueOnce();
             await driver.sendZigbeeAPSSwitchKey(0x9ed5, 1);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x9ed5, undefined);
@@ -1486,14 +1486,14 @@ describe("OT RCP Driver", () => {
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0x91d2, undefined);
 
             //-- APS DATA
-            sendMACFrameSpy.mockImplementationOnce(() => Promise.resolve());
+            sendMACFrameSpy.mockResolvedValueOnce();
             await driver.sendUnicast(Buffer.from([]), 0x1, 0x1, 0x91d2, undefined, 1, 1);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x91d2, undefined);
             expect(findBestSourceRouteSpy).toHaveLastReturnedWith([undefined, undefined, 1]);
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0x91d2, undefined);
 
-            sendMACFrameSpy.mockImplementationOnce(() => Promise.resolve());
+            sendMACFrameSpy.mockResolvedValueOnce();
             await driver.sendUnicast(Buffer.from([]), 0x1, 0x1, 0x6887, undefined, 1, 1);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x6887, undefined);
@@ -1501,7 +1501,7 @@ describe("OT RCP Driver", () => {
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0x96ba, undefined);
 
             //-- no source route (use given nwkDest16)
-            sendMACFrameSpy.mockImplementationOnce(() => Promise.resolve());
+            sendMACFrameSpy.mockResolvedValueOnce();
             await driver.sendZigbeeNWKStatus(0xcb47, ZigbeeNWKStatus.SOURCE_ROUTE_FAILURE);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0xcb47, 5149013569626593n);
@@ -1509,7 +1509,7 @@ describe("OT RCP Driver", () => {
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0xcb47, undefined);
 
             //-- no source route on source route (doesn't matter)
-            sendMACFrameSpy.mockImplementationOnce(() => Promise.resolve());
+            sendMACFrameSpy.mockResolvedValueOnce();
             await driver.sendZigbeeNWKStatus(0x4b8e, ZigbeeNWKStatus.SOURCE_ROUTE_FAILURE);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x4b8e, 5149013573816379n);
@@ -1952,8 +1952,8 @@ describe("OT RCP Driver", () => {
             expect(driver.deviceTable.size).toStrictEqual(5);
 
             lqiTable = driver.getLQITableResponse(0);
-            expectedLQITable[1] = 2;
-            expectedLQITable[3] = 2;
+            expectedLQITable[2] = 2;
+            expectedLQITable[4] = 2;
 
             expect(lqiTable).toStrictEqual(expectedLQITable.subarray(0, 5 + 2 * 22));
         });
@@ -2118,5 +2118,57 @@ describe("OT RCP Driver", () => {
             expect(emitSpy).toHaveBeenCalledTimes(2);
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(4);
         });
+    });
+
+    it("NOT A TEST - only meant for quick local parsing", async () => {
+        const driver = new OTRCPDriver(
+            {
+                txChannel: 20,
+                ccaBackoffAttempts: 1,
+                ccaRetries: 4,
+                enableCSMACA: true,
+                headerUpdated: true,
+                reTx: false,
+                securityProcessed: true,
+                txDelay: 0,
+                txDelayBaseTime: 0,
+                rxChannelAfterTxDone: 20,
+            },
+            {
+                eui64: 5562607920115904346n,
+                panId: 22464,
+                extendedPANId: Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0),
+                channel: 20,
+                nwkUpdateId: 0,
+                txPower: 10,
+                networkKey: Buffer.from([40, 195, 71, 3, 233, 90, 194, 63, 62, 66, 190, 136, 105, 21, 237, 44]),
+                networkKeyFrameCounter: 0,
+                networkKeySequenceNumber: 0,
+                tcKey: Buffer.from(NETDEF_TC_KEY),
+                tcKeyFrameCounter: 0,
+            },
+            `temp_TMP_${Math.floor(Math.random() * 1000000)}`,
+            // true, // emitMACFrames
+        );
+
+        driver.parser.on("data", driver.onFrame.bind(driver));
+
+        await mockStart(driver);
+        await mockFormNetwork(driver);
+
+        driver.parser._transform(
+            Buffer.from(
+                "7e8006714000618804c0570000a2410832fdffa2411efa7f3123feff818e58282d500b087f3123feff818e5800c0bb0ae9c0a6b2e3d3d7389cbc88af5bdca842c96c8ca9eea5e18000000a0014ffc287fbfc0200000001000005000000000000470c7e",
+                "hex",
+            ),
+            "utf8",
+            () => {},
+        );
+        await vi.advanceTimersByTimeAsync(10);
+        driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+        await vi.advanceTimersByTimeAsync(10);
+
+        await mockStop(driver);
+        rmSync(dirname(driver.savePath), { recursive: true, force: true });
     });
 });
