@@ -200,6 +200,7 @@ async function convert(dataPath: string): Promise<void> {
             authorized: device.interviewCompleted === true,
             // add support for not knowing this in driver (re-evaluation)
             neighbor: backupDevice?.is_child !== true,
+            recentLQAs: [],
         });
     }
 

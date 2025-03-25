@@ -280,6 +280,14 @@ export function writePropertyc(propertyId: SpinelPropertyId, value: number): Buf
     return buf;
 }
 
+/** Read as int8 */
+export function readPropertyc(propertyId: SpinelPropertyId, data: Buffer, offset = 0): number {
+    const [propId, pOutOffset] = getPackedUInt(data, offset);
+    assert(propId === propertyId);
+
+    return data.readInt8(pOutOffset);
+}
+
 /** Write as uint16 */
 export function writePropertyS(propertyId: SpinelPropertyId, value: number): Buffer {
     const [buf, offset] = writePropertyId(propertyId, 2);
@@ -540,13 +548,28 @@ export function writePropertyStreamRaw(data: Buffer, config: StreamRawConfig): B
  * +---------+--------+------------------+-----------------------------+
  */
 export type SpinelStreamRawMetadata = {
+    /** int8 */
     rssi: number;
+    /** int8 */
     noiseFloor: number;
+    /** uint16 */
     flags: number;
     // XXX: unreliable?
-    // phyData: unknown;
-    // vendorData: unknown;
-    // macData: unknown;
+    // /** uint8 */
+    // phyChannel?: number;
+    // /** uint8 */
+    // phyLQI?: number;
+    // /** uint64 */
+    // phyTimestamp?: bigint;
+    // // phyOtherData?: unknown;
+    // /** uint8 */
+    // vendorRxError?: number;
+    // // vendorOtherData?: unknown;
+    // /** uint8 */
+    // macACKKeyId?: number;
+    // /** uint32 */
+    // macACKFrameCounter?: number;
+    // // macOtherData?: unknown;
 };
 
 /**
@@ -590,30 +613,77 @@ export function readPropertyStreamRaw(payload: Buffer, offset: number): [macData
         metaOffset += 1;
         const flags = payload.readUInt16LE(metaOffset);
         metaOffset += 2;
-        // silabs PHY: channel: ok, lqi: 0xff or 0x00 (not working?), timestamp: seems ok
-        // silabs VEN: error: 0x00... always?
-        // silabs MAC: ackKeyId: 0?, ackFramceCounter: 0?
+        // Silabs EFR32 PHY: channel: ok, lqi: 0xff or 0x00 (not working?), timestamp: seems ok
+        // Silabs EFR32 VEN: error: 0x00 (not implemented?)
+        // Silabs EFR32 MAC: ackKeyId: 0x00 (not implemented?), ackFramceCounter: 0x00000000 (not implemented?)
+
+        // let phyChannel: number | undefined;
+        // let phyLQI: number | undefined;
+        // let phyTimestamp: bigint | undefined;
 
         // const phyDataLen = payload.readUInt16LE(metaOffset);
         // metaOffset += 2;
-        // console.log('phy', payload.subarray(metaOffset, metaOffset + phyDataLen).toString('hex'));
-        // metaOffset += phyDataLen;
+
+        // if (phyDataLen >= 1) {
+        //     phyChannel = payload.readUInt8(metaOffset);
+        //     metaOffset += 1;
+        // }
+
+        // if (phyDataLen >= 2) {
+        //     phyLQI = payload.readUInt8(metaOffset);
+        //     metaOffset += 1;
+        // }
+
+        // if (phyDataLen >= 10) {
+        //     phyTimestamp = payload.readBigUInt64LE(metaOffset);
+        //     metaOffset += 8;
+        // }
+
+        // metaOffset += phyDataLen - 10;
+
+        // let vendorRxError: number | undefined;
+
         // const vendorDataLen = payload.readUInt16LE(metaOffset);
         // metaOffset += 2;
-        // console.log('ven', payload.subarray(metaOffset, metaOffset + vendorDataLen).toString('hex'));
-        // metaOffset += vendorDataLen;
+
+        // if (vendorDataLen >= 1) {
+        //     vendorRxError = payload.readUInt8(metaOffset);
+        //     metaOffset += 1;
+        // }
+
+        // metaOffset += vendorDataLen - 1;
+
+        // let macACKKeyId: number | undefined;
+        // let macACKFrameCounter: number | undefined;
+
         // const macDataLen = payload.readUInt16LE(metaOffset);
         // metaOffset += 2;
-        // console.log('mac', payload.subarray(metaOffset, metaOffset + macDataLen).toString('hex'));
-        // metaOffset += macDataLen;
+
+        // if (macDataLen >= 1) {
+        //     vendorRxError = payload.readUInt8(metaOffset);
+        //     metaOffset += 1;
+        // }
+
+        // if (macDataLen >= 5) {
+        //     vendorRxError = payload.readUInt32LE(metaOffset);
+        //     metaOffset += 4;
+        // }
+
+        // metaOffset += macDataLen - 5;
 
         metadata = {
             rssi,
             noiseFloor,
             flags,
-            // phyData: undefined,
-            // vendorData: undefined,
-            // macData: undefined,
+            // phyChannel,
+            // phyLQI,
+            // phyTimestamp,
+            // // phyOtherData,
+            // vendorRxError,
+            // // vendorOtherData,
+            // macACKKeyId,
+            // macACKFrameCounter,
+            // // macOtherData,
         };
     }
 

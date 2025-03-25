@@ -1,12 +1,15 @@
+import { randomBytes } from "node:crypto";
 import { type Socket, createSocket } from "node:dgram";
 import { existsSync, rmSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_WIRESHARK_IP, DEFAULT_ZEP_UDP_PORT, createWiresharkZEPFrame } from "../src/dev/wireshark";
 import { OTRCPDriver, type SourceRouteTableEntry } from "../src/drivers/ot-rcp-driver";
 import { SpinelCommandId } from "../src/spinel/commands";
+import { decodeHdlcFrame } from "../src/spinel/hdlc";
 import { SpinelPropertyId } from "../src/spinel/properties";
-import { SPINEL_HEADER_FLG_SPINEL, encodeSpinelFrame } from "../src/spinel/spinel";
+import { SPINEL_HEADER_FLG_SPINEL, type SpinelFrame, decodeSpinelFrame, encodeSpinelFrame } from "../src/spinel/spinel";
 import { SpinelStatus } from "../src/spinel/statuses";
 import { MACAssociationStatus, type MACHeader, decodeMACFrameControl, decodeMACHeader } from "../src/zigbee/mac";
 import { ZigbeeConsts } from "../src/zigbee/zigbee";
@@ -57,12 +60,14 @@ import {
     NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0,
 } from "./data";
 
-const SAVE_DIR = "temp";
+const randomBigInt = (): bigint => BigInt(`0x${randomBytes(8).toString("hex")}`);
+
+const RESET_POWER_ON_FRAME_HEX = "7e80060070ee747e";
 
 describe("OT RCP Driver", () => {
-    let driver: OTRCPDriver;
     let wiresharkSeqNum: number;
     let wiresharkSocket: Socket | undefined;
+    let nextTidFromStartup = 1;
 
     const nextWiresharkSeqNum = (): number => {
         wiresharkSeqNum = (wiresharkSeqNum + 1) & 0xffffffff;
@@ -71,7 +76,7 @@ describe("OT RCP Driver", () => {
     };
 
     // biome-ignore lint/correctness/noUnusedVariables: local testing only
-    const setupWireshark = (): void => {
+    const setupWireshark = (driver: OTRCPDriver): void => {
         wiresharkSeqNum = 0; // start at 1
         wiresharkSocket = createSocket("udp4");
         wiresharkSocket.bind(DEFAULT_ZEP_UDP_PORT);
@@ -104,7 +109,7 @@ describe("OT RCP Driver", () => {
         return Buffer.from(encRespHdlcFrame.data.subarray(0, encRespHdlcFrame.length));
     };
 
-    const makeSpinelStreamRaw = (tid: number, macFrame: Buffer): Buffer => {
+    const makeSpinelStreamRaw = (tid: number, macFrame: Buffer, spinelMeta?: Buffer): Buffer => {
         const spinelFrame = {
             header: {
                 tid,
@@ -112,11 +117,148 @@ describe("OT RCP Driver", () => {
                 flg: SPINEL_HEADER_FLG_SPINEL,
             },
             commandId: SpinelCommandId.PROP_VALUE_IS,
-            payload: Buffer.from([SpinelPropertyId.STREAM_RAW, macFrame.byteLength & 0xff, (macFrame.byteLength >> 8) & 0xff, ...macFrame]),
+            payload: Buffer.from([
+                SpinelPropertyId.STREAM_RAW,
+                macFrame.byteLength & 0xff,
+                (macFrame.byteLength >> 8) & 0xff,
+                ...macFrame,
+                ...(spinelMeta || []),
+            ]),
         };
         const encHdlcFrame = encodeSpinelFrame(spinelFrame);
 
         return Buffer.from(encHdlcFrame.data.subarray(0, encHdlcFrame.length));
+    };
+
+    const mockGetPropertyPayload = (hex: string): SpinelFrame => decodeSpinelFrame(decodeHdlcFrame(Buffer.from(hex, "hex")));
+
+    const mockStart = async (driver: OTRCPDriver, loadState = true, timeoutReset = false) => {
+        if (driver) {
+            let loadStateSpy: ReturnType<typeof vi.spyOn> | undefined;
+
+            if (!loadState) {
+                loadStateSpy = vi.spyOn(driver, "loadState").mockResolvedValue(undefined);
+            }
+
+            const getPropertySpy = vi
+                .spyOn(driver, "getProperty")
+                .mockResolvedValueOnce(mockGetPropertyPayload("7e8106010403db0a7e")) // PROTOCOL_VERSION
+                .mockResolvedValueOnce(
+                    mockGetPropertyPayload(
+                        "7e820602534c2d4f50454e5448524541442f322e352e322e305f4769744875622d3166636562323235623b2045465233323b204d617220313920323032352031333a34353a343400b5dc7e",
+                    ),
+                ) // NCP_VERSION
+                .mockResolvedValueOnce(mockGetPropertyPayload("7e83060303573a7e")) // INTERFACE_TYPE
+                .mockResolvedValueOnce(mockGetPropertyPayload("7e8406b0010a681f7e")) // RCP_API_VERSION
+                .mockResolvedValueOnce(mockGetPropertyPayload("7e8506b101048ea77e")); // RCP_MIN_HOST_API_VERSION
+
+            const waitForResetSpy = vi.spyOn(driver, "waitForReset").mockImplementationOnce(async () => {
+                const p = driver.waitForReset();
+
+                if (timeoutReset) {
+                    await vi.advanceTimersByTimeAsync(5500);
+                } else {
+                    driver.parser._transform(Buffer.from(RESET_POWER_ON_FRAME_HEX, "hex"), "utf8", () => {});
+                    await vi.advanceTimersByTimeAsync(10);
+                }
+
+                await p;
+            });
+
+            await driver.start();
+
+            nextTidFromStartup += 1; // sendCommand RESET
+
+            loadStateSpy?.mockRestore();
+            getPropertySpy.mockRestore();
+            waitForResetSpy.mockRestore();
+
+            await vi.advanceTimersByTimeAsync(100); // flush
+        }
+    };
+
+    const mockStop = async (driver: OTRCPDriver, expectThrow?: string) => {
+        if (driver) {
+            const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
+
+            if (expectThrow !== undefined) {
+                await expect(driver.stop()).rejects.toThrow();
+            } else {
+                await driver.stop();
+            }
+
+            setPropertySpy.mockRestore();
+
+            await vi.advanceTimersByTimeAsync(100); // flush
+        }
+    };
+
+    const mockFormNetwork = async (driver: OTRCPDriver, registerTimers = false) => {
+        if (driver) {
+            const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
+            const getPropertySpy = vi
+                .spyOn(driver, "getProperty")
+                .mockResolvedValueOnce(mockGetPropertyPayload("7e8106257d3343647e")) // PHY_TX_POWER
+                .mockResolvedValueOnce(mockGetPropertyPayload("7e82062695d88a7e")) // PHY_RSSI
+                .mockResolvedValueOnce(mockGetPropertyPayload("7e8306279c7a127e")) // PHY_RX_SENSITIVITY
+                .mockResolvedValueOnce(mockGetPropertyPayload("7e840624b5f0d37e")); // PHY_CCA_THRESHOLD
+
+            let registerTimersSpy: ReturnType<typeof vi.spyOn> | undefined;
+
+            if (registerTimers) {
+                await mockRegisterTimers(driver);
+            } else {
+                registerTimersSpy = vi.spyOn(driver, "registerTimers").mockResolvedValue();
+            }
+
+            await driver.formNetwork();
+
+            setPropertySpy.mockRestore();
+            getPropertySpy.mockRestore();
+            registerTimersSpy?.mockRestore();
+
+            await vi.advanceTimersByTimeAsync(100); // flush
+        }
+    };
+
+    const mockRegisterTimers = async (driver: OTRCPDriver) => {
+        if (driver) {
+            let linksSpy: ZigbeeNWKLinkStatus[] | undefined;
+            let manyToOneSpy: ZigbeeNWKManyToOne | undefined;
+            let destination16Spy: number | undefined;
+
+            // creates a bottleneck with vitest & promises, noop it
+            const savePeriodicStateSpy = vi.spyOn(driver, "savePeriodicState").mockImplementation(() => Promise.resolve());
+            const sendZigbeeNWKLinkStatusSpy = vi.spyOn(driver, "sendZigbeeNWKLinkStatus").mockImplementationOnce(async (links) => {
+                linksSpy = links;
+                const p = driver.sendZigbeeNWKLinkStatus(links);
+                // LINK_STATUS => OK
+                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+                await p;
+            });
+            const sendZigbeeNWKRouteReqSpy = vi.spyOn(driver, "sendZigbeeNWKRouteReq").mockImplementationOnce(async (manyToOne, destination16) => {
+                manyToOneSpy = manyToOne;
+                destination16Spy = destination16;
+                const p = driver.sendZigbeeNWKRouteReq(manyToOne, destination16);
+                // ROUTE_REQ => OK
+                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 1), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+                await p;
+            });
+            await driver.registerTimers();
+            await vi.advanceTimersByTimeAsync(100); // flush
+
+            expect(savePeriodicStateSpy).toHaveBeenCalledTimes(1);
+            expect(sendZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(1 + 1); // *2 by spy mock
+            expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1 + 1); // *2 by spy mock
+
+            nextTidFromStartup += 2;
+
+            return [linksSpy, manyToOneSpy, destination16Spy];
+        }
+
+        return [undefined, undefined, undefined];
     };
 
     beforeAll(() => {
@@ -125,24 +267,17 @@ describe("OT RCP Driver", () => {
 
     afterAll(() => {
         vi.useRealTimers();
-
-        rmSync(SAVE_DIR, { recursive: true, force: true });
-    });
-
-    beforeEach(() => {
-        if (driver) {
-            rmSync(driver.savePath, { recursive: true, force: true });
-        }
     });
 
     afterEach(async () => {
-        driver?.disallowJoins();
-        driver?.gpExitCommissioningMode();
-
         await endWireshark();
+
+        nextTidFromStartup = 1;
     });
 
     describe("State/Network management", () => {
+        let driver: OTRCPDriver;
+
         beforeEach(() => {
             driver = new OTRCPDriver(
                 {
@@ -170,20 +305,26 @@ describe("OT RCP Driver", () => {
                     tcKey: Buffer.from(NETDEF_TC_KEY),
                     tcKeyFrameCounter: 0,
                 },
-                SAVE_DIR,
+                `temp_MGMT_${Math.floor(Math.random() * 1000000)}`,
                 // true, // emitMACFrames
             );
-            // await driver.loadState();
-            driver.parser.on("data", driver.onFrame.bind(driver));
 
-            // @ts-expect-error mock override
-            driver.networkUp = true;
+            driver.parser.on("data", driver.onFrame.bind(driver));
+        });
+
+        afterEach(async () => {
+            await mockStop(driver);
+
+            if (driver) {
+                rmSync(dirname(driver.savePath), { recursive: true, force: true });
+            }
         });
 
         it("handles loading with given network params - first start", async () => {
             const saveStateSpy = vi.spyOn(driver, "saveState");
 
-            await driver.loadState();
+            await mockStart(driver);
+            await mockFormNetwork(driver);
 
             expect(saveStateSpy).toHaveBeenCalledTimes(1);
 
@@ -237,7 +378,8 @@ describe("OT RCP Driver", () => {
         });
 
         it("saves & loads back", async () => {
-            driver.netParams.eui64 = 1n;
+            const rndEui64 = randomBigInt();
+            driver.netParams.eui64 = rndEui64;
             driver.netParams.panId = 0x4356;
             driver.netParams.extendedPANId = 893489346n;
             driver.netParams.channel = 25;
@@ -250,10 +392,10 @@ describe("OT RCP Driver", () => {
             driver.netParams.networkKeySequenceNumber = 1;
             driver.netParams.tcKey = Buffer.from([0x51, 0x69, 0x62, 0x58, 0x53, 0x67, 0x64, 0x56, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
             driver.netParams.tcKeyFrameCounter = 896723;
-            driver.deviceTable.set(1234n, { address16: 1, rxOnWhenIdle: true, authorized: true, neighbor: true });
-            driver.deviceTable.set(12656887476334n, { address16: 3457, rxOnWhenIdle: true, authorized: true, neighbor: true });
-            driver.deviceTable.set(12328965645634n, { address16: 9674, rxOnWhenIdle: false, authorized: true, neighbor: false });
-            driver.deviceTable.set(234367481234n, { address16: 54748, rxOnWhenIdle: true, authorized: false, neighbor: true });
+            driver.deviceTable.set(1234n, { address16: 1, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
+            driver.deviceTable.set(12656887476334n, { address16: 3457, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
+            driver.deviceTable.set(12328965645634n, { address16: 9674, rxOnWhenIdle: false, authorized: true, neighbor: false, recentLQAs: [] });
+            driver.deviceTable.set(234367481234n, { address16: 54748, rxOnWhenIdle: true, authorized: false, neighbor: true, recentLQAs: [] });
             driver.sourceRouteTable.set(1, [
                 { pathCost: 1, relayAddresses: [] },
                 { pathCost: 2, relayAddresses: [3457] },
@@ -282,7 +424,7 @@ describe("OT RCP Driver", () => {
 
             await driver.loadState();
 
-            expect(driver.netParams.eui64).toStrictEqual(1n);
+            expect(driver.netParams.eui64).toStrictEqual(rndEui64);
             expect(driver.netParams.panId).toStrictEqual(0x4356);
             expect(driver.netParams.extendedPANId).toStrictEqual(893489346n);
             expect(driver.netParams.channel).toStrictEqual(25);
@@ -298,15 +440,34 @@ describe("OT RCP Driver", () => {
             );
             expect(driver.netParams.tcKeyFrameCounter).toStrictEqual(896723 + 1024);
             expect(driver.deviceTable.size).toStrictEqual(4);
-            expect(driver.deviceTable.get(1234n)).toStrictEqual({ address16: 1, rxOnWhenIdle: true, authorized: true, neighbor: true });
-            expect(driver.deviceTable.get(12656887476334n)).toStrictEqual({ address16: 3457, rxOnWhenIdle: true, authorized: true, neighbor: true });
+            expect(driver.deviceTable.get(1234n)).toStrictEqual({
+                address16: 1,
+                rxOnWhenIdle: true,
+                authorized: true,
+                neighbor: true,
+                recentLQAs: [],
+            });
+            expect(driver.deviceTable.get(12656887476334n)).toStrictEqual({
+                address16: 3457,
+                rxOnWhenIdle: true,
+                authorized: true,
+                neighbor: true,
+                recentLQAs: [],
+            });
             expect(driver.deviceTable.get(12328965645634n)).toStrictEqual({
                 address16: 9674,
                 rxOnWhenIdle: false,
                 authorized: true,
                 neighbor: false,
+                recentLQAs: [],
             });
-            expect(driver.deviceTable.get(234367481234n)).toStrictEqual({ address16: 54748, rxOnWhenIdle: true, authorized: false, neighbor: true });
+            expect(driver.deviceTable.get(234367481234n)).toStrictEqual({
+                address16: 54748,
+                rxOnWhenIdle: true,
+                authorized: false,
+                neighbor: true,
+                recentLQAs: [],
+            });
             expect(driver.address16ToAddress64.size).toStrictEqual(4);
             expect(driver.address16ToAddress64.get(1)).toStrictEqual(1234n);
             expect(driver.address16ToAddress64.get(3457)).toStrictEqual(12656887476334n);
@@ -356,7 +517,7 @@ describe("OT RCP Driver", () => {
             driver.netParams.networkKeySequenceNumber = 1;
             driver.netParams.tcKey = Buffer.from([0x51, 0x69, 0x62, 0x58, 0x53, 0x67, 0x64, 0x56, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
             driver.netParams.tcKeyFrameCounter = 896723;
-            driver.deviceTable.set(1234n, { address16: 1, rxOnWhenIdle: true, authorized: true, neighbor: true });
+            driver.deviceTable.set(1234n, { address16: 1, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
             const sourceRouteTableEntries: SourceRouteTableEntry[] = [];
 
             for (let i = 0; i < 255; i++) {
@@ -365,7 +526,15 @@ describe("OT RCP Driver", () => {
 
             driver.sourceRouteTable.set(1, sourceRouteTableEntries);
 
-            await expect(driver.saveState()).rejects.toThrow("Save size overflow");
+            await expect(mockStop(driver, "Save size overflow")).resolves.toStrictEqual(undefined);
+
+            rmSync(dirname(driver.savePath), { recursive: true, force: true });
+            // @ts-expect-error override, prevent `mockStop` in `afterEach` hook
+            driver = undefined;
+        });
+
+        it("throw on failed RESET", async () => {
+            await expect(mockStart(driver, true, true)).rejects.toThrow("Reset timeout after 5000ms");
         });
 
         it("resets network", async () => {
@@ -381,23 +550,22 @@ describe("OT RCP Driver", () => {
         });
 
         it("throw when trying to reset network after state already loaded", async () => {
-            // no-op
-            vi.spyOn(driver, "setProperty").mockImplementation(() => Promise.resolve());
-            vi.spyOn(driver, "registerTimers").mockImplementation(() => Promise.resolve());
+            await mockStart(driver);
 
-            await driver.loadState(); // mock shallow start
             await expect(driver.resetNetwork()).rejects.toThrow("Cannot reset network after state already loaded");
         });
 
         it("forms network", async () => {
-            // no-op
-            vi.spyOn(driver, "setProperty").mockImplementation(() => Promise.resolve());
-            vi.spyOn(driver, "registerTimers").mockImplementation(() => Promise.resolve());
-
-            await driver.loadState(); // mock shallow start
-            await driver.formNetwork();
+            await mockStart(driver);
+            await mockFormNetwork(driver);
 
             expect(driver.isNetworkUp()).toStrictEqual(true);
+            expect(driver.protocolVersionMajor).toStrictEqual(4);
+            expect(driver.protocolVersionMinor).toStrictEqual(3);
+            expect(driver.ncpVersion).toStrictEqual("SL-OPENTHREAD/2.5.2.0_GitHub-1fceb225b; EFR32; Mar 19 2025 13:45:44");
+            expect(driver.interfaceType).toStrictEqual(3);
+            expect(driver.rcpAPIVersion).toStrictEqual(10);
+            expect(driver.rcpMinHostAPIVersion).toStrictEqual(4);
         });
 
         it("throws when trying to form network before state is loaded", async () => {
@@ -405,7 +573,8 @@ describe("OT RCP Driver", () => {
         });
 
         it("sets node descriptor manufacturer code", async () => {
-            await driver.loadState();
+            await mockStart(driver);
+            await mockFormNetwork(driver);
 
             expect(driver.configAttributes.nodeDescriptor).toStrictEqual(
                 Buffer.from([0, 0, 0, 0, 0, 64, 143, 160, 197, 127, 127, 0, 65, 44, 127, 0, 0]),
@@ -423,6 +592,8 @@ describe("OT RCP Driver", () => {
     });
 
     describe("NETDEF", () => {
+        let driver: OTRCPDriver;
+
         beforeEach(async () => {
             driver = new OTRCPDriver(
                 {
@@ -450,19 +621,23 @@ describe("OT RCP Driver", () => {
                     tcKey: Buffer.from(NETDEF_TC_KEY),
                     tcKeyFrameCounter: 0,
                 },
-                SAVE_DIR,
+                `temp_NETDEF_${Math.floor(Math.random() * 1000000)}`,
                 // true, // emitMACFrames
             );
-            await driver.loadState();
             driver.parser.on("data", driver.onFrame.bind(driver));
 
-            // @ts-expect-error mock override
-            driver.networkUp = true;
+            await mockStart(driver);
+            await mockFormNetwork(driver);
+        });
+
+        afterEach(async () => {
+            await mockStop(driver);
+            rmSync(dirname(driver.savePath), { recursive: true, force: true });
         });
 
         it("ignores bogus data before start of HDLC frame", async () => {
             const parserEmit = vi.spyOn(driver.parser, "emit");
-            const frame = makeSpinelLastStatus(1);
+            const frame = makeSpinelLastStatus(nextTidFromStartup);
 
             driver.parser._transform(Buffer.concat([Buffer.from([0x12, 0x32]), frame]), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
@@ -472,7 +647,7 @@ describe("OT RCP Driver", () => {
 
         it("ignores bogus data after end of HDLC frame", async () => {
             const parserEmit = vi.spyOn(driver.parser, "emit");
-            const frame = makeSpinelLastStatus(1);
+            const frame = makeSpinelLastStatus(nextTidFromStartup);
 
             driver.parser._transform(Buffer.concat([frame, Buffer.from([0x12, 0x32])]), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
@@ -482,7 +657,7 @@ describe("OT RCP Driver", () => {
 
         it("ignores bogus data before start and after end of HDLC frame", async () => {
             const parserEmit = vi.spyOn(driver.parser, "emit");
-            const frame = makeSpinelLastStatus(1);
+            const frame = makeSpinelLastStatus(nextTidFromStartup);
 
             driver.parser._transform(Buffer.concat([Buffer.from([0x12, 0x32]), frame, Buffer.from([0x12, 0x32])]), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
@@ -492,7 +667,7 @@ describe("OT RCP Driver", () => {
 
         it("skips duplicate FLAGs of HDLC frame", async () => {
             const parserEmit = vi.spyOn(driver.parser, "emit");
-            const frame = makeSpinelLastStatus(1);
+            const frame = makeSpinelLastStatus(nextTidFromStartup);
 
             driver.parser._transform(Buffer.concat([Buffer.from([0x7e, 0x7e]), frame, Buffer.from([0x7e, 0x7e])]), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
@@ -502,8 +677,8 @@ describe("OT RCP Driver", () => {
 
         it("handles multiple HDLC frames in same transform call", async () => {
             const parserEmit = vi.spyOn(driver.parser, "emit");
-            const frame = makeSpinelLastStatus(1);
-            const frame2 = makeSpinelLastStatus(2);
+            const frame = makeSpinelLastStatus(nextTidFromStartup);
+            const frame2 = makeSpinelLastStatus(nextTidFromStartup);
 
             driver.parser._transform(Buffer.concat([frame, frame2]), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
@@ -518,11 +693,11 @@ describe("OT RCP Driver", () => {
 
             const p = driver.sendMACFrame(1, NETDEF_ACK_FRAME_FROM_COORD, undefined, undefined); // bypass indirect transmissions
             await vi.advanceTimersByTimeAsync(10);
-            driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             await expect(p).resolves.toStrictEqual(undefined);
-            expect(waitForTIDSpy).toHaveBeenCalledWith(1, 10000);
+            expect(waitForTIDSpy).toHaveBeenCalledWith(nextTidFromStartup, 10000);
             expect(sendFrameSpy).toHaveBeenCalledTimes(1);
         });
 
@@ -532,11 +707,11 @@ describe("OT RCP Driver", () => {
 
             const p = driver.sendMACFrame(1, NETDEF_MTORR_FRAME_FROM_COORD, undefined, undefined); // bypass indirect transmissions
             await vi.advanceTimersByTimeAsync(10);
-            driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             await expect(p).resolves.toStrictEqual(undefined);
-            expect(waitForTIDSpy).toHaveBeenCalledWith(1, 10000);
+            expect(waitForTIDSpy).toHaveBeenCalledWith(nextTidFromStartup, 10000);
             expect(sendFrameSpy).toHaveBeenCalledTimes(1);
         });
 
@@ -609,7 +784,7 @@ describe("OT RCP Driver", () => {
                     securityHeader: undefined,
                 },
                 Buffer.from([0x09, 0x50, 0x25, 0xaf, 0x00]),
-                0, // rssi
+                0, // unknown device
             );
         });
 
@@ -776,6 +951,8 @@ describe("OT RCP Driver", () => {
     });
 
     describe("NET2", () => {
+        let driver: OTRCPDriver;
+
         beforeEach(async () => {
             driver = new OTRCPDriver(
                 {
@@ -803,14 +980,18 @@ describe("OT RCP Driver", () => {
                     tcKey: Buffer.from(NETDEF_TC_KEY),
                     tcKeyFrameCounter: 0,
                 },
-                SAVE_DIR,
+                `temp_NET2_${Math.floor(Math.random() * 1000000)}`,
                 // true, // emitMACFrames
             );
-            await driver.loadState();
             driver.parser.on("data", driver.onFrame.bind(driver));
 
-            // @ts-expect-error mock override
-            driver.networkUp = true;
+            await mockStart(driver);
+            await mockFormNetwork(driver);
+        });
+
+        afterEach(async () => {
+            await mockStop(driver);
+            rmSync(dirname(driver.savePath), { recursive: true, force: true });
         });
 
         it("receives frame NET2_TRANSPORT_KEY_NWK_FROM_COORD - not for coordinator", async () => {
@@ -837,6 +1018,7 @@ describe("OT RCP Driver", () => {
                 rxOnWhenIdle: true,
                 authorized: false,
                 neighbor: true,
+                recentLQAs: [],
             });
             driver.address16ToAddress64.set(0xa18f, source64);
 
@@ -848,7 +1030,8 @@ describe("OT RCP Driver", () => {
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_REQUEST_KEY_TC_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
-            driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
             expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
@@ -867,8 +1050,8 @@ describe("OT RCP Driver", () => {
             const sendMACFrameSpy = vi.spyOn(driver, "sendMACFrame");
             const sendMACAssocRspSpy = vi.spyOn(driver, "sendMACAssocRsp");
 
-            driver.parser._transform(makeSpinelStreamRaw(100, NET2_BEACON_REQ_FROM_DEVICE), "utf8", () => {});
-            driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(1, NET2_BEACON_REQ_FROM_DEVICE), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
 
             expect(sendMACFrameSpy).toHaveBeenCalledTimes(1);
             const beaconRespFrame = sendMACFrameSpy.mock.calls[0][1];
@@ -877,12 +1060,12 @@ describe("OT RCP Driver", () => {
 
             expect(decBeaconRespHeader.superframeSpec?.associationPermit).toStrictEqual(false);
 
-            driver.parser._transform(makeSpinelStreamRaw(101, NET2_ASSOC_REQ_FROM_DEVICE), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(1, NET2_ASSOC_REQ_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
-            driver.parser._transform(makeSpinelStreamRaw(102, NET2_DATA_RQ_FROM_DEVICE), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(1, NET2_DATA_RQ_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // ASSOC_RSP => OK
-            driver.parser._transform(makeSpinelLastStatus(2), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             expect(sendMACAssocRspSpy).toHaveBeenCalledTimes(1);
@@ -913,10 +1096,10 @@ describe("OT RCP Driver", () => {
             const sendZigbeeAPSTransportKeyNWKSpy = vi.spyOn(driver, "sendZigbeeAPSTransportKeyNWK");
             vi.spyOn(driver, "assignNetworkAddress").mockReturnValueOnce(0xa18f); // force nwk16 matching vectors
 
-            driver.parser._transform(makeSpinelStreamRaw(100, NET2_BEACON_REQ_FROM_DEVICE), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(1, NET2_BEACON_REQ_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // BEACON_RSP => OK
-            driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             expect(sendMACFrameSpy).toHaveBeenCalledTimes(1);
@@ -926,15 +1109,15 @@ describe("OT RCP Driver", () => {
 
             expect(decBeaconRespHeader.superframeSpec?.associationPermit).toStrictEqual(true);
 
-            driver.parser._transform(makeSpinelStreamRaw(101, NET2_ASSOC_REQ_FROM_DEVICE), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(1, NET2_ASSOC_REQ_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
-            driver.parser._transform(makeSpinelStreamRaw(102, NET2_DATA_RQ_FROM_DEVICE), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(1, NET2_DATA_RQ_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // ASSOC_RSP => OK
-            driver.parser._transform(makeSpinelLastStatus(2), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 1), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // TRANSPORT_KEY NWK => OK
-            driver.parser._transform(makeSpinelLastStatus(3), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 2), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             expect(savePeriodicStateSpy).toHaveBeenCalledTimes(1);
@@ -946,33 +1129,38 @@ describe("OT RCP Driver", () => {
                 rxOnWhenIdle: true,
                 authorized: false,
                 neighbor: true,
+                recentLQAs: [],
             });
 
-            driver.parser._transform(makeSpinelStreamRaw(103, NET2_DEVICE_ANNOUNCE_BCAST), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(1, NET2_DEVICE_ANNOUNCE_BCAST, Buffer.from([0xd8, 0xff, 0x00, 0x00])), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             expect(emitSpy).toHaveBeenCalledWith("deviceJoined", 0xa18f, 11871832136131022815n);
-            expect(emitSpy).toHaveBeenCalledWith("frame", 0xa18f, undefined, expect.any(Object), expect.any(Buffer), 0 /* rssi */);
+            expect(emitSpy).toHaveBeenCalledWith("frame", 0xa18f, undefined, expect.any(Object), expect.any(Buffer), 200);
 
-            driver.parser._transform(makeSpinelStreamRaw(104, NET2_NODE_DESC_REQ_FROM_DEVICE), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(1, NET2_NODE_DESC_REQ_FROM_DEVICE, Buffer.from([0xce, 0xff, 0x00, 0x00])), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // node desc APS ACK => OK
-            driver.parser._transform(makeSpinelLastStatus(4), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 3), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // node desc RESP => OK
-            driver.parser._transform(makeSpinelLastStatus(5), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 4), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
-            driver.parser._transform(makeSpinelStreamRaw(105, NET2_REQUEST_KEY_TC_FROM_DEVICE), "utf8", () => {});
+            driver.parser._transform(
+                makeSpinelStreamRaw(1, NET2_REQUEST_KEY_TC_FROM_DEVICE, Buffer.from([0xd3, 0xff, 0x00, 0x00])),
+                "utf8",
+                () => {},
+            );
             await vi.advanceTimersByTimeAsync(10);
             // TRANSPORT_KEY TC => OK
-            driver.parser._transform(makeSpinelLastStatus(6), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 5), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
-            driver.parser._transform(makeSpinelStreamRaw(106, NET2_VERIFY_KEY_TC_FROM_DEVICE), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(1, NET2_VERIFY_KEY_TC_FROM_DEVICE, Buffer.from([0xd5, 0xff, 0x00, 0x00])), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // CONFIRM_KEY => OK
-            driver.parser._transform(makeSpinelLastStatus(7), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 6), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             expect(driver.deviceTable.get(11871832136131022815n)).toStrictEqual({
@@ -980,6 +1168,7 @@ describe("OT RCP Driver", () => {
                 rxOnWhenIdle: true,
                 authorized: true,
                 neighbor: true,
+                recentLQAs: [200, 153, 178, 188],
             });
         });
 
@@ -989,6 +1178,8 @@ describe("OT RCP Driver", () => {
     });
 
     describe("NET3", () => {
+        let driver: OTRCPDriver;
+
         beforeEach(async () => {
             driver = new OTRCPDriver(
                 {
@@ -1016,59 +1207,38 @@ describe("OT RCP Driver", () => {
                     tcKey: Buffer.from(NETDEF_TC_KEY),
                     tcKeyFrameCounter: 0,
                 },
-                SAVE_DIR,
+                `temp_NET3_${Math.floor(Math.random() * 1000000)}`,
                 true, // emitMACFrames
             );
-            await driver.loadState();
             driver.parser.on("data", driver.onFrame.bind(driver));
             // joined devices
             // 5c:c7:c1:ff:fe:5e:70:ea
-            driver.deviceTable.set(6685525477083214058n, { address16: 0x3ab1, rxOnWhenIdle: true, authorized: true, neighbor: true });
+            driver.deviceTable.set(6685525477083214058n, { address16: 0x3ab1, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
             driver.address16ToAddress64.set(0x3ab1, 6685525477083214058n);
             // not set on purpose to observe change from actual route record
             // driver.sourceRouteTable.set(0x3ab1, [{relayAddresses: [], pathCost: 1}]);
 
-            // @ts-expect-error mock override
-            driver.networkUp = true;
+            await mockStart(driver);
+            await mockFormNetwork(driver);
+        });
+
+        afterEach(async () => {
+            await mockStop(driver);
+            rmSync(dirname(driver.savePath), { recursive: true, force: true });
         });
 
         it("registers timers", async () => {
-            // creates a bottleneck with vitest & promises, noop it
-            vi.spyOn(driver, "savePeriodicState").mockImplementation(() => Promise.resolve());
             const sendPeriodicZigbeeNWKLinkStatusSpy = vi.spyOn(driver, "sendPeriodicZigbeeNWKLinkStatus");
             const sendPeriodicManyToOneRouteRequestSpy = vi.spyOn(driver, "sendPeriodicManyToOneRouteRequest");
             const processZigbeeNWKRouteRecordSpy = vi.spyOn(driver, "processZigbeeNWKRouteRecord");
-            let linksSpy: ZigbeeNWKLinkStatus[] | undefined;
-            let manyToOneSpy: ZigbeeNWKManyToOne | undefined;
-            let destination16Spy: number | undefined;
 
-            const sendZigbeeNWKLinkStatusSpy = vi.spyOn(driver, "sendZigbeeNWKLinkStatus").mockImplementationOnce(async (links) => {
-                linksSpy = links;
-                const p = driver.sendZigbeeNWKLinkStatus(links);
-                // LINK_STATUS => OK
-                driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
-                await vi.advanceTimersByTimeAsync(10);
-                await p;
-            });
-            const sendZigbeeNWKRouteReqSpy = vi.spyOn(driver, "sendZigbeeNWKRouteReq").mockImplementationOnce(async (manyToOne, destination16) => {
-                manyToOneSpy = manyToOne;
-                destination16Spy = destination16;
-                const p = driver.sendZigbeeNWKRouteReq(manyToOne, destination16);
-                // ROUTE_REQ => OK
-                driver.parser._transform(makeSpinelLastStatus(2), "utf8", () => {});
-                await vi.advanceTimersByTimeAsync(10);
-                await p;
-            });
-            await driver.registerTimers();
-            await vi.advanceTimersByTimeAsync(100); // flush
+            let [linksSpy, manyToOneSpy, destination16Spy] = await mockRegisterTimers(driver);
 
             expect(linksSpy).toStrictEqual([{ address: 0x3ab1, incomingCost: 0, outgoingCost: 0 }]);
             expect(manyToOneSpy).toStrictEqual(ZigbeeNWKManyToOne.WITH_SOURCE_ROUTING);
             expect(destination16Spy).toStrictEqual(ZigbeeConsts.BCAST_DEFAULT);
             expect(sendPeriodicZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(1);
             expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1);
-            expect(sendZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(1 + 1); // *2 by spy mock
-            expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1 + 1); // *2 by spy mock
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET3_ROUTE_RECORD), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
@@ -1080,11 +1250,11 @@ describe("OT RCP Driver", () => {
 
             //--- SECOND TRIGGER
 
-            sendZigbeeNWKLinkStatusSpy.mockImplementationOnce(async (links) => {
+            const sendZigbeeNWKLinkStatusSpy = vi.spyOn(driver, "sendZigbeeNWKLinkStatus").mockImplementationOnce(async (links) => {
                 linksSpy = links;
                 const p = driver.sendZigbeeNWKLinkStatus(links);
                 // LINK_STATUS => OK
-                driver.parser._transform(makeSpinelLastStatus(3), "utf8", () => {});
+                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
                 await vi.advanceTimersByTimeAsync(10);
                 await p;
             });
@@ -1097,7 +1267,7 @@ describe("OT RCP Driver", () => {
                 linksSpy = links;
                 const p = driver.sendZigbeeNWKLinkStatus(links);
                 // LINK_STATUS => OK
-                driver.parser._transform(makeSpinelLastStatus(4), "utf8", () => {});
+                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 1), "utf8", () => {});
                 await vi.advanceTimersByTimeAsync(10);
                 await p;
             });
@@ -1110,7 +1280,7 @@ describe("OT RCP Driver", () => {
                 linksSpy = links;
                 const p = driver.sendZigbeeNWKLinkStatus(links);
                 // LINK_STATUS => OK
-                driver.parser._transform(makeSpinelLastStatus(5), "utf8", () => {});
+                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 2), "utf8", () => {});
                 await vi.advanceTimersByTimeAsync(10);
                 await p;
             });
@@ -1119,12 +1289,12 @@ describe("OT RCP Driver", () => {
             expect(sendPeriodicZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(4);
             expect(linksSpy).toStrictEqual([{ address: 0x3ab1, incomingCost: 1, outgoingCost: 1 }]);
 
-            sendZigbeeNWKRouteReqSpy.mockImplementationOnce(async (manyToOne, destination16) => {
+            const sendZigbeeNWKRouteReqSpy = vi.spyOn(driver, "sendZigbeeNWKRouteReq").mockImplementationOnce(async (manyToOne, destination16) => {
                 manyToOneSpy = manyToOne;
                 destination16Spy = destination16;
                 const p = driver.sendZigbeeNWKRouteReq(manyToOne, destination16);
                 // ROUTE_REQ => OK
-                driver.parser._transform(makeSpinelLastStatus(6), "utf8", () => {});
+                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 3), "utf8", () => {});
                 await vi.advanceTimersByTimeAsync(10);
                 await p;
             });
@@ -1132,8 +1302,8 @@ describe("OT RCP Driver", () => {
             await vi.advanceTimersByTimeAsync(100); // flush
 
             expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(2);
-            expect(sendZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(4 + 4); // *2 spy mock
-            expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(2 + 2); // *2 spy mock
+            expect(sendZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(3 + 3); // *2 spy mock
+            expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1 + 1); // *2 spy mock
             expect(manyToOneSpy).toStrictEqual(ZigbeeNWKManyToOne.WITH_SOURCE_ROUTING);
             expect(destination16Spy).toStrictEqual(ZigbeeConsts.BCAST_DEFAULT);
 
@@ -1142,6 +1312,8 @@ describe("OT RCP Driver", () => {
     });
 
     describe("NET4", () => {
+        let driver: OTRCPDriver;
+
         beforeEach(async () => {
             driver = new OTRCPDriver(
                 {
@@ -1169,101 +1341,84 @@ describe("OT RCP Driver", () => {
                     tcKey: Buffer.from(NETDEF_TC_KEY),
                     tcKeyFrameCounter: 0,
                 },
-                SAVE_DIR,
+                `temp_NET4_${Math.floor(Math.random() * 1000000)}`,
                 true, // emitMACFrames
             );
-            await driver.loadState();
+
             driver.parser.on("data", driver.onFrame.bind(driver));
             // joined devices
             // 80:4b:50:ff:fe:a4:b9:73
-            driver.deviceTable.set(9244571720527165811n, { address16: 0x96ba, rxOnWhenIdle: true, authorized: true, neighbor: true });
+            driver.deviceTable.set(9244571720527165811n, { address16: 0x96ba, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
             driver.address16ToAddress64.set(0x96ba, 9244571720527165811n);
             // driver.sourceRouteTable.set(0x96ba, [{relayAddresses: [], pathCost: 1}]);
             // 70:ac:08:ff:fe:d0:4a:58
-            driver.deviceTable.set(8118874123826907736n, { address16: 0x91d2, rxOnWhenIdle: true, authorized: true, neighbor: true });
+            driver.deviceTable.set(8118874123826907736n, { address16: 0x91d2, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
             driver.address16ToAddress64.set(0x91d2, 8118874123826907736n);
             // driver.sourceRouteTable.set(0x91d2, [{relayAddresses: [], pathCost: 1}]);
             // 00:12:4b:00:24:c2:e1:e1
-            driver.deviceTable.set(5149013569626593n, { address16: 0xcb47, rxOnWhenIdle: true, authorized: true, neighbor: true });
+            driver.deviceTable.set(5149013569626593n, { address16: 0xcb47, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
             driver.address16ToAddress64.set(0xcb47, 5149013569626593n);
             // mimic no source route entry for 0xcb47
             // 00:12:4b:00:29:27:fd:8c
-            driver.deviceTable.set(5149013643361676n, { address16: 0x6887, rxOnWhenIdle: false, authorized: true, neighbor: false });
+            driver.deviceTable.set(5149013643361676n, { address16: 0x6887, rxOnWhenIdle: false, authorized: true, neighbor: false, recentLQAs: [] });
             driver.address16ToAddress64.set(0x6887, 5149013643361676n);
             // driver.sourceRouteTable.set(0x6887, [{relayAddresses: [0x96ba], pathCost: 2}]);
             // 00:12:4b:00:25:49:f4:42
-            driver.deviceTable.set(5149013578478658n, { address16: 0x9ed5, rxOnWhenIdle: false, authorized: true, neighbor: false });
+            driver.deviceTable.set(5149013578478658n, { address16: 0x9ed5, rxOnWhenIdle: false, authorized: true, neighbor: false, recentLQAs: [] });
             driver.address16ToAddress64.set(0x9ed5, 5149013578478658n);
             // driver.sourceRouteTable.set(0x9ed5, [{relayAddresses: [0x91d2], pathCost: 2}]);
             // 00:12:4b:00:25:02:d0:3b
-            driver.deviceTable.set(5149013573816379n, { address16: 0x4b8e, rxOnWhenIdle: false, authorized: true, neighbor: false });
+            driver.deviceTable.set(5149013573816379n, { address16: 0x4b8e, rxOnWhenIdle: false, authorized: true, neighbor: false, recentLQAs: [] });
             driver.address16ToAddress64.set(0x4b8e, 5149013573816379n);
             // driver.sourceRouteTable.set(0x4b8e, [{relayAddresses: [0xcb47], pathCost: 2}]);
 
-            // @ts-expect-error mock override
-            driver.networkUp = true;
+            await mockStart(driver);
+            await mockFormNetwork(driver);
+        });
+
+        afterEach(async () => {
+            await mockStop(driver);
+            rmSync(dirname(driver.savePath), { recursive: true, force: true });
         });
 
         const fillSourceRouteTableFromRequests = async () => {
-            driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_96BA_NO_RELAY), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-            // ROUTE_RECORD => OK
-            driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
+            if (driver) {
+                driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_96BA_NO_RELAY), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+                // ROUTE_RECORD => OK
+                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
 
-            driver.parser._transform(makeSpinelStreamRaw(2, NET4_ROUTE_RECORD_FROM_91D2_NO_RELAY), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-            // ROUTE_RECORD => OK
-            driver.parser._transform(makeSpinelLastStatus(2), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
+                driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_91D2_NO_RELAY), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+                // ROUTE_RECORD => OK
+                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
 
-            driver.parser._transform(makeSpinelStreamRaw(3, NET4_ROUTE_RECORD_FROM_6887_RELAY_96BA), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-            // ROUTE_RECORD => OK
-            driver.parser._transform(makeSpinelLastStatus(3), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
+                driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_6887_RELAY_96BA), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+                // ROUTE_RECORD => OK
+                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
 
-            driver.parser._transform(makeSpinelStreamRaw(4, NET4_ROUTE_RECORD_FROM_9ED5_RELAY_91D2), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-            // ROUTE_RECORD => OK
-            driver.parser._transform(makeSpinelLastStatus(4), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
+                driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_9ED5_RELAY_91D2), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+                // ROUTE_RECORD => OK
+                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
 
-            driver.parser._transform(makeSpinelStreamRaw(5, NET4_ROUTE_RECORD_FROM_4B8E_RELAY_CB47), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
-            // ROUTE_RECORD => OK
-            driver.parser._transform(makeSpinelLastStatus(5), "utf8", () => {});
-            await vi.advanceTimersByTimeAsync(10);
+                driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_4B8E_RELAY_CB47), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+                // ROUTE_RECORD => OK
+                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+                await vi.advanceTimersByTimeAsync(10);
+            } else {
+                throw new Error("Invalid test state");
+            }
         };
 
         it("handles source routing", async () => {
-            // creates a bottleneck with vitest & promises, noop it
-            vi.spyOn(driver, "savePeriodicState").mockImplementation(() => Promise.resolve());
-            const sendPeriodicZigbeeNWKLinkStatusSpy = vi.spyOn(driver, "sendPeriodicZigbeeNWKLinkStatus");
-            const sendPeriodicManyToOneRouteRequestSpy = vi.spyOn(driver, "sendPeriodicManyToOneRouteRequest");
-            const processZigbeeNWKRouteRecordSpy = vi.spyOn(driver, "processZigbeeNWKRouteRecord");
-            let linksSpy: ZigbeeNWKLinkStatus[] | undefined;
-            let manyToOneSpy: ZigbeeNWKManyToOne | undefined;
-            let destination16Spy: number | undefined;
-
-            const sendZigbeeNWKLinkStatusSpy = vi.spyOn(driver, "sendZigbeeNWKLinkStatus").mockImplementationOnce(async (links) => {
-                linksSpy = links;
-                const p = driver.sendZigbeeNWKLinkStatus(links);
-                // LINK_STATUS => OK
-                driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
-                await vi.advanceTimersByTimeAsync(10);
-                await p;
-            });
-            const sendZigbeeNWKRouteReqSpy = vi.spyOn(driver, "sendZigbeeNWKRouteReq").mockImplementationOnce(async (manyToOne, destination16) => {
-                manyToOneSpy = manyToOne;
-                destination16Spy = destination16;
-                const p = driver.sendZigbeeNWKRouteReq(manyToOne, destination16);
-                // ROUTE_REQ => OK
-                driver.parser._transform(makeSpinelLastStatus(2), "utf8", () => {});
-                await vi.advanceTimersByTimeAsync(10);
-                await p;
-            });
-            await driver.registerTimers();
+            const [linksSpy, manyToOneSpy, destination16Spy] = await mockRegisterTimers(driver);
 
             expect(linksSpy).toStrictEqual([
                 { address: 0x96ba, incomingCost: 0, outgoingCost: 0 },
@@ -1272,10 +1427,8 @@ describe("OT RCP Driver", () => {
             ]);
             expect(manyToOneSpy).toStrictEqual(ZigbeeNWKManyToOne.WITH_SOURCE_ROUTING);
             expect(destination16Spy).toStrictEqual(ZigbeeConsts.BCAST_DEFAULT);
-            expect(sendPeriodicZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(1);
-            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1);
-            expect(sendZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(1 + 1); // 1 by spy mock
-            expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1 + 1); // 1 by spy mock
+
+            const processZigbeeNWKRouteRecordSpy = vi.spyOn(driver, "processZigbeeNWKRouteRecord");
 
             await fillSourceRouteTableFromRequests();
 
@@ -1364,13 +1517,22 @@ describe("OT RCP Driver", () => {
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0xcb47, undefined);
 
             //-- no duplication of existing entries
-            driver.parser._transform(makeSpinelStreamRaw(6, NET4_ROUTE_RECORD_FROM_4B8E_RELAY_CB47), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_4B8E_RELAY_CB47), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // ROUTE_RECORD => OK
-            driver.parser._transform(makeSpinelLastStatus(6), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             expect(driver.sourceRouteTable.get(0x4b8e)!.length).toStrictEqual(1);
+
+            await driver.disassociate(0xcb47, undefined);
+
+            expect(driver.sourceRouteTable.get(0x4b8e)!.length).toStrictEqual(0);
+
+            // triggers cleanup
+            driver.findBestSourceRoute(0x4b8e, undefined);
+
+            expect(driver.sourceRouteTable.get(0x4b8e)).toBeUndefined();
         });
 
         it("checks if source route exists in entries for a given device", () => {
@@ -1403,6 +1565,7 @@ describe("OT RCP Driver", () => {
             expect(driver.sourceRouteTable.size).toStrictEqual(5);
 
             const initialRoutingTable = Buffer.from([
+                0, // seq num
                 0, // status
                 3, // total entries
                 0, // start index
@@ -1452,6 +1615,7 @@ describe("OT RCP Driver", () => {
 
             expect(routingTable).toStrictEqual(
                 Buffer.from([
+                    0, // seq num
                     0, // status
                     3, // total entries
                     0, // start index
@@ -1485,6 +1649,7 @@ describe("OT RCP Driver", () => {
 
             expect(routingTable).toStrictEqual(
                 Buffer.from([
+                    0, // seq num
                     0, // status
                     4, // total entries
                     0, // start index
@@ -1521,6 +1686,7 @@ describe("OT RCP Driver", () => {
 
             expect(routingTable).toStrictEqual(
                 Buffer.from([
+                    0, // seq num
                     0, // status
                     4, // total entries
                     0, // start index
@@ -1562,8 +1728,8 @@ describe("OT RCP Driver", () => {
                 const addr16 = driver.assignNetworkAddress();
                 const relay16 = driver.assignNetworkAddress();
                 driver.sourceRouteTable.set(addr16, [{ relayAddresses: [relay16], pathCost: 2 }]);
-                driver.address16ToAddress64.set(addr16, 1n); // just for dupe checking in `assignNetworkAddress`
-                driver.address16ToAddress64.set(relay16, 1n); // just for dupe checking in `assignNetworkAddress`
+                driver.address16ToAddress64.set(addr16, randomBigInt()); // just for dupe checking in `assignNetworkAddress`
+                driver.address16ToAddress64.set(relay16, randomBigInt()); // just for dupe checking in `assignNetworkAddress`
 
                 if (i === 254 /* 0-based */) {
                     clippedLastRelay16 = relay16;
@@ -1578,14 +1744,14 @@ describe("OT RCP Driver", () => {
 
             routingTable = driver.getRoutingTableResponse(0);
 
-            expect(routingTable.byteLength).toStrictEqual(4 + 255 * 5);
+            expect(routingTable.byteLength).toStrictEqual(5 + 255 * 5);
             expect(routingTable.readUInt16LE(routingTable.byteLength - 5)).toStrictEqual(clippedLastAddr16);
             expect(routingTable.readUInt16LE(routingTable.byteLength - 2)).toStrictEqual(clippedLastRelay16);
 
             //---- non-zero offset
             routingTable = driver.getRoutingTableResponse(200);
 
-            expect(routingTable.byteLength).toStrictEqual(4 + (300 - 200) * 5);
+            expect(routingTable.byteLength).toStrictEqual(5 + (300 - 200) * 5);
             expect(routingTable.readUInt16LE(routingTable.byteLength - 5)).toStrictEqual(lastAdrr16);
             expect(routingTable.readUInt16LE(routingTable.byteLength - 2)).toStrictEqual(lastRelay16);
 
@@ -1594,7 +1760,7 @@ describe("OT RCP Driver", () => {
 
             routingTable = driver.getRoutingTableResponse(200);
 
-            expect(routingTable.byteLength).toStrictEqual(4 + (299 - 200) * 5);
+            expect(routingTable.byteLength).toStrictEqual(5 + (299 - 200) * 5);
             expect(routingTable.readUInt16LE(routingTable.byteLength - 5)).not.toStrictEqual(lastAdrr16);
             expect(routingTable.readUInt16LE(routingTable.byteLength - 2)).not.toStrictEqual(lastRelay16);
         });
@@ -1609,11 +1775,193 @@ describe("OT RCP Driver", () => {
 
             const routingTable = driver.getRoutingTableResponse(0);
 
-            expect(routingTable.byteLength).toStrictEqual(4 + 0);
+            expect(routingTable.byteLength).toStrictEqual(5 + 0);
+        });
+
+        it("maps RSSI to LQI", () => {
+            let lqi = driver.mapRSSIToLQI(driver.rssiMin);
+            expect(lqi).toStrictEqual(3); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(driver.rssiMax);
+            expect(lqi).toStrictEqual(253); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(-10);
+            expect(lqi).toStrictEqual(255); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(-20);
+            expect(lqi).toStrictEqual(255); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(-30);
+            expect(lqi).toStrictEqual(252); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(-35);
+            expect(lqi).toStrictEqual(250); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(-40);
+            expect(lqi).toStrictEqual(246); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(-45);
+            expect(lqi).toStrictEqual(239); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(-50);
+            expect(lqi).toStrictEqual(227); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(-55);
+            expect(lqi).toStrictEqual(207); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(-60);
+            expect(lqi).toStrictEqual(176); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(-65);
+            expect(lqi).toStrictEqual(137); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(-70);
+            expect(lqi).toStrictEqual(97); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(-80);
+            expect(lqi).toStrictEqual(36); // console.log(lqi)
+
+            lqi = driver.mapRSSIToLQI(-90);
+            expect(lqi).toStrictEqual(11); // console.log(lqi)
+        });
+
+        it("computes LQA", () => {
+            let lqa = driver.computeLQA(driver.rssiMin);
+            expect(lqa).toStrictEqual(0); // console.log(lqa)
+
+            lqa = driver.computeLQA(driver.rssiMax);
+            expect(lqa).toStrictEqual(255); // console.log(lqa)
+
+            lqa = driver.computeLQA(-10);
+            expect(lqa).toStrictEqual(255); // console.log(lqa)
+
+            lqa = driver.computeLQA(-20);
+            expect(lqa).toStrictEqual(255); // console.log(lqa)
+
+            lqa = driver.computeLQA(-30);
+            expect(lqa).toStrictEqual(238); // console.log(lqa)
+
+            lqa = driver.computeLQA(-35);
+            expect(lqa).toStrictEqual(221); // console.log(lqa)
+
+            lqa = driver.computeLQA(-40);
+            expect(lqa).toStrictEqual(200); // console.log(lqa)
+
+            lqa = driver.computeLQA(-45);
+            expect(lqa).toStrictEqual(178); // console.log(lqa)
+
+            lqa = driver.computeLQA(-50);
+            expect(lqa).toStrictEqual(153); // console.log(lqa)
+
+            lqa = driver.computeLQA(-55);
+            expect(lqa).toStrictEqual(125); // console.log(lqa)
+
+            lqa = driver.computeLQA(-60);
+            expect(lqa).toStrictEqual(93); // console.log(lqa)
+
+            lqa = driver.computeLQA(-65);
+            expect(lqa).toStrictEqual(61); // console.log(lqa)
+
+            lqa = driver.computeLQA(-70);
+            expect(lqa).toStrictEqual(35); // console.log(lqa)
+
+            lqa = driver.computeLQA(-80);
+            expect(lqa).toStrictEqual(6); // console.log(lqa)
+
+            lqa = driver.computeLQA(-90);
+            expect(lqa).toStrictEqual(0); // console.log(lqa)
+        });
+
+        it("gets LQI table", async () => {
+            expect(driver.deviceTable.size).toStrictEqual(6);
+
+            driver.computeDeviceLQA(0x91d2, 8118874123826907736n, -40);
+            driver.computeDeviceLQA(0x91d2, 8118874123826907736n, -42);
+            driver.computeDeviceLQA(0x91d2, 8118874123826907736n, -45);
+            driver.computeDeviceLQA(0x91d2, 8118874123826907736n, -45);
+            driver.computeDeviceLQA(0x91d2, 8118874123826907736n, -53);
+            driver.computeDeviceLQA(0x91d2, 8118874123826907736n, -48);
+
+            let lqiTable = driver.getLQITableResponse(0);
+
+            // driver.deviceTable.set(9244571720527165811n, { address16: 0x96ba, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
+            // driver.deviceTable.set(8118874123826907736n, { address16: 0x91d2, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
+            // driver.deviceTable.set(5149013569626593n, { address16: 0xcb47, rxOnWhenIdle: true, authorized: true, neighbor: true, recentLQAs: [] });
+            const expectedLQITable = Buffer.alloc(255);
+            let offset = 0;
+
+            expectedLQITable.writeUInt8(0, offset); // seq num
+            offset += 1;
+            expectedLQITable.writeUInt8(0 /* SUCCESS */, offset); // status
+            offset += 1;
+            expectedLQITable.writeUInt8(3, offset); // total entries
+            offset += 1;
+            expectedLQITable.writeUInt8(0, offset); // start index
+            offset += 1;
+            expectedLQITable.writeUInt8(3, offset); // entries following
+            offset += 1;
+
+            expectedLQITable.writeBigUInt64LE(Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0), offset);
+            offset += 8;
+            expectedLQITable.writeBigUInt64LE(9244571720527165811n, offset);
+            offset += 8;
+            expectedLQITable.writeUInt16LE(0x96ba, offset);
+            offset += 2;
+            expectedLQITable.writeUInt8(0x03 /* TODO */ | 0x01, offset);
+            offset += 1;
+            expectedLQITable.writeUInt8(0x02 /* TODO */, offset);
+            offset += 1;
+            expectedLQITable.writeUInt8(1 /* TODO */, offset);
+            offset += 1;
+            expectedLQITable.writeUInt8(0 /* no recent LQAs */, offset);
+            offset += 1;
+
+            expectedLQITable.writeBigUInt64LE(Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0), offset);
+            offset += 8;
+            expectedLQITable.writeBigUInt64LE(8118874123826907736n, offset);
+            offset += 8;
+            expectedLQITable.writeUInt16LE(0x91d2, offset);
+            offset += 2;
+            expectedLQITable.writeUInt8(0x03 /* TODO */ | 0x01, offset);
+            offset += 1;
+            expectedLQITable.writeUInt8(0x02 /* TODO */, offset);
+            offset += 1;
+            expectedLQITable.writeUInt8(1 /* TODO */, offset);
+            offset += 1;
+            expectedLQITable.writeUInt8(178, offset);
+            offset += 1;
+
+            expectedLQITable.writeBigUInt64LE(Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0), offset);
+            offset += 8;
+            expectedLQITable.writeBigUInt64LE(5149013569626593n, offset);
+            offset += 8;
+            expectedLQITable.writeUInt16LE(0xcb47, offset);
+            offset += 2;
+            expectedLQITable.writeUInt8(0x03 /* TODO */ | 0x01, offset);
+            offset += 1;
+            expectedLQITable.writeUInt8(0x02 /* TODO */, offset);
+            offset += 1;
+            expectedLQITable.writeUInt8(1 /* TODO */, offset);
+            offset += 1;
+            expectedLQITable.writeUInt8(0 /* no recent LQAs */, offset);
+            offset += 1;
+
+            expect(lqiTable).toStrictEqual(expectedLQITable.subarray(0, 5 + 3 * 22));
+
+            await driver.disassociate(0xcb47, 5149013569626593n);
+            expect(driver.deviceTable.size).toStrictEqual(5);
+
+            lqiTable = driver.getLQITableResponse(0);
+            expectedLQITable[1] = 2;
+            expectedLQITable[3] = 2;
+
+            expect(lqiTable).toStrictEqual(expectedLQITable.subarray(0, 5 + 2 * 22));
         });
     });
 
     describe("NET5", () => {
+        let driver: OTRCPDriver;
+
         beforeEach(async () => {
             driver = new OTRCPDriver(
                 {
@@ -1641,14 +1989,19 @@ describe("OT RCP Driver", () => {
                     tcKey: Buffer.from(NETDEF_TC_KEY),
                     tcKeyFrameCounter: 0,
                 },
-                SAVE_DIR,
+                `temp_NET5_${Math.floor(Math.random() * 1000000)}`,
                 // true, // emitMACFrames
             );
-            await driver.loadState();
+
             driver.parser.on("data", driver.onFrame.bind(driver));
 
-            // @ts-expect-error mock override
-            driver.networkUp = true;
+            await mockStart(driver);
+            await mockFormNetwork(driver);
+        });
+
+        afterEach(async () => {
+            await mockStop(driver);
+            rmSync(dirname(driver.savePath), { recursive: true, force: true });
         });
 
         it("receives from NET5_GP_CHANNEL_REQUEST_BCAST while in commissioning mode", async () => {
@@ -1678,7 +2031,18 @@ describe("OT RCP Driver", () => {
                 sequenceNumber: 1,
                 destinationPANId: 0xffff,
                 destination16: 0xffff,
+                destination64: undefined,
                 sourcePANId: 0xffff,
+                source16: undefined,
+                source64: undefined,
+                auxSecHeader: undefined,
+                superframeSpec: undefined,
+                gtsInfo: undefined,
+                pendAddr: undefined,
+                commandId: undefined,
+                headerIE: undefined,
+                frameCounter: undefined,
+                keySeqCounter: undefined,
                 fcs: 0x7808,
             };
             const expectedNWKGPHeader: ZigbeeNWKGPHeader = {
@@ -1688,8 +2052,13 @@ describe("OT RCP Driver", () => {
                     autoCommissioning: true,
                     nwkFrameControlExtension: false,
                 },
+                frameControlExt: undefined,
+                sourceId: undefined,
+                endpoint: undefined,
+                securityFrameCounter: undefined,
                 micSize: 0,
                 payloadLength: 2,
+                mic: undefined,
             };
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
@@ -1716,10 +2085,10 @@ describe("OT RCP Driver", () => {
             const emitSpy = vi.spyOn(driver, "emit");
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
 
-            driver.parser._transform(makeSpinelStreamRaw(0, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(1, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(100);
 
-            driver.parser._transform(makeSpinelStreamRaw(0, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(1, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(100);
 
             expect(emitSpy).toHaveBeenCalledTimes(1);

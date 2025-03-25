@@ -6,16 +6,16 @@ import { logger } from "../utils/logger.js";
 const NS = "ot-rcp-driver:parser";
 
 export class OTRCPParser extends Transform {
-    private buffer: Buffer;
+    #buffer: Buffer;
 
     public constructor(opts?: TransformOptions) {
         super(opts);
 
-        this.buffer = Buffer.alloc(0);
+        this.#buffer = Buffer.alloc(0);
     }
 
     override _transform(chunk: Buffer, _encoding: BufferEncoding, cb: TransformCallback): void {
-        let data = Buffer.concat([this.buffer, chunk]);
+        let data = Buffer.concat([this.#buffer, chunk]);
 
         if (data[0] !== HdlcReservedByte.FLAG) {
             // discard data before FLAG
@@ -44,17 +44,17 @@ export class OTRCPParser extends Transform {
             position = data.indexOf(HdlcReservedByte.FLAG, 1);
         }
 
-        this.buffer = data;
+        this.#buffer = data;
 
         cb();
     }
 
     /* v8 ignore start */
     override _flush(cb: TransformCallback): void {
-        if (this.buffer.byteLength > 0) {
-            this.push(this.buffer);
+        if (this.#buffer.byteLength > 0) {
+            this.push(this.#buffer);
 
-            this.buffer = Buffer.alloc(0);
+            this.#buffer = Buffer.alloc(0);
         }
 
         cb();
