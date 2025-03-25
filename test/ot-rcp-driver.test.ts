@@ -842,8 +842,8 @@ describe("OT RCP Driver", () => {
             network64 = randomBigInt();
             [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_FFD_MAC_CAP), true);
 
-            expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
-            expect(newAddr16).toStrictEqual(0xffff);
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
 
             // unknown neighbor device, forced denied
             network16 = driver.assignNetworkAddress();
@@ -866,8 +866,8 @@ describe("OT RCP Driver", () => {
             network64 = randomBigInt();
             [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false);
 
-            expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
-            expect(newAddr16).toStrictEqual(0xffff);
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(newAddr16).toStrictEqual(network16);
 
             // unknown neighbor device, forced denied
             network16 = driver.assignNetworkAddress();
@@ -2650,7 +2650,7 @@ describe("OT RCP Driver", () => {
             },
             {
                 eui64: 5562607920115904346n,
-                panId: 22464, //2145,
+                panId: 34265,
                 extendedPANId: Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0),
                 channel: 20,
                 nwkUpdateId: 0,
@@ -2672,7 +2672,7 @@ describe("OT RCP Driver", () => {
 
         driver.parser._transform(
             Buffer.from(
-                "7e8006712f006188e0c05700005ccb091200005ccb016a7f3123feff818e58280b700b087f3123feff818e5800f4d67c4f305990e3ea8000000a0014ff8a719b440000000001000005000000000000484d7e",
+                "7e8006712f006188aad98500001023091200001023015c7f3123feff818e582800a00b087f3123feff818e58001a471d5043f06060ea8000000a0014ffc9aa9d4900000000010000050000000000006c3d7e",
                 "hex",
             ),
             "utf8",

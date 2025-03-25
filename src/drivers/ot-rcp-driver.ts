@@ -1704,7 +1704,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 frameControl: {
                     frameType: MACFrameType.DATA,
                     securityEnabled: false,
-                    framePending: false,
+                    framePending: nwkDest64 !== undefined && this.indirectTransmissions.get(nwkDest64)?.length !== 0,
                     ackRequest: macDest16 !== ZigbeeMACConsts.BCAST_ADDR,
                     panIdCompression: true,
                     seqNumSuppress: false,
@@ -2275,7 +2275,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             true, // nwkSecurity TODO: ??
             ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
             requestSource16, // nwkDest16
-            undefined, // nwkDest64
+            this.address16ToAddress64.get(newAddress16), // nwkDest64
             CONFIG_NWK_MAX_HOPS, // nwkRadius
         );
 
@@ -2877,7 +2877,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 frameControl: {
                     frameType: MACFrameType.DATA,
                     securityEnabled: false,
-                    framePending: false,
+                    framePending: this.indirectTransmissions.get(nwkDest64 ?? this.address16ToAddress64.get(nwkDest16)!)?.length !== 0,
                     ackRequest: macDest16 !== ZigbeeMACConsts.BCAST_ADDR,
                     panIdCompression: true,
                     seqNumSuppress: false,
@@ -3026,7 +3026,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 frameControl: {
                     frameType: MACFrameType.DATA,
                     securityEnabled: false,
-                    framePending: false,
+                    framePending: this.indirectTransmissions.get(nwkDest64 ?? this.address16ToAddress64.get(nwkDest16)!)?.length !== 0,
                     ackRequest: macDest16 !== ZigbeeMACConsts.BCAST_ADDR,
                     panIdCompression: true,
                     seqNumSuppress: false,
@@ -3134,7 +3134,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 frameControl: {
                     frameType: MACFrameType.DATA,
                     securityEnabled: false,
-                    framePending: false,
+                    framePending: this.indirectTransmissions.get(nwkHeader.source64 ?? this.address16ToAddress64.get(nwkDest16)!)?.length !== 0,
                     ackRequest: true,
                     panIdCompression: true,
                     seqNumSuppress: false,
@@ -4422,6 +4422,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // 0xffff when not successful and should not be retried
         let newAddress16 = source16;
         let status: MACAssociationStatus | number = MACAssociationStatus.SUCCESS;
+        let unknownRejoin = false;
 
         if (denyOverride) {
             newAddress16 = 0xffff;
@@ -4473,9 +4474,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
                     if (existingAddress64 === undefined) {
                         // device unknown
-                        // XXX: correct way to handle this?
-                        newAddress16 = 0xffff;
-                        status = MACAssociationStatus.PAN_ACCESS_DENIED;
+                        unknownRejoin = true;
                     } else if (existingAddress64 !== source64) {
                         // rejoin with already taken source16
                         newAddress16 = this.assignNetworkAddress();
@@ -4509,7 +4508,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         );
 
         if (status === MACAssociationStatus.SUCCESS) {
-            if (initialJoin) {
+            if (initialJoin || unknownRejoin) {
                 this.deviceTable.set(source64!, {
                     address16: newAddress16,
                     capabilities, // TODO: only valid if not triggered by `processZigbeeAPSUpdateDevice`
