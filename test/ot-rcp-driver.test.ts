@@ -635,6 +635,19 @@ describe("OT RCP Driver", () => {
             // revert
             driver.setManufacturerCode(0xffff);
         });
+
+        it("assigns all possible network addresses without conflicting", () => {
+            const assignedAddresses: number[] = [];
+
+            for (let i = 0; i < ZigbeeConsts.BCAST_MIN - 1; i++) {
+                const assignedAddress = driver.assignNetworkAddress();
+                assignedAddresses.push(assignedAddress);
+                driver.address16ToAddress64.set(assignedAddress, 1n); // doesn't matter
+            }
+
+            expect(assignedAddresses.length).toStrictEqual(new Set(assignedAddresses).size);
+            expect(new Set(assignedAddresses).size).toStrictEqual(ZigbeeConsts.BCAST_MIN - 1);
+        });
     });
 
     describe("NETDEF", () => {

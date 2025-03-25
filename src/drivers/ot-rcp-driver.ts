@@ -2192,15 +2192,43 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             NS,
         );
 
-        // XXX: if !header.frameControl.security => Trust Center Rejoin
-        //      => Unsecured Packets at the network layer claiming to be from existing neighbors (coordinators, routers or end devices) must not rewrite legitimate data in the nwkNeighborTable.
-        //      send NWK key again in that case?
+        let deny = false;
+
+        if (!nwkHeader.frameControl.security) {
+            // Trust Center Rejoin
+            let source64 = nwkHeader.source64;
+
+            if (source64 === undefined) {
+                if (nwkHeader.source16 === undefined) {
+                    // invalid, drop completely, should never happen
+                    return offset;
+                }
+
+                source64 = this.address16ToAddress64.get(nwkHeader.source16);
+            }
+
+            if (source64 === undefined) {
+                // can't identify device
+                deny = true;
+            } else {
+                const device = this.deviceTable.get(source64);
+
+                // XXX: Unsecured Packets at the network layer claiming to be from existing neighbors (coordinators, routers or end devices) must not rewrite legitimate data in the nwkNeighborTable.
+                //      if apsTrustCenterAddress is all FF (distributed) / all 00 (pre-TRANSPORT_KEY), reject with PAN_ACCESS_DENIED
+                if (!device?.authorized) {
+                    // device unknown or unauthorized
+                    deny = true;
+                }
+            }
+        }
+
         const [status, newAddress16] = await this.associate(
             nwkHeader.source16!,
             nwkHeader.source64,
             false /* rejoin */,
             decodedCap,
             macHeader.source16 === nwkHeader.source16,
+            deny,
         );
 
         await this.sendZigbeeNWKRejoinResp(nwkHeader.source16!, newAddress16, status, decodedCap);
