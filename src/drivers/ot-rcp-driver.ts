@@ -102,8 +102,8 @@ interface AdapterDriverEventMap {
     fatalError: [message: string];
     frame: [sender16: number | undefined, sender64: bigint | undefined, apsHeader: ZigbeeAPSHeader, apsPayload: ZigbeeAPSPayload, lqa: number];
     gpFrame: [cmdId: number, payload: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, lqa: number];
-    deviceJoined: [source16: number, source64: bigint];
-    deviceRejoined: [source16: number, source64: bigint];
+    deviceJoined: [source16: number, source64: bigint, rxOnWhenIdle: boolean];
+    deviceRejoined: [source16: number, source64: bigint, rxOnWhenIdle: boolean];
     deviceLeft: [source16: number, source64: bigint];
     deviceAuthorized: [source16: number, source64: bigint];
 }
@@ -1321,10 +1321,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     /**
      * Send MAC 802.15.4 frame.
-     * @param seqNum 
-     * @param payload 
-     * @param dest16 
-     * @param dest64 
+     * @param seqNum
+     * @param payload
+     * @param dest16
+     * @param dest64
      */
     public async sendMACFrame(seqNum: number, payload: Buffer, dest16: number | undefined, dest64: bigint | undefined): Promise<void> {
         const func = async (): Promise<void> => {
@@ -2181,7 +2181,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             macHeader.source16 === nwkHeader.source16,
         );
 
-        await this.sendZigbeeNWKRejoinResp(nwkHeader.source16!, newAddress16, status);
+        await this.sendZigbeeNWKRejoinResp(nwkHeader.source16!, newAddress16, status, Boolean((capabilities & 0x08) >> 3));
 
         // NOTE: a device does not have to verify its trust center link key with the APSME-VERIFY-KEY services after a rejoin.
 
@@ -2214,9 +2214,20 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
      * Optional
      *
      * @param requestSource16 new network address assigned to the rejoining device
+     * @param newAddress16
+     * @param status
+     * @param rxOnWhenIdle
      */
-    public async sendZigbeeNWKRejoinResp(requestSource16: number, newAddress16: number, status: MACAssociationStatus | number): Promise<void> {
-        logger.debug(() => `===> NWK REJOIN_RESP[reqSrc16=${requestSource16} newAddr16=${newAddress16} status=${status}]`, NS);
+    public async sendZigbeeNWKRejoinResp(
+        requestSource16: number,
+        newAddress16: number,
+        status: MACAssociationStatus | number,
+        rxOnWhenIdle: boolean,
+    ): Promise<void> {
+        logger.debug(
+            () => `===> NWK REJOIN_RESP[reqSrc16=${requestSource16} newAddr16=${newAddress16} status=${status} rxOnWhenIdle=${rxOnWhenIdle}]`,
+            NS,
+        );
 
         const finalPayload = Buffer.from([ZigbeeNWKCommandId.REJOIN_RESP, newAddress16 & 0xff, (newAddress16 >> 8) & 0xff, status]);
 
@@ -2230,9 +2241,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             CONFIG_NWK_MAX_HOPS, // nwkRadius
         );
 
-        setImmediate(() => {
-            this.emit("deviceRejoined", newAddress16, this.address16ToAddress64.get(newAddress16)!);
-        });
+        if (status === MACAssociationStatus.SUCCESS) {
+            setImmediate(() => {
+                this.emit("deviceRejoined", newAddress16, this.address16ToAddress64.get(newAddress16)!, rxOnWhenIdle);
+            });
+        }
     }
 
     /**
@@ -4841,7 +4854,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     // TODO: ideally, this shouldn't trigger (prevents early interview process from app) until AFTER authorized=true
                     setImmediate(() => {
                         // if device is authorized, it means it completed the TC link key update, so, a rejoin
-                        this.emit(device.authorized ? "deviceRejoined" : "deviceJoined", address16, address64);
+                        this.emit(device.authorized ? "deviceRejoined" : "deviceJoined", address16, address64, device.rxOnWhenIdle);
                     });
 
                     return false;
