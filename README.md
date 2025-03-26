@@ -6,7 +6,7 @@
 
 Open Source ZigBee stack designed to run on a host and communicate with a radio co-processor (RCP).
 
-Current implementation aims for compatibility with OpenThread RCP firmware. That base provides compatibility with any chip manufacturer that supports it (Silabs, TI, etc.) with the only requirements being proper implementation of the STREAM_RAW mechanism of the Spinel protocol (which allows to send raw 802.15.4 frames, including... ZigBee!) and hardware MAC ACKing (much faster).
+Current implementation aims for compatibility with OpenThread RCP firmware. That base provides compatibility with any chip manufacturer that supports it (Silabs, TI, etc.) with the only requirements being proper implementation of the `STREAM_RAW` mechanism of the `Spinel` protocol (which allows to send raw 802.15.4 frames, including... ZigBee!) and hardware MAC ACKing.
 
 _This library can also serve as a base for pentesting ZigBee networks thanks to the ability to easily craft various payloads at any layer of the specification and send them through the raw stream using any network parameters._
 
@@ -38,7 +38,6 @@ Some quick guidelines to keep the codebase maintainable:
 - [x] Encoding/decoding of MAC frames
 - [x] Encoding/decoding of ZigBee NWK frames
   - [ ] Lacking reference sniffs for multicast (group)
-    - [Submit some](https://github.com/Nerivec/zigbee-on-host/discussions/14)
 - [x] Encoding/decoding of ZigBee NWK GP frames
 - [x] Encoding/decoding of ZigBee NWK APS frames
 - [x] Network forming
@@ -51,27 +50,45 @@ Some quick guidelines to keep the codebase maintainable:
   - [x] Nested device
 - [x] Indirect transmission mechanism
 - [x] Source routing
-- [ ] Coordinator LQI/Routing tables (for network map data on coordinator side)
-- [ ] LQI reporting in messages (currently showing RSSI - in dBm)
+- [ ] Route repairing
+- [x] Coordinator LQI/Routing tables (for network map data on coordinator side)
+- [x] LQI reporting
+  - [ ] Refining
 - [ ] Install codes
 - [?] APS APP link keys
 - [ ] InterPAN / Touchlink
 - [ ] R23 (need reference sniffs...)
-- [ ] Security
+- [~] Security
 - [ ] Metrics/Statistics
 - [ ] Big cleanup of unused / never will use!
-- [ ] Loads of testing!
-- [ ] Firmware stability testing
-- [ ] Optimize firmware building for this usage
 
 And likely more, and of course a bunch of `TODO`s in the code!
 
+You can also contribute by submitting sniffs/captures. [More information here](https://github.com/Nerivec/zigbee-on-host/discussions/14).
+
+### OpenThread RCP firmware notes
+
+- [Texas Instruments] Does not currently implement `PHY_CCA_THRESHOLD` (cannot read or write value)
+
 ## Testing
 
-Use the appropriate OpenThread RCP firmware:
-- Silicon Labs adapters: https://github.com/Nerivec/silabs-firmware-builder/releases
-- Texas Instruments adapters: https://github.com/Koenkk/OpenThread-TexasInstruments-firmware/releases
-- Nordic Semiconductor adapters: https://github.com/Nerivec/zigbee-on-host/discussions/18
+#### Current Status
+
+- CI: ~70% coverage
+- Stress-testing: pending
+- Firmware stability:
+  - Silicon Labs: ongoing
+  - Texas Instruments: ongoing
+  - Nordic Semiconductor: [pending](https://github.com/Nerivec/zigbee-on-host/discussions/18)
+- Usage in test networks: ongoing
+- Usage in live networks: pending
+
+### Firmware
+
+Use the appropriate OpenThread RCP firmware for your adapter:
+- Silicon Labs: https://github.com/Nerivec/silabs-firmware-builder/releases
+- Texas Instruments: https://github.com/Koenkk/OpenThread-TexasInstruments-firmware/releases
+- Nordic Semiconductor: https://github.com/Nerivec/zigbee-on-host/discussions/18
 
 ### Zigbee2MQTT
 
