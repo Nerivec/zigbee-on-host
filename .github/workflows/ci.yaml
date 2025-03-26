@@ -2,6 +2,9 @@ name: CI
 
 on:
   push:
+    branches-ignore: 
+      - built-main
+      - built-dev
 
 permissions:
   contents: read
