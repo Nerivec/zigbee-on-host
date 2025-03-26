@@ -166,7 +166,7 @@ npm run dev:z2r ./path/to/data/
 
 ##### Using 'Docker.dev' and 'compose.dev.yaml'
 
-###### Pre-requisites
+###### Prerequisites
 
 ```bash
 git clone https://github.com/Nerivec/zigbee-on-host

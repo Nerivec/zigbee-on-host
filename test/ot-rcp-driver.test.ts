@@ -78,6 +78,7 @@ const COMMON_RFD_MAC_CAP: MACCapabilities = {
     allocateAddress: true,
 };
 
+/** SL-OPENTHREAD/2.5.2.0_GitHub-1fceb225b; EFR32; Mar 19 2025 13:45:44 */
 const START_FRAMES_SILABS = {
     protocolVersion: "7e8106010403db0a7e",
     ncpVersion:
@@ -87,6 +88,7 @@ const START_FRAMES_SILABS = {
     rcpMinHostAPIVersion: "7e8506b101048ea77e",
     resetPowerOn: "7e80060070ee747e",
 };
+/** OPENTHREAD/1.4.0-Koenkk-2025.2.1; CC13XX_CC26XX; Feb  3 2025 21:00:02 */
 const START_FRAMES_TI = {
     protocolVersion: "7e8106010403db0a7e",
     ncpVersion:
@@ -96,6 +98,7 @@ const START_FRAMES_TI = {
     rcpMinHostAPIVersion: "7e8506b101048ea77e",
     resetPowerOn: "7e80060070ee747e",
 };
+/** SL-OPENTHREAD/2.5.2.0_GitHub-1fceb225b; EFR32; Mar 19 2025 13:45:44 */
 const FORM_FRAMES_SILABS = {
     phyEnabled: "7e87062001f2627e",
     phyChan: "7e88062114ff8e7e",
@@ -110,6 +113,7 @@ const FORM_FRAMES_SILABS = {
     phyRXSensitivityGet: "7e8306279c7a127e",
     phyCCAThresholdGet: "7e840624b5f0d37e",
 };
+/** OPENTHREAD/1.4.0-Koenkk-2025.2.1; CC13XX_CC26XX; Feb  3 2025 21:00:02 */
 const FORM_FRAMES_TI = {
     phyEnabled: "7e87062001f2627e",
     phyChan: "7e88062114ff8e7e",
@@ -124,10 +128,12 @@ const FORM_FRAMES_TI = {
     phyRXSensitivityGet: "7e830627a6a38c7e",
     phyCCAThresholdGet: "7e8406000297567e",
 };
+// /** SL-OPENTHREAD/2.5.2.0_GitHub-1fceb225b; EFR32; Mar 19 2025 13:45:44 */
 // const STOP_FRAMES_SILABS = {
 //     macRawStreamEnabled: "7e8b063700d63c7e",
 //     phyEnabled: "7e8c0620006eb37e",
 // }
+// /** OPENTHREAD/1.4.0-Koenkk-2025.2.1; CC13XX_CC26XX; Feb  3 2025 21:00:02 */
 // const STOP_FRAMES_TI = {
 //     macRawStreamEnabled: "7e8c063700f76b7e",
 //     phyEnabled: "7e8d062000d5af7e",
