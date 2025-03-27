@@ -162,6 +162,9 @@ Get a list of supported commands with:
 npm run dev:cli help
 ```
 
+> [!TIP]
+> `dev:cli` commands can be configured in more details using the file `dist/dev/conf.json`. Some environment variables are also available to quickly configure the adapter & wireshark. _The effective config is printed at the start of every command (`help` included)._
+
 ##### Using 'Docker.dev' and 'compose.dev.yaml'
 
 ###### Prerequisites
@@ -195,7 +198,7 @@ docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm run dev:cli he
 ```
 
 > [!TIP]
-> `dev:cli` commands can be configured in more details using the file `dist/dev/conf.json`. _The effective config is printed at the start of every command._
+> `dev:cli` commands can be configured in more details using the file `dist/dev/conf.json`. Some environment variables are also available to configure the adapter & wireshark from the compose file. _The effective config is printed at the start of every command (`help` included)._
 
 ###### Stopping & removing the container
 
