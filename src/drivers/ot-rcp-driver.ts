@@ -15,11 +15,12 @@ import {
     decodeSpinelFrame,
     encodeSpinelFrame,
     getPackedUInt,
-    readPropertyStreamRaw,
     readPropertyU,
     readPropertyc,
     readPropertyi,
     readPropertyii,
+    readStreamRaw,
+    writePropertyAC,
     writePropertyC,
     writePropertyE,
     writePropertyId,
@@ -1008,6 +1009,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.disallowJoins();
         this.gpExitCommissioningMode();
 
+        const networkWasUp = this.#networkUp;
         // pre-emptive
         this.#networkUp = false;
 
@@ -1025,9 +1027,11 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
         this.#tidWaiters.clear();
 
-        // TODO: proper spinel/radio shutdown?
-        await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false));
-        await this.setProperty(writePropertyb(SpinelPropertyId.PHY_ENABLED, false));
+        if (networkWasUp) {
+            // TODO: proper spinel/radio shutdown?
+            await this.setProperty(writePropertyb(SpinelPropertyId.PHY_ENABLED, false));
+            await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false));
+        }
 
         await this.saveState();
 
@@ -1044,8 +1048,26 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     }
 
     /**
+     * Performs a STACK reset after resetting a few PHY/MAC properties to default.
+     * If up, will stop network before.
+     */
+    public async resetStack(): Promise<void> {
+        await this.setProperty(writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 0 /* SCAN_STATE_IDLE */));
+        // await this.setProperty(writePropertyC(SpinelPropertyId.MAC_PROMISCUOUS_MODE, 0 /* MAC_PROMISCUOUS_MODE_OFF */));
+        await this.setProperty(writePropertyb(SpinelPropertyId.PHY_ENABLED, false));
+        await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false));
+
+        if (this.#networkUp) {
+            await this.stop();
+        }
+
+        await this.sendCommand(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.STACK]), false);
+        await this.waitForReset();
+    }
+
+    /**
      * Performs a software reset into bootloader.
-     * Will stop network if up.
+     * If up, will stop network before.
      */
     public async resetIntoBootloader(): Promise<void> {
         if (this.#networkUp) {
@@ -1084,7 +1106,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
             switch (propId) {
                 case SpinelPropertyId.STREAM_RAW: {
-                    const [macData, metadata] = readPropertyStreamRaw(spinelFrame.payload, pOffset);
+                    const [macData, metadata] = readStreamRaw(spinelFrame.payload, pOffset);
 
                     await this.onStreamRawFrame(macData, metadata);
                     break;
@@ -1104,6 +1126,18 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                         this.#resetWaiter = undefined;
                     }
 
+                    break;
+                }
+
+                case SpinelPropertyId.MAC_ENERGY_SCAN_RESULT: {
+                    // https://datatracker.ietf.org/doc/html/draft-rquattle-spinel-unified#section-5.8.10
+                    let resultOffset = pOffset;
+                    const channel = spinelFrame.payload.readUInt8(resultOffset);
+                    resultOffset += 1;
+                    const rssi = spinelFrame.payload.readInt8(resultOffset);
+                    resultOffset += 1;
+
+                    logger.info(`<=== ENERGY_SCAN[channel=${channel} rssi=${rssi}]`, NS);
                     break;
                 }
             }
@@ -1323,6 +1357,137 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         // LAST_STATUS checked in `onFrame`
         await this.sendCommand(SpinelCommandId.PROP_VALUE_SET, payload, true, timeout);
     }
+
+    /**
+     * The CCA (clear-channel assessment) threshold.
+     * NOTE: Currently not implemented in: ot-ti
+     * @returns dBm (int8)
+     */
+    public async getPHYCCAThreshold(): Promise<number> {
+        const response = await this.getProperty(SpinelPropertyId.PHY_CCA_THRESHOLD);
+
+        return readPropertyc(SpinelPropertyId.PHY_CCA_THRESHOLD, response.payload);
+    }
+
+    /**
+     * The CCA (clear-channel assessment) threshold.
+     * Set to -128 to disable.
+     * The value will be rounded down to a value that is supported by the underlying radio hardware.
+     * NOTE: Currently not implemented in: ot-ti
+     * @param ccaThreshold dBm (>= -128 and <= 127)
+     */
+    public async setPHYCCAThreshold(ccaThreshold: number): Promise<void> {
+        await this.setProperty(writePropertyc(SpinelPropertyId.PHY_CCA_THRESHOLD, Math.min(Math.max(ccaThreshold, -128), 127)));
+    }
+
+    /**
+     * The transmit power of the radio.
+     * @returns dBm (int8)
+     */
+    public async getPHYTXPower(): Promise<number> {
+        const response = await this.getProperty(SpinelPropertyId.PHY_TX_POWER);
+
+        return readPropertyc(SpinelPropertyId.PHY_TX_POWER, response.payload);
+    }
+
+    /**
+     * The transmit power of the radio.
+     * The value will be rounded down to a value that is supported by the underlying radio hardware.
+     * @param txPower dBm (>= -128 and <= 127)
+     */
+    public async setPHYTXPower(txPower: number): Promise<void> {
+        await this.setProperty(writePropertyc(SpinelPropertyId.PHY_TX_POWER, Math.min(Math.max(txPower, -128), 127)));
+    }
+
+    /**
+     * The current RSSI (Received signal strength indication) from the radio.
+     * This value can be used in energy scans and for determining the ambient noise floor for the operating environment.
+     * @returns dBm (int8)
+     */
+    public async getPHYRSSI(): Promise<number> {
+        const response = await this.getProperty(SpinelPropertyId.PHY_RSSI);
+
+        return readPropertyc(SpinelPropertyId.PHY_RSSI, response.payload);
+    }
+
+    /**
+     * The radio receive sensitivity.
+     * This value can be used as lower bound noise floor for link metrics computation.
+     * @returns dBm (int8)
+     */
+    public async getPHYRXSensitivity(): Promise<number> {
+        const response = await this.getProperty(SpinelPropertyId.PHY_RX_SENSITIVITY);
+
+        return readPropertyc(SpinelPropertyId.PHY_RX_SENSITIVITY, response.payload);
+    }
+
+    /* v8 ignore start */
+    /**
+     * Start an energy scan.
+     * Cannot be used after state is loaded or network is up.
+     * @see https://datatracker.ietf.org/doc/html/draft-rquattle-spinel-unified#section-5.8.1
+     * @see https://datatracker.ietf.org/doc/html/draft-rquattle-spinel-unified#section-5.8.10
+     * @param channels List of channels to scan
+     * @param period milliseconds per channel
+     * @param txPower
+     */
+    public async startEnergyScan(channels: number[], period: number, txPower: number): Promise<void> {
+        if (this.#stateLoaded || this.#networkUp) {
+            return;
+        }
+
+        const radioRSSI = await this.getPHYRSSI();
+        const rxSensitivity = await this.getPHYRXSensitivity();
+
+        logger.info(`PHY state: rssi=${radioRSSI} rxSensitivity=${rxSensitivity}`, NS);
+
+        await this.setProperty(writePropertyb(SpinelPropertyId.PHY_ENABLED, true));
+        await this.setPHYTXPower(txPower);
+        await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RX_ON_WHEN_IDLE_MODE, true));
+        await this.setProperty(writePropertyAC(SpinelPropertyId.MAC_SCAN_MASK, channels));
+        await this.setProperty(writePropertyS(SpinelPropertyId.MAC_SCAN_PERIOD, period));
+        await this.setProperty(writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 2 /* SCAN_STATE_ENERGY */));
+    }
+
+    public async stopEnergyScan(): Promise<void> {
+        await this.setProperty(writePropertyS(SpinelPropertyId.MAC_SCAN_PERIOD, 100));
+        await this.setProperty(writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 0 /* SCAN_STATE_IDLE */));
+        await this.setProperty(writePropertyb(SpinelPropertyId.PHY_ENABLED, false));
+    }
+
+    /**
+     * Start sniffing.
+     * Cannot be used after state is loaded or network is up.
+     * WARNING: This is expected to run in the "run-and-quit" pattern as it overrides the `onStreamRawFrame` function.
+     * @param channel The channel to sniff on
+     */
+    public async startSniffer(channel: number): Promise<void> {
+        if (this.#stateLoaded || this.#networkUp) {
+            return;
+        }
+
+        await this.setProperty(writePropertyb(SpinelPropertyId.PHY_ENABLED, true));
+        await this.setProperty(writePropertyC(SpinelPropertyId.PHY_CHAN, channel));
+        // 0 => MAC_PROMISCUOUS_MODE_OFF" => Normal MAC filtering is in place.
+        // 1 => MAC_PROMISCUOUS_MODE_NETWORK" => All MAC packets matching network are passed up the stack.
+        // 2 => MAC_PROMISCUOUS_MODE_FULL" => All decoded MAC packets are passed up the stack.
+        await this.setProperty(writePropertyC(SpinelPropertyId.MAC_PROMISCUOUS_MODE, 2));
+        await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RX_ON_WHEN_IDLE_MODE, true));
+        await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, true));
+
+        // override `onStreamRawFrame` behavior for sniff
+        this.onStreamRawFrame = async (payload, metadata) => {
+            this.emit("macFrame", payload, metadata?.rssi);
+            await Promise.resolve();
+        };
+    }
+
+    public async stopSniffer(): Promise<void> {
+        await this.setProperty(writePropertyC(SpinelPropertyId.MAC_PROMISCUOUS_MODE, 0));
+        await this.setProperty(writePropertyb(SpinelPropertyId.PHY_ENABLED, false)); // first, avoids BUSY signal
+        await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false));
+    }
+    /* v8 ignore stop */
 
     // #endregion
 
@@ -5363,69 +5528,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     // #endregion
 
     // #region Wrappers
-
-    /**
-     * The CCA (clear-channel assessment) threshold.
-     * NOTE: Currently not implemented in: ot-ti
-     * @returns dBm (int8)
-     */
-    public async getPHYCCAThreshold(): Promise<number> {
-        const response = await this.getProperty(SpinelPropertyId.PHY_CCA_THRESHOLD);
-
-        return readPropertyc(SpinelPropertyId.PHY_CCA_THRESHOLD, response.payload);
-    }
-
-    /**
-     * The CCA (clear-channel assessment) threshold.
-     * Set to -128 to disable.
-     * The value will be rounded down to a value that is supported by the underlying radio hardware.
-     * NOTE: Currently not implemented in: ot-ti
-     * @param ccaThreshold dBm (>= -128 and <= 127)
-     */
-    public async setPHYCCAThreshold(ccaThreshold: number): Promise<void> {
-        await this.setProperty(writePropertyc(SpinelPropertyId.PHY_CCA_THRESHOLD, Math.min(Math.max(ccaThreshold, -128), 127)));
-    }
-
-    /**
-     * The transmit power of the radio.
-     * @returns dBm (int8)
-     */
-    public async getPHYTXPower(): Promise<number> {
-        const response = await this.getProperty(SpinelPropertyId.PHY_TX_POWER);
-
-        return readPropertyc(SpinelPropertyId.PHY_TX_POWER, response.payload);
-    }
-
-    /**
-     * The transmit power of the radio.
-     * The value will be rounded down to a value that is supported by the underlying radio hardware.
-     * @param txPower dBm (>= -128 and <= 127)
-     */
-    public async setPHYTXPower(txPower: number): Promise<void> {
-        await this.setProperty(writePropertyc(SpinelPropertyId.PHY_TX_POWER, Math.min(Math.max(txPower, -128), 127)));
-    }
-
-    /**
-     * The current RSSI (Received signal strength indication) from the radio.
-     * This value can be used in energy scans and for determining the ambient noise floor for the operating environment.
-     * @returns dBm (int8)
-     */
-    public async getPHYRSSI(): Promise<number> {
-        const response = await this.getProperty(SpinelPropertyId.PHY_RSSI);
-
-        return readPropertyc(SpinelPropertyId.PHY_RSSI, response.payload);
-    }
-
-    /**
-     * The radio receive sensitivity.
-     * This value can be used as lower bound noise floor for link metrics computation.
-     * @returns dBm (int8)
-     */
-    public async getPHYRXSensitivity(): Promise<number> {
-        const response = await this.getProperty(SpinelPropertyId.PHY_RX_SENSITIVITY);
-
-        return readPropertyc(SpinelPropertyId.PHY_RX_SENSITIVITY, response.payload);
-    }
 
     /**
      * Wraps ZigBee APS DATA sending for ZDO.

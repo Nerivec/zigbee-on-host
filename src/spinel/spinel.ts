@@ -271,6 +271,19 @@ export function readPropertyC(propertyId: SpinelPropertyId, data: Buffer, offset
     return data[pOutOffset];
 }
 
+/** Write as list of uint8 */
+export function writePropertyAC(propertyId: SpinelPropertyId, values: number[]): Buffer {
+    const [buf, pOffset] = writePropertyId(propertyId, values.length);
+    let offset = pOffset;
+
+    for (const value of values) {
+        buf.writeUInt8(value, offset);
+        offset += 1;
+    }
+
+    return buf;
+}
+
 /** Write as int8 */
 export function writePropertyc(propertyId: SpinelPropertyId, value: number): Buffer {
     const [buf, offset] = writePropertyId(propertyId, 1);
@@ -600,7 +613,7 @@ export type SpinelStreamRawMetadata = {
  *     5.0 ACK key ID(uint8)
  *     5.1 ACK frame counter(uint32)
  */
-export function readPropertyStreamRaw(payload: Buffer, offset: number): [macData: Buffer, metadata: SpinelStreamRawMetadata | undefined] {
+export function readStreamRaw(payload: Buffer, offset: number): [macData: Buffer, metadata: SpinelStreamRawMetadata | undefined] {
     const frameDataLen = payload.readUInt16LE(offset);
     offset += 2;
     let metaOffset = offset + frameDataLen;

@@ -137,16 +137,6 @@ npm run build
 > [!TIP]
 > If having issues with building, try removing the `*.tsbuildinfo` incremental compilation files (or run `npm run clean` first).
 
-#### Minimal adapter
-
-> This is intended for developers to quickly test specific features, like joining. Currently, the CLI is output-only.
-
-Configure parameters in `dist/dev/conf.json` then start CLI (next start will use `zoh.save` file, if not removed):
-
-```bash
-npm run dev:cli
-```
-
 #### Utils
 
 ##### Create a 'zoh.save' from the content of a Zigbee2MQTT data folder
@@ -162,6 +152,14 @@ npm run dev:z2z ./path/to/data/
 
 ```bash
 npm run dev:z2r ./path/to/data/
+```
+
+##### CLI
+
+Get a list of supported commands with:
+
+```bash
+npm run dev:cli help
 ```
 
 ##### Using 'Docker.dev' and 'compose.dev.yaml'
@@ -189,6 +187,15 @@ Print readable 'zoh.save' content (details above):
 ```bash
 docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm run dev:z2r ./path/to/data
 ```
+
+CLI:
+
+```bash
+docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm run dev:cli help
+```
+
+> [!TIP]
+> `dev:cli` commands can be configured in more details using the file `dist/dev/conf.json`. _The effective config is printed at the start of every command._
 
 ###### Stopping & removing the container
 

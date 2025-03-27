@@ -9,8 +9,9 @@ import {
     getPackedUInt,
     readPropertyE,
     readPropertyS,
-    readPropertyStreamRaw,
+    readStreamRaw,
     setPackedUInt,
+    writePropertyAC,
     writePropertyE,
     writePropertyS,
 } from "../src/spinel/spinel.js";
@@ -75,6 +76,12 @@ describe("Spinel & HDLC", () => {
         expect(val).toStrictEqual(43993);
     });
 
+    it("writePropertyAC", () => {
+        const buf = writePropertyAC(SpinelPropertyId.MAC_SCAN_MASK, [11, 15, 20, 25]);
+
+        expect(buf).toStrictEqual(Buffer.from([49, 11, 15, 20, 25]));
+    });
+
     /** see https://datatracker.ietf.org/doc/html/draft-rquattle-spinel-unified#appendix-B.2 */
     const resetCommandTestVectorFrame: SpinelFrame = {
         header: { tid: 0, nli: 0, flg: 2 },
@@ -126,7 +133,7 @@ describe("Spinel & HDLC", () => {
         ]);
         const decHdlcFrame = Hdlc.decodeHdlcFrame(payload);
         const decFrame = decodeSpinelFrame(decHdlcFrame);
-        const [macData, metadata] = readPropertyStreamRaw(decFrame.payload, 1);
+        const [macData, metadata] = readStreamRaw(decFrame.payload, 1);
 
         expect(macData).toStrictEqual(Buffer.from([0x03, 0x08, 0xd0, 0xff, 0xff, 0xff, 0xff, 0x07, 0xff, 0xcc]));
         expect(metadata).toStrictEqual({ rssi: -41, noiseFloor: -128, flags: 0 });
