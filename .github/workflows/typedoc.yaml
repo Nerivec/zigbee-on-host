@@ -1,0 +1,47 @@
+name: Publish typedoc on Github Pages
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: 'package.json'
+
+      - run: npm ci
+
+      - run: npm install -g typedoc
+
+      - run: typedoc --gitRevision "$(git describe --tag --abbrev=0)" --tsconfig tsconfig.json --excludePrivate --excludeProtected --excludeExternals --entryPointStrategy expand ./src --sourceLinkTemplate "https://github.com/Nerivec/zigbee-on-host/blob/{gitRevision}/{path}#L{line}" -out typedoc
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          name: github-pages
+          # typedoc "out" path
+          path: ./typedoc
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write # to deploy to Pages
+      id-token: write # to verify the deployment originates from an appropriate source
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment

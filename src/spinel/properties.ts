@@ -1652,7 +1652,7 @@ export const enum SpinelPropertyId {
      *   +---------------+----+
      *
      * If the query succeeds, the NCP will send a result to the Host using
-     * @ref THREAD_LINK_METRICS_QUERY_RESULT.
+     * @see THREAD_LINK_METRICS_QUERY_RESULT.
      */
     THREAD_LINK_METRICS_QUERY = 0x1500 + 45,
 
@@ -1708,10 +1708,10 @@ export const enum SpinelPropertyId {
      *   +---------------+----+
      *
      * Result of configuration is reported asynchronously to the Host using the
-     * @ref THREAD_LINK_METRICS_MGMT_RESPONSE.
+     * @see THREAD_LINK_METRICS_MGMT_RESPONSE.
      *
      * Whenever Enh-ACK IE report is received it is passed to the Host using the
-     * @ref THREAD_LINK_METRICS_MGMT_ENH_ACK_IE property.
+     * @see THREAD_LINK_METRICS_MGMT_ENH_ACK_IE property.
      */
     THREAD_LINK_METRICS_MGMT_ENH_ACK = 0x1500 + 48,
 
@@ -1766,7 +1766,7 @@ export const enum SpinelPropertyId {
      *   +---------------+----+
      *
      * Result of configuration is reported asynchronously to the Host using the
-     * @ref THREAD_LINK_METRICS_MGMT_RESPONSE.
+     * @see THREAD_LINK_METRICS_MGMT_RESPONSE.
      */
     THREAD_LINK_METRICS_MGMT_FORWARD = 0x1500 + 50,
 
