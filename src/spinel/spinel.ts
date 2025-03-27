@@ -468,25 +468,107 @@ export function readPropertyD(propertyId: SpinelPropertyId, data: Buffer, offset
 
 /** @see SpinelPropertyId.STREAM_RAW */
 export type StreamRawConfig = {
-    /** `C` : Channel (for frame tx) - MUST be included. */
+    /**
+     * `C` : Channel (for frame tx) - MUST be included.
+     *
+     */
     txChannel: number;
-    /** `C` : Maximum number of backoffs attempts before declaring CCA failure (use Thread stack default if not specified) */
+    /**
+     * `C` : Maximum number of backoffs attempts before declaring CCA failure (use Thread stack default if not specified)
+     *
+     */
     ccaBackoffAttempts: number;
-    /** `C` : Maximum number of retries allowed after a transmission failure (use Thread stack default if not specified) */
+    /**
+     * `C` : Maximum number of retries allowed after a transmission failure (use Thread stack default if not specified)
+     *
+     */
     ccaRetries: number;
-    /** `b` : Set to true to enable CSMA-CA for this packet, false otherwise. (default true). */
+    /**
+     * `b` : Set to true to enable CSMA-CA for this packet, false otherwise. (default true).
+     *
+     * Set to true to enable CSMA-CA for this packet, false to disable both CSMA backoff and CCA.
+     *
+     * When it is set to `false`, the frame MUST be sent without performing CCA. In this case `mMaxCsmaBackoffs` MUST also be ignored.
+     */
     enableCSMACA: boolean;
-    /** `b` : Set to true to indicate if header is updated - related to `mIsHeaderUpdated` in `otRadioFrame` (default false). */
+    /**
+     * `b` : Set to true to indicate if header is updated - related to `mIsHeaderUpdated` in `otRadioFrame` (default false).
+     *
+     * Indicates whether frame counter and CSL IEs are properly updated in the header.
+     *
+     * If the platform layer does not provide `OT_RADIO_CAPS_TRANSMIT_SEC` capability, it can ignore this flag.
+     *
+     * If the platform provides `OT_RADIO_CAPS_TRANSMIT_SEC` capability, then platform is expected to handle tx
+     * security processing and assignment of frame counter. In this case the following behavior is expected:
+     *
+     * When `mIsHeaderUpdated` is set, it indicates that OpenThread core has already set the frame counter and
+     * CSL IEs (if security is enabled) in the prepared frame. The counter is ensured to match the counter value
+     * from the previous attempts of the same frame. The platform should not assign or change the frame counter
+     * (but may still need to perform security processing depending on `mIsSecurityProcessed` flag).
+     *
+     * If `mIsHeaderUpdated` is not set, then the frame counter and key CSL IE not set in the frame by
+     * OpenThread core and it is the responsibility of the radio platform to assign them. The platform
+     * must update the frame header (assign counter and CSL IE values) before sending the frame over the air,
+     * however if the the transmission gets aborted and the frame is never sent over the air (e.g., channel
+     * access error) the platform may choose to not update the header. If the platform updates the header,
+     * it must also set this flag before passing the frame back from the `otPlatRadioTxDone()` callback.
+     */
     headerUpdated: boolean;
-    /** `b` : Set to true to indicate it is a retransmission - related to `mIsARetx` in `otRadioFrame` (default false). */
+    /**
+     * `b` : Set to true to indicate it is a retransmission - related to `mIsARetx` in `otRadioFrame` (default false).
+     *
+     * Indicates whether the frame is a retransmission or not.
+     */
     reTx: boolean;
-    /** `b` : Set to true to indicate security was processed on tx frame `mIsSecurityProcessed` in `otRadioFrame` (default false). */
+    /**
+     * `b` : Set to true to indicate security was processed on tx frame `mIsSecurityProcessed` in `otRadioFrame` (default false).
+     *
+     * True if SubMac should skip the AES processing of this frame.
+     */
     securityProcessed: boolean;
-    /** `L` : TX delay interval used for CSL - related to `mTxDelay` in `otRadioFrame` (default zero). */
+    /**
+     * `L` : TX delay interval used for CSL - related to `mTxDelay` in `otRadioFrame` (default zero).
+     *
+     * The delay time in microseconds for this transmission referenced to `mTxDelayBaseTime`.
+     *
+     * Note: `mTxDelayBaseTime` + `mTxDelay` SHALL point to the point in time when the end of the SFD will be present at the local
+     * antenna, relative to the local radio clock.
+     *
+     * If this field is non-zero, `mMaxCsmaBackoffs` should be ignored.
+     *
+     * This field does not affect CCA behavior which is controlled by `mCsmaCaEnabled`.
+     */
     txDelay: number;
-    /** `L` : TX delay based time used for CSL - related to `mTxDelayBaseTime` in `otRadioFrame` (default zero). */
+    /**
+     * `L` : TX delay based time used for CSL - related to `mTxDelayBaseTime` in `otRadioFrame` (default zero).
+     *
+     * The base time in microseconds for scheduled transmissions relative to the local radio clock, see `otPlatRadioGetNow` and `mTxDelay`.
+     *
+     * If this field is non-zero, `mMaxCsmaBackoffs` should be ignored.
+     *
+     * This field does not affect CCA behavior which is controlled by `mCsmaCaEnabled`.
+     */
     txDelayBaseTime: number;
-    /** `C` : RX channel after TX done (default assumed to be same as channel in metadata) */
+    /**
+     * `C` : RX channel after TX done (default assumed to be same as channel in metadata)
+     *
+     * The RX channel after frame TX is done (after all frame retries - ack received, or timeout, or abort).
+     *
+     * Radio platforms can choose to fully ignore this. OT stack will make sure to call `otPlatRadioReceive()`
+     * with the desired RX channel after a frame TX is done and signaled in `otPlatRadioTxDone()` callback.
+     * Radio platforms that don't provide `OT_RADIO_CAPS_TRANSMIT_RETRIES` must always ignore this.
+     *
+     * This is intended for situations where there may be delay in interactions between OT stack and radio, as
+     * an example this is used in RCP/host architecture to make sure RCP switches to PAN channel more quickly.
+     * In particular, this can help with CSL tx to a sleepy child, where the child may use a different channel
+     * for CSL than the PAN channel. After frame tx, we want the radio/RCP to go back to the PAN channel
+     * quickly to ensure that parent does not miss tx from child afterwards, e.g., child responding to the
+     * earlier CSL transmitted frame from parent using PAN channel while radio still staying on CSL channel.
+     *
+     * The switch to the RX channel MUST happen after the frame TX is fully done, i.e., after all retries and
+     * when ack is received (when "Ack Request" flag is set on the TX frame) or ack timeout. Note that ack is
+     * expected on the same channel that frame is sent on.
+     */
     rxChannelAfterTxDone: number;
 };
 
