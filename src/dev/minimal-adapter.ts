@@ -1,5 +1,6 @@
 import { type Socket as DgramSocket, createSocket } from "node:dgram";
 import { Socket } from "node:net";
+import { setTimeout } from "node:timers/promises";
 import { SerialPort } from "serialport";
 import { type NetworkParameters, OTRCPDriver } from "../drivers/ot-rcp-driver.js";
 import type { StreamRawConfig } from "../spinel/spinel.js";
@@ -24,12 +25,34 @@ export function isTcpPath(path: string): boolean {
  * }
  * ```
  */
-type PortOptions = {
+export type PortOptions = {
     path: string;
     //---- serial only
     baudRate?: number;
     rtscts?: boolean;
 };
+
+export type ResetType = "stack" | "bootloader";
+
+export type StartOptions =
+    | {
+          mode: "form";
+          allowJoins: boolean;
+      }
+    | {
+          mode: "scan";
+          channels: number[];
+          period: number;
+          txPower: number;
+      }
+    | {
+          mode: "sniff";
+          channel: number;
+      }
+    | {
+          mode: "reset";
+          type: ResetType;
+      };
 
 /**
  * Minimal adapter using the OT RCP Driver that can be started via `cli.ts` and outputs to both the console, and Wireshark (MAC frames).
@@ -139,7 +162,7 @@ export class MinimalAdapter {
 
         const serialOpts = {
             path: this.#portOptions.path!,
-            baudRate: typeof this.#portOptions.baudRate === "number" ? this.#portOptions.baudRate : 115200,
+            baudRate: typeof this.#portOptions.baudRate === "number" ? this.#portOptions.baudRate : 460800,
             rtscts: typeof this.#portOptions.rtscts === "boolean" ? this.#portOptions.rtscts : false,
             autoOpen: false,
             parity: "none" as const,
@@ -172,6 +195,8 @@ export class MinimalAdapter {
             this.#serialPort.once("close", this.onPortClose.bind(this));
             this.#serialPort.on("error", this.onPortError.bind(this));
         } catch (error) {
+            logger.error(`Error opening port (${(error as Error).message})`, NS);
+
             await this.stop();
 
             throw error;
@@ -200,7 +225,7 @@ export class MinimalAdapter {
         throw new Error("Port error");
     }
 
-    public async start(): Promise<void> {
+    public async start(options: StartOptions): Promise<void> {
         await this.initPort();
 
         if (!this.portOpen) {
@@ -218,11 +243,55 @@ export class MinimalAdapter {
             }
         }
 
-        await this.driver.start();
-        await this.driver.formNetwork();
-        // allow joins on start for 254 seconds
-        this.driver.allowJoins(0xfe, true);
-        this.driver.gpEnterCommissioningMode(0xfe);
+        switch (options.mode) {
+            case "form": {
+                await this.driver.start();
+                await this.driver.formNetwork();
+
+                if (options.allowJoins) {
+                    // allow joins on start for 254 seconds
+                    this.driver.allowJoins(0xfe, true);
+                    this.driver.gpEnterCommissioningMode(0xfe);
+                }
+
+                break;
+            }
+            case "scan": {
+                try {
+                    for (const channel of options.channels) {
+                        // NOTE: using multiple channels in the prop at once doesn't seem to work (INVALID_ARGUMENT)
+                        await this.driver.startEnergyScan([channel], options.period, options.txPower);
+                        await setTimeout(options.period * 1.25);
+                        await this.driver.stopEnergyScan();
+                        await setTimeout(1000);
+                    }
+                } catch (error) {
+                    logger.error(`Failed to scan (${(error as Error).message})`, NS);
+
+                    await this.driver.stopEnergyScan();
+                }
+
+                await this.stop();
+
+                break;
+            }
+            case "sniff": {
+                await this.driver.startSniffer(options.channel);
+
+                break;
+            }
+            case "reset": {
+                if (options.type === "stack") {
+                    await this.driver.resetStack();
+                } else if (options.type === "bootloader") {
+                    await this.driver.resetIntoBootloader();
+                }
+
+                await this.stop();
+
+                break;
+            }
+        }
 
         this.driver.on("frame", this.onFrame.bind(this));
         this.driver.on("deviceJoined", this.onDeviceJoined.bind(this));
@@ -233,9 +302,23 @@ export class MinimalAdapter {
     public async stop(): Promise<void> {
         this.#closing = true;
 
-        await this.driver.stop();
+        this.driver.removeAllListeners();
+
+        if (this.#serialPort?.isOpen || (this.#socketPort != null && !this.#socketPort.closed)) {
+            try {
+                await this.driver.stop();
+            } catch (error) {
+                console.error(`Failed to stop cleanly (${(error as Error).message}). You may need to power-cycle your adapter.`);
+            }
+
+            try {
+                await this.closePort();
+            } catch (error) {
+                console.error(`Failed to close port cleanly (${(error as Error).message}). You may need to power-cycle your adapter.`);
+            }
+        }
+
         this.#wiresharkSocket.close();
-        await this.closePort();
     }
 
     public async closePort(): Promise<void> {
