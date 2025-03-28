@@ -10,9 +10,39 @@ import { SpinelCommandId } from "../src/spinel/commands";
 import { SpinelPropertyId } from "../src/spinel/properties";
 import { SPINEL_HEADER_FLG_SPINEL, encodeSpinelFrame } from "../src/spinel/spinel";
 import { SpinelStatus } from "../src/spinel/statuses";
-import { MACAssociationStatus, type MACCapabilities, type MACHeader, decodeMACFrameControl, decodeMACHeader } from "../src/zigbee/mac";
+import {
+    MACAssociationStatus,
+    type MACCapabilities,
+    MACFrameAddressMode,
+    MACFrameType,
+    MACFrameVersion,
+    type MACHeader,
+    ZigbeeMACConsts,
+    decodeMACFrameControl,
+    decodeMACHeader,
+    decodeMACPayload,
+} from "../src/zigbee/mac";
 import { ZigbeeConsts } from "../src/zigbee/zigbee";
-import { ZigbeeNWKConsts, type ZigbeeNWKLinkStatus, ZigbeeNWKManyToOne, ZigbeeNWKStatus } from "../src/zigbee/zigbee-nwk";
+import {
+    ZigbeeAPSCommandId,
+    ZigbeeAPSDeliveryMode,
+    ZigbeeAPSFrameType,
+    decodeZigbeeAPSFrameControl,
+    decodeZigbeeAPSHeader,
+    decodeZigbeeAPSPayload,
+} from "../src/zigbee/zigbee-aps";
+import {
+    ZigbeeNWKCommandId,
+    ZigbeeNWKConsts,
+    ZigbeeNWKFrameType,
+    type ZigbeeNWKLinkStatus,
+    ZigbeeNWKManyToOne,
+    ZigbeeNWKRouteDiscovery,
+    ZigbeeNWKStatus,
+    decodeZigbeeNWKFrameControl,
+    decodeZigbeeNWKHeader,
+    decodeZigbeeNWKPayload,
+} from "../src/zigbee/zigbee-nwk";
 import type { ZigbeeNWKGPHeader } from "../src/zigbee/zigbee-nwkgp";
 import {
     A_CHANNEL,
@@ -343,7 +373,7 @@ describe("OT RCP Driver", () => {
                 // ROUTE_REQ => OK
                 driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 1), "utf8", () => {});
                 await vi.advanceTimersByTimeAsync(10);
-                await p;
+                return await p;
             });
             await driver.registerTimers();
             await vi.advanceTimersByTimeAsync(100); // flush
@@ -1280,7 +1310,7 @@ describe("OT RCP Driver", () => {
             driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
-            await expect(p).resolves.toStrictEqual(undefined);
+            await expect(p).resolves.toStrictEqual(true);
             expect(waitForTIDSpy).toHaveBeenCalledWith(nextTidFromStartup, 10000);
             expect(sendFrameSpy).toHaveBeenCalledTimes(1);
         });
@@ -1294,29 +1324,29 @@ describe("OT RCP Driver", () => {
             driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
-            await expect(p).resolves.toStrictEqual(undefined);
+            await expect(p).resolves.toStrictEqual(true);
             expect(waitForTIDSpy).toHaveBeenCalledWith(nextTidFromStartup, 10000);
             expect(sendFrameSpy).toHaveBeenCalledTimes(1);
         });
 
         it("receives frame NETDEF_ACK_FRAME_TO_COORD", async () => {
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
-            const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
+            const sendZigbeeAPSACKSpy = vi.spyOn(driver, "sendZigbeeAPSACK");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
-            const processZigbeeAPSCommandFrameSpy = vi.spyOn(driver, "processZigbeeAPSCommandFrame");
+            const processZigbeeAPSCommandSpy = vi.spyOn(driver, "processZigbeeAPSCommand");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ACK_FRAME_TO_COORD), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
-            expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
+            expect(sendZigbeeAPSACKSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(1);
-            expect(processZigbeeAPSCommandFrameSpy).toHaveBeenCalledTimes(0);
+            expect(processZigbeeAPSCommandSpy).toHaveBeenCalledTimes(0);
         });
 
         it("receives frame NETDEF_LINK_STATUS_FROM_DEV", async () => {
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
-            const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
+            const sendZigbeeAPSACKSpy = vi.spyOn(driver, "sendZigbeeAPSACK");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
             const processZigbeeNWKLinkStatusSpy = vi.spyOn(driver, "processZigbeeNWKLinkStatus");
 
@@ -1324,7 +1354,7 @@ describe("OT RCP Driver", () => {
             await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
-            expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
+            expect(sendZigbeeAPSACKSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
             expect(processZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(1);
         });
@@ -1332,17 +1362,17 @@ describe("OT RCP Driver", () => {
         it("receives frame NETDEF_ZCL_FRAME_CMD_TO_COORD", async () => {
             const emitSpy = vi.spyOn(driver, "emit");
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
-            const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
+            const sendZigbeeAPSACKSpy = vi.spyOn(driver, "sendZigbeeAPSACK");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
-            const processZigbeeAPSCommandFrameSpy = vi.spyOn(driver, "processZigbeeAPSCommandFrame");
+            const processZigbeeAPSCommandSpy = vi.spyOn(driver, "processZigbeeAPSCommand");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ZCL_FRAME_CMD_TO_COORD), "utf8", () => {});
             await vi.runOnlyPendingTimersAsync();
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
-            expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
+            expect(sendZigbeeAPSACKSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(1);
-            expect(processZigbeeAPSCommandFrameSpy).toHaveBeenCalledTimes(0);
+            expect(processZigbeeAPSCommandSpy).toHaveBeenCalledTimes(0);
             expect(emitSpy).toHaveBeenCalledWith(
                 "frame",
                 0xaa38,
@@ -1374,7 +1404,7 @@ describe("OT RCP Driver", () => {
 
         it("receives frame NETDEF_ROUTE_RECORD_TO_COORD", async () => {
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
-            const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
+            const sendZigbeeAPSACKSpy = vi.spyOn(driver, "sendZigbeeAPSACK");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
             const processZigbeeNWKRouteRecSpy = vi.spyOn(driver, "processZigbeeNWKRouteRecord");
 
@@ -1382,14 +1412,14 @@ describe("OT RCP Driver", () => {
             await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
-            expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
+            expect(sendZigbeeAPSACKSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
             expect(processZigbeeNWKRouteRecSpy).toHaveBeenCalledTimes(1);
         });
 
         it("receives frame NETDEF_MTORR_FRAME_FROM_COORD", async () => {
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
-            const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
+            const sendZigbeeAPSACKSpy = vi.spyOn(driver, "sendZigbeeAPSACK");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
             const processZigbeeNWKRouteReqSpy = vi.spyOn(driver, "processZigbeeNWKRouteReq");
             const sendZigbeeNWKRouteReplySpy = vi.spyOn(driver, "sendZigbeeNWKRouteReply");
@@ -1398,7 +1428,7 @@ describe("OT RCP Driver", () => {
             await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
-            expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
+            expect(sendZigbeeAPSACKSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
             expect(processZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(0);
             expect(sendZigbeeNWKRouteReplySpy).toHaveBeenCalledTimes(0);
@@ -1409,7 +1439,7 @@ describe("OT RCP Driver", () => {
 
             const emitSpy = vi.spyOn(driver, "emit");
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
-            const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
+            const sendZigbeeAPSACKSpy = vi.spyOn(driver, "sendZigbeeAPSACK");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
             const processZigbeeNWKGPFrameSpy = vi.spyOn(driver, "processZigbeeNWKGPFrame");
 
@@ -1448,7 +1478,7 @@ describe("OT RCP Driver", () => {
             };
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
-            expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
+            expect(sendZigbeeAPSACKSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
             expect(processZigbeeNWKGPFrameSpy).toHaveBeenCalledTimes(1);
             expect(emitSpy).toHaveBeenCalledWith(
@@ -1479,7 +1509,7 @@ describe("OT RCP Driver", () => {
         it("receives frame NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0", async () => {
             const emitSpy = vi.spyOn(driver, "emit");
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
-            const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
+            const sendZigbeeAPSACKSpy = vi.spyOn(driver, "sendZigbeeAPSACK");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
             const processZigbeeNWKGPFrameSpy = vi.spyOn(driver, "processZigbeeNWKGPFrame");
 
@@ -1527,7 +1557,7 @@ describe("OT RCP Driver", () => {
             };
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
-            expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
+            expect(sendZigbeeAPSACKSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
             expect(processZigbeeNWKGPFrameSpy).toHaveBeenCalledTimes(1);
             expect(emitSpy).toHaveBeenCalledWith("gpFrame", 0x10, Buffer.from([]), expectedMACHeader, expectedNWKGPHeader, 0);
@@ -1581,7 +1611,7 @@ describe("OT RCP Driver", () => {
         it("receives frame NET2_TRANSPORT_KEY_NWK_FROM_COORD - not for coordinator", async () => {
             // encrypted only APS
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
-            const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
+            const sendZigbeeAPSACKSpy = vi.spyOn(driver, "sendZigbeeAPSACK");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
             const processZigbeeAPSTransportKeySpy = vi.spyOn(driver, "processZigbeeAPSTransportKey");
 
@@ -1589,7 +1619,7 @@ describe("OT RCP Driver", () => {
             await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
-            expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
+            expect(sendZigbeeAPSACKSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
             expect(processZigbeeAPSTransportKeySpy).toHaveBeenCalledTimes(0);
         });
@@ -1607,7 +1637,7 @@ describe("OT RCP Driver", () => {
             driver.address16ToAddress64.set(0xa18f, source64);
 
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
-            const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
+            const sendZigbeeAPSACKSpy = vi.spyOn(driver, "sendZigbeeAPSACK");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
             const processZigbeeAPSRequestKeySpy = vi.spyOn(driver, "processZigbeeAPSRequestKey");
             const sendZigbeeAPSTransportKeyTCSpy = vi.spyOn(driver, "sendZigbeeAPSTransportKeyTC");
@@ -1618,7 +1648,7 @@ describe("OT RCP Driver", () => {
             await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
-            expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
+            expect(sendZigbeeAPSACKSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(1);
             expect(processZigbeeAPSRequestKeySpy).toHaveBeenCalledTimes(1);
             expect(sendZigbeeAPSTransportKeyTCSpy).toHaveBeenCalledTimes(1);
@@ -1886,7 +1916,7 @@ describe("OT RCP Driver", () => {
                 // ROUTE_REQ => OK
                 driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 3), "utf8", () => {});
                 await vi.advanceTimersByTimeAsync(10);
-                await p;
+                return await p;
             });
             await vi.advanceTimersByTimeAsync(10000);
             await vi.advanceTimersByTimeAsync(100); // flush
@@ -1898,6 +1928,666 @@ describe("OT RCP Driver", () => {
             expect(destination16Spy).toStrictEqual(ZigbeeConsts.BCAST_DEFAULT);
 
             await vi.runOnlyPendingTimersAsync(); // flush
+        });
+
+        it("handles send failures", async () => {
+            const waitForTIDSpy = vi.spyOn(driver, "waitForTID");
+
+            const nwkDest16 = 0x2143;
+            const nwkDest64 = 8458932590n;
+
+            driver.allowJoins(5, true);
+            await driver.associate(nwkDest16, nwkDest64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+
+            waitForTIDSpy.mockRejectedValueOnce(new Error("Failed with status=NO_ACK"));
+            await expect(
+                driver.sendZigbeeNWKCommand(ZigbeeNWKCommandId.COMMISSIONING_RESPONSE, Buffer.alloc(2), true, 2314, 654, 5687n, 30),
+            ).resolves.toStrictEqual(false);
+            waitForTIDSpy.mockRejectedValueOnce(new Error("Failed with status=NO_ACK"));
+            await expect(
+                driver.sendZigbeeAPSCommand(
+                    ZigbeeAPSCommandId.CONFIRM_KEY,
+                    Buffer.alloc(1),
+                    ZigbeeNWKRouteDiscovery.SUPPRESS,
+                    true,
+                    nwkDest16,
+                    nwkDest64,
+                    ZigbeeAPSDeliveryMode.UNICAST,
+                    undefined,
+                    true,
+                ),
+            ).resolves.toStrictEqual(false);
+            waitForTIDSpy.mockRejectedValueOnce(new Error("Failed with status=NO_ACK"));
+            await expect(
+                driver.sendZigbeeAPSACK(
+                    // @ts-expect-error minimal mock
+                    {},
+                    {
+                        seqNum: 11,
+                        source16: nwkDest16,
+                        source64: nwkDest64,
+                    },
+                    {
+                        sourceEndpoint: 242,
+                        clusterId: 2,
+                    },
+                ),
+            ).resolves.toStrictEqual(undefined);
+            waitForTIDSpy.mockRejectedValueOnce(new Error("Failed with status=NO_ACK"));
+            // throws through respondToCoordinatorZDORequest
+            await expect(
+                driver.onZigbeeAPSFrame(
+                    Buffer.alloc(8),
+                    // @ts-expect-error minimal mock
+                    {
+                        source16: nwkDest16,
+                        source64: undefined,
+                    },
+                    {
+                        seqNum: 3,
+                        source16: nwkDest16,
+                        source64: undefined,
+                        destination16: 0x0000, // coordinator (reach code path)
+                        destination64: undefined,
+                    },
+                    {
+                        frameControl: {
+                            frameType: ZigbeeAPSFrameType.DATA,
+                        },
+                        profileId: ZigbeeConsts.ZDO_PROFILE_ID,
+                        clusterId: 0,
+                        sourceEndpoint: 0,
+                        destEndpoint: 0,
+                    },
+                    150,
+                ),
+            ).resolves.toStrictEqual(undefined);
+
+            waitForTIDSpy.mockRejectedValueOnce(new Error("Failed with status=NO_ACK"));
+            await expect(
+                driver.sendZigbeeAPSData(
+                    Buffer.alloc(3),
+                    ZigbeeNWKRouteDiscovery.SUPPRESS,
+                    nwkDest16,
+                    nwkDest64,
+                    ZigbeeAPSDeliveryMode.BCAST,
+                    1,
+                    1,
+                    1,
+                    1,
+                    undefined,
+                ),
+            ).rejects.toThrow("Failed to send");
+            waitForTIDSpy.mockRejectedValueOnce(new Error("Failed with status=NO_ACK"));
+            await expect(driver.sendZDO(Buffer.alloc(1), nwkDest16, nwkDest64, 3)).rejects.toThrow("Failed to send");
+            waitForTIDSpy.mockRejectedValueOnce(new Error("Failed with status=NO_ACK"));
+            await expect(driver.sendUnicast(Buffer.alloc(2), 2, 3, nwkDest16, nwkDest64, 4, 2)).rejects.toThrow("Failed to send");
+            waitForTIDSpy.mockRejectedValueOnce(new Error("Failed with status=NO_ACK"));
+            await expect(driver.sendGroupcast(Buffer.alloc(3), 45, 2345, nwkDest16, 23)).rejects.toThrow("Failed to send");
+            waitForTIDSpy.mockRejectedValueOnce(new Error("Failed with status=NO_ACK"));
+            await expect(driver.sendBroadcast(Buffer.alloc(4), 45677, 34, 0xfffe, 9, 5)).rejects.toThrow("Failed to send");
+            await expect(driver.sendBroadcast(Buffer.alloc(4), 45677, 34, 0xff00, 9, 5)).rejects.toThrow("Invalid parameters");
+            await expect(driver.sendUnicast(Buffer.alloc(4), 45677, 34, ZigbeeConsts.COORDINATOR_ADDRESS, 9n, 1, 5)).rejects.toThrow(
+                "Cannot send unicast to coordinator",
+            );
+            await expect(driver.sendZDO(Buffer.alloc(4), ZigbeeConsts.COORDINATOR_ADDRESS, 9n, 1)).rejects.toThrow("Cannot send ZDO to coordinator");
+        });
+
+        it("sends ZDO - unicast", async () => {
+            const sendMACFrameSpy = vi.spyOn(driver, "sendMACFrame");
+
+            const payload = Buffer.from("1020304050607080", "hex");
+            const nwkDest16 = 0x1221;
+            const nwkDest64 = 4321n;
+            const clusterId = 0;
+
+            driver.allowJoins(0x5, true);
+            await driver.associate(nwkDest16, nwkDest64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+
+            const p = driver.sendZDO(payload, nwkDest16, nwkDest64, clusterId);
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+
+            await expect(p).resolves.toStrictEqual([1, 1]);
+            const macFrame = sendMACFrameSpy.mock.calls[0][1];
+            const [macFCF, decFCFOffset] = decodeMACFrameControl(macFrame, 0);
+            const [macHeader, decHOffset] = decodeMACHeader(macFrame, decFCFOffset, macFCF);
+            const macPayload = decodeMACPayload(macFrame, decHOffset, macFCF, macHeader);
+
+            expect(macHeader).toStrictEqual({
+                frameControl: {
+                    frameType: MACFrameType.DATA,
+                    securityEnabled: false,
+                    framePending: false,
+                    ackRequest: true,
+                    panIdCompression: true,
+                    seqNumSuppress: false,
+                    iePresent: false,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    frameVersion: MACFrameVersion.V2003,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                },
+                sequenceNumber: 1,
+                destinationPANId: NET3_PAN_ID,
+                destination16: nwkDest16,
+                destination64: undefined,
+                sourcePANId: NET3_PAN_ID,
+                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                source64: undefined,
+                auxSecHeader: undefined,
+                superframeSpec: undefined,
+                gtsInfo: undefined,
+                pendAddr: undefined,
+                commandId: undefined,
+                headerIE: undefined,
+                frameCounter: undefined,
+                keySeqCounter: undefined,
+                fcs: 47174,
+            });
+
+            const [nwkFCF, nwkFCFOutOffset] = decodeZigbeeNWKFrameControl(macPayload, 0);
+            const [nwkHeader, nwkHOutOffset] = decodeZigbeeNWKHeader(macPayload, nwkFCFOutOffset, nwkFCF);
+            const nwkPayload = decodeZigbeeNWKPayload(macPayload, nwkHOutOffset, undefined, macHeader.source64, nwkFCF, nwkHeader);
+
+            expect(nwkHeader).toStrictEqual({
+                frameControl: {
+                    frameType: ZigbeeNWKFrameType.DATA,
+                    protocolVersion: 2,
+                    discoverRoute: 0,
+                    multicast: false,
+                    security: true,
+                    sourceRoute: false,
+                    extendedDestination: true,
+                    extendedSource: false,
+                    endDeviceInitiator: false,
+                },
+                destination16: nwkDest16,
+                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                radius: 29,
+                seqNum: 1,
+                destination64: nwkDest64,
+                source64: undefined,
+                relayIndex: undefined,
+                relayAddresses: undefined,
+                securityHeader: {
+                    control: { keyId: 1, level: 5, nonce: true },
+                    frameCounter: 1,
+                    keySeqNum: 0,
+                    micLen: 4,
+                    source64: NET3_COORD_EUI64_BIGINT,
+                },
+            });
+
+            const [apsFCF, apsFCFOutOffset] = decodeZigbeeAPSFrameControl(nwkPayload, 0);
+            const [apsHeader, apsHOutOffset] = decodeZigbeeAPSHeader(nwkPayload, apsFCFOutOffset, apsFCF);
+            const apsPayload = decodeZigbeeAPSPayload(nwkPayload, apsHOutOffset, undefined, undefined, apsFCF, apsHeader);
+
+            expect(apsHeader).toStrictEqual({
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: true,
+                    extendedHeader: false,
+                },
+                destEndpoint: ZigbeeConsts.ZDO_ENDPOINT,
+                group: undefined,
+                clusterId,
+                profileId: ZigbeeConsts.ZDO_PROFILE_ID,
+                sourceEndpoint: ZigbeeConsts.ZDO_ENDPOINT,
+                counter: 1,
+                fragmentation: undefined,
+                fragBlockNumber: undefined,
+                fragACKBitfield: undefined,
+                securityHeader: undefined,
+            });
+            expect(apsPayload).toStrictEqual(payload);
+        });
+
+        it("sends ZDO - broadcast", async () => {
+            const sendMACFrameSpy = vi.spyOn(driver, "sendMACFrame");
+
+            const payload = Buffer.from("4050", "hex");
+            const nwkDest16 = ZigbeeConsts.BCAST_DEFAULT;
+            const nwkDest64 = undefined;
+            const clusterId = 1;
+
+            const p = driver.sendZDO(payload, nwkDest16, nwkDest64, clusterId);
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+
+            await expect(p).resolves.toStrictEqual([1, 1]);
+            const macFrame = sendMACFrameSpy.mock.calls[0][1];
+            const [macFCF, decFCFOffset] = decodeMACFrameControl(macFrame, 0);
+            const [macHeader, decHOffset] = decodeMACHeader(macFrame, decFCFOffset, macFCF);
+            const macPayload = decodeMACPayload(macFrame, decHOffset, macFCF, macHeader);
+
+            expect(macHeader).toStrictEqual({
+                frameControl: {
+                    frameType: MACFrameType.DATA,
+                    securityEnabled: false,
+                    framePending: false,
+                    ackRequest: false,
+                    panIdCompression: true,
+                    seqNumSuppress: false,
+                    iePresent: false,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    frameVersion: MACFrameVersion.V2003,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                },
+                sequenceNumber: 1,
+                destinationPANId: NET3_PAN_ID,
+                destination16: ZigbeeMACConsts.BCAST_ADDR,
+                destination64: undefined,
+                sourcePANId: NET3_PAN_ID,
+                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                source64: undefined,
+                auxSecHeader: undefined,
+                superframeSpec: undefined,
+                gtsInfo: undefined,
+                pendAddr: undefined,
+                commandId: undefined,
+                headerIE: undefined,
+                frameCounter: undefined,
+                keySeqCounter: undefined,
+                fcs: 12353,
+            });
+
+            const [nwkFCF, nwkFCFOutOffset] = decodeZigbeeNWKFrameControl(macPayload, 0);
+            const [nwkHeader, nwkHOutOffset] = decodeZigbeeNWKHeader(macPayload, nwkFCFOutOffset, nwkFCF);
+            const nwkPayload = decodeZigbeeNWKPayload(macPayload, nwkHOutOffset, undefined, macHeader.source64, nwkFCF, nwkHeader);
+
+            expect(nwkHeader).toStrictEqual({
+                frameControl: {
+                    frameType: ZigbeeNWKFrameType.DATA,
+                    protocolVersion: 2,
+                    discoverRoute: 0,
+                    multicast: false,
+                    security: true,
+                    sourceRoute: false,
+                    extendedDestination: false,
+                    extendedSource: false,
+                    endDeviceInitiator: false,
+                },
+                destination16: nwkDest16,
+                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                radius: 29,
+                seqNum: 1,
+                destination64: nwkDest64,
+                source64: undefined,
+                relayIndex: undefined,
+                relayAddresses: undefined,
+                securityHeader: {
+                    control: { keyId: 1, level: 5, nonce: true },
+                    frameCounter: 1,
+                    keySeqNum: 0,
+                    micLen: 4,
+                    source64: NET3_COORD_EUI64_BIGINT,
+                },
+            });
+
+            const [apsFCF, apsFCFOutOffset] = decodeZigbeeAPSFrameControl(nwkPayload, 0);
+            const [apsHeader, apsHOutOffset] = decodeZigbeeAPSHeader(nwkPayload, apsFCFOutOffset, apsFCF);
+            const apsPayload = decodeZigbeeAPSPayload(nwkPayload, apsHOutOffset, undefined, undefined, apsFCF, apsHeader);
+
+            expect(apsHeader).toStrictEqual({
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.BCAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: true,
+                    extendedHeader: false,
+                },
+                destEndpoint: ZigbeeConsts.ZDO_ENDPOINT,
+                group: undefined,
+                clusterId,
+                profileId: ZigbeeConsts.ZDO_PROFILE_ID,
+                sourceEndpoint: ZigbeeConsts.ZDO_ENDPOINT,
+                counter: 1,
+                fragmentation: undefined,
+                fragBlockNumber: undefined,
+                fragACKBitfield: undefined,
+                securityHeader: undefined,
+            });
+            expect(apsPayload).toStrictEqual(payload);
+        });
+
+        it("sends unicasts", async () => {
+            const sendMACFrameSpy = vi.spyOn(driver, "sendMACFrame");
+
+            const payload = Buffer.from("1020304050607080", "hex");
+            const nwkDest16 = 0x1221;
+            const nwkDest64 = 4321n;
+            const profileId = ZigbeeConsts.HA_PROFILE_ID;
+            const clusterId = 45;
+            const destEndpoint = 30;
+            const sourceEndpoint = 1;
+
+            driver.allowJoins(0x5, true);
+            await driver.associate(nwkDest16, nwkDest64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+
+            const p = driver.sendUnicast(payload, profileId, clusterId, nwkDest16, nwkDest64, destEndpoint, sourceEndpoint);
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+
+            await expect(p).resolves.toStrictEqual(1);
+            const macFrame = sendMACFrameSpy.mock.calls[0][1];
+            const [macFCF, decFCFOffset] = decodeMACFrameControl(macFrame, 0);
+            const [macHeader, decHOffset] = decodeMACHeader(macFrame, decFCFOffset, macFCF);
+            const macPayload = decodeMACPayload(macFrame, decHOffset, macFCF, macHeader);
+
+            expect(macHeader).toStrictEqual({
+                frameControl: {
+                    frameType: MACFrameType.DATA,
+                    securityEnabled: false,
+                    framePending: false,
+                    ackRequest: true,
+                    panIdCompression: true,
+                    seqNumSuppress: false,
+                    iePresent: false,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    frameVersion: MACFrameVersion.V2003,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                },
+                sequenceNumber: 1,
+                destinationPANId: NET3_PAN_ID,
+                destination16: nwkDest16,
+                destination64: undefined,
+                sourcePANId: NET3_PAN_ID,
+                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                source64: undefined,
+                auxSecHeader: undefined,
+                superframeSpec: undefined,
+                gtsInfo: undefined,
+                pendAddr: undefined,
+                commandId: undefined,
+                headerIE: undefined,
+                frameCounter: undefined,
+                keySeqCounter: undefined,
+                fcs: 19780,
+            });
+
+            const [nwkFCF, nwkFCFOutOffset] = decodeZigbeeNWKFrameControl(macPayload, 0);
+            const [nwkHeader, nwkHOutOffset] = decodeZigbeeNWKHeader(macPayload, nwkFCFOutOffset, nwkFCF);
+            const nwkPayload = decodeZigbeeNWKPayload(macPayload, nwkHOutOffset, undefined, macHeader.source64, nwkFCF, nwkHeader);
+
+            expect(nwkHeader).toStrictEqual({
+                frameControl: {
+                    frameType: ZigbeeNWKFrameType.DATA,
+                    protocolVersion: 2,
+                    discoverRoute: 0,
+                    multicast: false,
+                    security: true,
+                    sourceRoute: false,
+                    extendedDestination: true,
+                    extendedSource: false,
+                    endDeviceInitiator: false,
+                },
+                destination16: nwkDest16,
+                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                radius: 29,
+                seqNum: 1,
+                destination64: nwkDest64,
+                source64: undefined,
+                relayIndex: undefined,
+                relayAddresses: undefined,
+                securityHeader: {
+                    control: { keyId: 1, level: 5, nonce: true },
+                    frameCounter: 1,
+                    keySeqNum: 0,
+                    micLen: 4,
+                    source64: NET3_COORD_EUI64_BIGINT,
+                },
+            });
+
+            const [apsFCF, apsFCFOutOffset] = decodeZigbeeAPSFrameControl(nwkPayload, 0);
+            const [apsHeader, apsHOutOffset] = decodeZigbeeAPSHeader(nwkPayload, apsFCFOutOffset, apsFCF);
+            const apsPayload = decodeZigbeeAPSPayload(nwkPayload, apsHOutOffset, undefined, undefined, apsFCF, apsHeader);
+
+            expect(apsHeader).toStrictEqual({
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: true,
+                    extendedHeader: false,
+                },
+                destEndpoint,
+                group: undefined,
+                clusterId,
+                profileId,
+                sourceEndpoint,
+                counter: 1,
+                fragmentation: undefined,
+                fragBlockNumber: undefined,
+                fragACKBitfield: undefined,
+                securityHeader: undefined,
+            });
+            expect(apsPayload).toStrictEqual(payload);
+        });
+
+        it("sends groupcasts", async () => {
+            const sendMACFrameSpy = vi.spyOn(driver, "sendMACFrame");
+
+            const payload = Buffer.from("1020304050607080", "hex");
+            const groupId = 1;
+            const profileId = ZigbeeConsts.HA_PROFILE_ID;
+            const clusterId = 34;
+            const sourceEndpoint = 1;
+
+            const p = driver.sendGroupcast(payload, profileId, clusterId, groupId, sourceEndpoint);
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+
+            await expect(p).resolves.toStrictEqual(1);
+            const macFrame = sendMACFrameSpy.mock.calls[0][1];
+            const [macFCF, decFCFOffset] = decodeMACFrameControl(macFrame, 0);
+            const [macHeader, decHOffset] = decodeMACHeader(macFrame, decFCFOffset, macFCF);
+            const macPayload = decodeMACPayload(macFrame, decHOffset, macFCF, macHeader);
+
+            expect(macHeader).toStrictEqual({
+                frameControl: {
+                    frameType: MACFrameType.DATA,
+                    securityEnabled: false,
+                    framePending: false,
+                    ackRequest: false,
+                    panIdCompression: true,
+                    seqNumSuppress: false,
+                    iePresent: false,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    frameVersion: MACFrameVersion.V2003,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                },
+                sequenceNumber: 1,
+                destinationPANId: NET3_PAN_ID,
+                destination16: ZigbeeMACConsts.BCAST_ADDR,
+                destination64: undefined,
+                sourcePANId: NET3_PAN_ID,
+                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                source64: undefined,
+                auxSecHeader: undefined,
+                superframeSpec: undefined,
+                gtsInfo: undefined,
+                pendAddr: undefined,
+                commandId: undefined,
+                headerIE: undefined,
+                frameCounter: undefined,
+                keySeqCounter: undefined,
+                fcs: 46050,
+            });
+
+            const [nwkFCF, nwkFCFOutOffset] = decodeZigbeeNWKFrameControl(macPayload, 0);
+            const [nwkHeader, nwkHOutOffset] = decodeZigbeeNWKHeader(macPayload, nwkFCFOutOffset, nwkFCF);
+            const nwkPayload = decodeZigbeeNWKPayload(macPayload, nwkHOutOffset, undefined, macHeader.source64, nwkFCF, nwkHeader);
+
+            expect(nwkHeader).toStrictEqual({
+                frameControl: {
+                    frameType: ZigbeeNWKFrameType.DATA,
+                    protocolVersion: 2,
+                    discoverRoute: 0,
+                    multicast: false,
+                    security: true,
+                    sourceRoute: false,
+                    extendedDestination: false,
+                    extendedSource: false,
+                    endDeviceInitiator: false,
+                },
+                destination16: ZigbeeConsts.BCAST_RX_ON_WHEN_IDLE,
+                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                radius: 29,
+                seqNum: 1,
+                destination64: undefined,
+                source64: undefined,
+                relayIndex: undefined,
+                relayAddresses: undefined,
+                securityHeader: {
+                    control: { keyId: 1, level: 5, nonce: true },
+                    frameCounter: 1,
+                    keySeqNum: 0,
+                    micLen: 4,
+                    source64: NET3_COORD_EUI64_BIGINT,
+                },
+            });
+
+            const [apsFCF, apsFCFOutOffset] = decodeZigbeeAPSFrameControl(nwkPayload, 0);
+            const [apsHeader, apsHOutOffset] = decodeZigbeeAPSHeader(nwkPayload, apsFCFOutOffset, apsFCF);
+            const apsPayload = decodeZigbeeAPSPayload(nwkPayload, apsHOutOffset, undefined, undefined, apsFCF, apsHeader);
+
+            expect(apsHeader).toStrictEqual({
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.GROUP,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: true,
+                    extendedHeader: false,
+                },
+                destEndpoint: undefined,
+                group: 1,
+                clusterId,
+                profileId,
+                sourceEndpoint,
+                counter: 1,
+                fragmentation: undefined,
+                fragBlockNumber: undefined,
+                fragACKBitfield: undefined,
+                securityHeader: undefined,
+            });
+            expect(apsPayload).toStrictEqual(payload);
+        });
+
+        it("sends broadcasts", async () => {
+            const sendMACFrameSpy = vi.spyOn(driver, "sendMACFrame");
+
+            const payload = Buffer.from("1020304050607080", "hex");
+            const dest16 = ZigbeeConsts.BCAST_SLEEPY;
+            const profileId = ZigbeeConsts.HA_PROFILE_ID;
+            const clusterId = 34;
+            const destEndpoint = 30;
+            const sourceEndpoint = 1;
+
+            const p = driver.sendBroadcast(payload, profileId, clusterId, dest16, destEndpoint, sourceEndpoint);
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+
+            await expect(p).resolves.toStrictEqual(1);
+            const macFrame = sendMACFrameSpy.mock.calls[0][1];
+            const [macFCF, decFCFOffset] = decodeMACFrameControl(macFrame, 0);
+            const [macHeader, decHOffset] = decodeMACHeader(macFrame, decFCFOffset, macFCF);
+            const macPayload = decodeMACPayload(macFrame, decHOffset, macFCF, macHeader);
+
+            expect(macHeader).toStrictEqual({
+                frameControl: {
+                    frameType: MACFrameType.DATA,
+                    securityEnabled: false,
+                    framePending: false,
+                    ackRequest: false,
+                    panIdCompression: true,
+                    seqNumSuppress: false,
+                    iePresent: false,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    frameVersion: MACFrameVersion.V2003,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                },
+                sequenceNumber: 1,
+                destinationPANId: NET3_PAN_ID,
+                destination16: ZigbeeMACConsts.BCAST_ADDR,
+                destination64: undefined,
+                sourcePANId: NET3_PAN_ID,
+                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                source64: undefined,
+                auxSecHeader: undefined,
+                superframeSpec: undefined,
+                gtsInfo: undefined,
+                pendAddr: undefined,
+                commandId: undefined,
+                headerIE: undefined,
+                frameCounter: undefined,
+                keySeqCounter: undefined,
+                fcs: 3676,
+            });
+
+            const [nwkFCF, nwkFCFOutOffset] = decodeZigbeeNWKFrameControl(macPayload, 0);
+            const [nwkHeader, nwkHOutOffset] = decodeZigbeeNWKHeader(macPayload, nwkFCFOutOffset, nwkFCF);
+            const nwkPayload = decodeZigbeeNWKPayload(macPayload, nwkHOutOffset, undefined, macHeader.source64, nwkFCF, nwkHeader);
+
+            expect(nwkHeader).toStrictEqual({
+                frameControl: {
+                    frameType: ZigbeeNWKFrameType.DATA,
+                    protocolVersion: 2,
+                    discoverRoute: 0,
+                    multicast: false,
+                    security: true,
+                    sourceRoute: false,
+                    extendedDestination: false,
+                    extendedSource: false,
+                    endDeviceInitiator: false,
+                },
+                destination16: dest16,
+                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                radius: 29,
+                seqNum: 1,
+                destination64: undefined,
+                source64: undefined,
+                relayIndex: undefined,
+                relayAddresses: undefined,
+                securityHeader: {
+                    control: { keyId: 1, level: 5, nonce: true },
+                    frameCounter: 1,
+                    keySeqNum: 0,
+                    micLen: 4,
+                    source64: NET3_COORD_EUI64_BIGINT,
+                },
+            });
+
+            const [apsFCF, apsFCFOutOffset] = decodeZigbeeAPSFrameControl(nwkPayload, 0);
+            const [apsHeader, apsHOutOffset] = decodeZigbeeAPSHeader(nwkPayload, apsFCFOutOffset, apsFCF);
+            const apsPayload = decodeZigbeeAPSPayload(nwkPayload, apsHOutOffset, undefined, undefined, apsFCF, apsHeader);
+
+            expect(apsHeader).toStrictEqual({
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.BCAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: true,
+                    extendedHeader: false,
+                },
+                destEndpoint,
+                group: undefined,
+                clusterId,
+                profileId,
+                sourceEndpoint,
+                counter: 1,
+                fragmentation: undefined,
+                fragBlockNumber: undefined,
+                fragACKBitfield: undefined,
+                securityHeader: undefined,
+            });
+            expect(apsPayload).toStrictEqual(payload);
         });
     });
 
@@ -2009,6 +2699,8 @@ describe("OT RCP Driver", () => {
 
         const fillSourceRouteTableFromRequests = async () => {
             if (driver) {
+                const processZigbeeNWKRouteRecordSpy = vi.spyOn(driver, "processZigbeeNWKRouteRecord");
+
                 driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_96BA_NO_RELAY), "utf8", () => {});
                 await vi.advanceTimersByTimeAsync(10);
                 // ROUTE_RECORD => OK
@@ -2038,6 +2730,27 @@ describe("OT RCP Driver", () => {
                 // ROUTE_RECORD => OK
                 driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
                 await vi.advanceTimersByTimeAsync(10);
+
+                expect(processZigbeeNWKRouteRecordSpy).toHaveBeenCalledTimes(5);
+                expect(driver.sourceRouteTable.size).toStrictEqual(5);
+
+                expect(driver.findBestSourceRoute(0x96ba, undefined)).toStrictEqual([undefined, undefined, 1]);
+                expect(driver.findBestSourceRoute(undefined, 9244571720527165811n)).toStrictEqual([undefined, undefined, 1]);
+
+                expect(driver.findBestSourceRoute(0x91d2, undefined)).toStrictEqual([undefined, undefined, 1]);
+                expect(driver.findBestSourceRoute(undefined, 8118874123826907736n)).toStrictEqual([undefined, undefined, 1]);
+
+                expect(driver.findBestSourceRoute(0xcb47, undefined)).toStrictEqual([undefined, undefined, undefined]);
+                expect(driver.findBestSourceRoute(undefined, 5149013569626593n)).toStrictEqual([undefined, undefined, undefined]);
+
+                expect(driver.findBestSourceRoute(0x6887, undefined)).toStrictEqual([0, [0x96ba], 2]);
+                expect(driver.findBestSourceRoute(undefined, 5149013643361676n)).toStrictEqual([0, [0x96ba], 2]);
+
+                expect(driver.findBestSourceRoute(0x9ed5, undefined)).toStrictEqual([0, [0x91d2], 2]);
+                expect(driver.findBestSourceRoute(undefined, 5149013578478658n)).toStrictEqual([0, [0x91d2], 2]);
+
+                expect(driver.findBestSourceRoute(0x4b8e, undefined)).toStrictEqual([0, [0xcb47], 2]);
+                expect(driver.findBestSourceRoute(undefined, 5149013573816379n)).toStrictEqual([0, [0xcb47], 2]);
             } else {
                 throw new Error("Invalid test state");
             }
@@ -2045,6 +2758,11 @@ describe("OT RCP Driver", () => {
 
         it("handles source routing", async () => {
             const [linksSpy, manyToOneSpy, destination16Spy] = await mockRegisterTimers(driver);
+
+            expect(() => driver.findBestSourceRoute(undefined, undefined)).toThrow("Invalid parameters");
+            expect(() => driver.findBestSourceRoute(0xfff0, undefined)).toThrow("Unknown destination");
+            expect(() => driver.findBestSourceRoute(undefined, randomBigInt())).toThrow("Unknown destination");
+            expect(driver.findBestSourceRoute(0xfffc, undefined)).toStrictEqual([undefined, undefined, undefined]); // bcast
 
             expect(linksSpy).toStrictEqual([
                 { address: 0x96ba, incomingCost: 0, outgoingCost: 0 },
@@ -2054,42 +2772,23 @@ describe("OT RCP Driver", () => {
             expect(manyToOneSpy).toStrictEqual(ZigbeeNWKManyToOne.WITH_SOURCE_ROUTING);
             expect(destination16Spy).toStrictEqual(ZigbeeConsts.BCAST_DEFAULT);
 
-            const processZigbeeNWKRouteRecordSpy = vi.spyOn(driver, "processZigbeeNWKRouteRecord");
+            const sendPeriodicManyToOneRouteRequestSpy = vi.spyOn(driver, "sendPeriodicManyToOneRouteRequest");
+            const sendZigbeeNWKRouteReqSpy = vi.spyOn(driver, "sendZigbeeNWKRouteReq").mockResolvedValue(true);
 
             await fillSourceRouteTableFromRequests();
-
-            expect(processZigbeeNWKRouteRecordSpy).toHaveBeenCalledTimes(5);
-
-            expect(driver.findBestSourceRoute(0x96ba, undefined)).toStrictEqual([undefined, undefined, 1]);
-            expect(driver.findBestSourceRoute(undefined, 9244571720527165811n)).toStrictEqual([undefined, undefined, 1]);
-
-            expect(driver.findBestSourceRoute(0x91d2, undefined)).toStrictEqual([undefined, undefined, 1]);
-            expect(driver.findBestSourceRoute(undefined, 8118874123826907736n)).toStrictEqual([undefined, undefined, 1]);
-
-            expect(driver.findBestSourceRoute(0xcb47, undefined)).toStrictEqual([undefined, undefined, undefined]);
-            expect(driver.findBestSourceRoute(undefined, 5149013569626593n)).toStrictEqual([undefined, undefined, undefined]);
-
-            expect(driver.findBestSourceRoute(0x6887, undefined)).toStrictEqual([0, [0x96ba], 2]);
-            expect(driver.findBestSourceRoute(undefined, 5149013643361676n)).toStrictEqual([0, [0x96ba], 2]);
-
-            expect(driver.findBestSourceRoute(0x9ed5, undefined)).toStrictEqual([0, [0x91d2], 2]);
-            expect(driver.findBestSourceRoute(undefined, 5149013578478658n)).toStrictEqual([0, [0x91d2], 2]);
-
-            expect(driver.findBestSourceRoute(0x4b8e, undefined)).toStrictEqual([0, [0xcb47], 2]);
-            expect(driver.findBestSourceRoute(undefined, 5149013573816379n)).toStrictEqual([0, [0xcb47], 2]);
 
             const findBestSourceRouteSpy = vi.spyOn(driver, "findBestSourceRoute");
             const sendMACFrameSpy = vi.spyOn(driver, "sendMACFrame");
 
             //-- NWK CMD
-            sendMACFrameSpy.mockResolvedValueOnce();
+            sendMACFrameSpy.mockResolvedValueOnce(true);
             await driver.sendZigbeeNWKStatus(0x96ba, ZigbeeNWKStatus.SOURCE_ROUTE_FAILURE);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x96ba, 9244571720527165811n);
             expect(findBestSourceRouteSpy).toHaveLastReturnedWith([undefined, undefined, 1]);
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0x96ba, undefined);
 
-            sendMACFrameSpy.mockResolvedValueOnce();
+            sendMACFrameSpy.mockResolvedValueOnce(true);
             await driver.sendZigbeeNWKStatus(0x6887, ZigbeeNWKStatus.SOURCE_ROUTE_FAILURE);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x6887, 5149013643361676n);
@@ -2097,14 +2796,14 @@ describe("OT RCP Driver", () => {
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0x96ba, undefined);
 
             //-- APS CMD
-            sendMACFrameSpy.mockResolvedValueOnce();
+            sendMACFrameSpy.mockResolvedValueOnce(true);
             await driver.sendZigbeeAPSSwitchKey(0x91d2, 1);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x91d2, undefined);
             expect(findBestSourceRouteSpy).toHaveLastReturnedWith([undefined, undefined, 1]);
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0x91d2, undefined);
 
-            sendMACFrameSpy.mockResolvedValueOnce();
+            sendMACFrameSpy.mockResolvedValueOnce(true);
             await driver.sendZigbeeAPSSwitchKey(0x9ed5, 1);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x9ed5, undefined);
@@ -2112,14 +2811,14 @@ describe("OT RCP Driver", () => {
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0x91d2, undefined);
 
             //-- APS DATA
-            sendMACFrameSpy.mockResolvedValueOnce();
+            sendMACFrameSpy.mockResolvedValueOnce(true);
             await driver.sendUnicast(Buffer.from([]), 0x1, 0x1, 0x91d2, undefined, 1, 1);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x91d2, undefined);
             expect(findBestSourceRouteSpy).toHaveLastReturnedWith([undefined, undefined, 1]);
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0x91d2, undefined);
 
-            sendMACFrameSpy.mockResolvedValueOnce();
+            sendMACFrameSpy.mockResolvedValueOnce(true);
             await driver.sendUnicast(Buffer.from([]), 0x1, 0x1, 0x6887, undefined, 1, 1);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x6887, undefined);
@@ -2127,7 +2826,7 @@ describe("OT RCP Driver", () => {
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0x96ba, undefined);
 
             //-- no source route (use given nwkDest16)
-            sendMACFrameSpy.mockResolvedValueOnce();
+            sendMACFrameSpy.mockResolvedValueOnce(true);
             await driver.sendZigbeeNWKStatus(0xcb47, ZigbeeNWKStatus.SOURCE_ROUTE_FAILURE);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0xcb47, 5149013569626593n);
@@ -2135,7 +2834,7 @@ describe("OT RCP Driver", () => {
             expect(sendMACFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0xcb47, undefined);
 
             //-- no source route on source route (doesn't matter)
-            sendMACFrameSpy.mockResolvedValueOnce();
+            sendMACFrameSpy.mockResolvedValueOnce(true);
             await driver.sendZigbeeNWKStatus(0x4b8e, ZigbeeNWKStatus.SOURCE_ROUTE_FAILURE);
 
             expect(findBestSourceRouteSpy).toHaveBeenLastCalledWith(0x4b8e, 5149013573816379n);
@@ -2151,14 +2850,39 @@ describe("OT RCP Driver", () => {
 
             expect(driver.sourceRouteTable.get(0x4b8e)!.length).toStrictEqual(1);
 
+            //-- triggers cleanup
             await driver.disassociate(0xcb47, undefined);
 
-            expect(driver.sourceRouteTable.get(0x4b8e)!.length).toStrictEqual(0);
-
-            // triggers cleanup
-            driver.findBestSourceRoute(0x4b8e, undefined);
-
             expect(driver.sourceRouteTable.get(0x4b8e)).toBeUndefined();
+            await vi.advanceTimersByTimeAsync(11000); // past concentrator min time
+            expect(() => driver.findBestSourceRoute(0x4b8e, undefined)).toThrow("No known route to destination");
+            await vi.advanceTimersByTimeAsync(10); // flush
+            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1);
+            expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1);
+
+            //-- too many NO_ACK
+            driver.sourceRouteTable.set(0x6887, [
+                { relayAddresses: [0x1, 0x2, 0x3], pathCost: 4 },
+                { relayAddresses: [0x4, 0x5], pathCost: 3 },
+                { relayAddresses: [0x6, 0x7, 0x8], pathCost: 4 },
+            ]);
+            driver.macNoACKs.set(0x4, 3);
+            driver.macNoACKs.set(0x2, 5);
+            await vi.advanceTimersByTimeAsync(5000); // not past concentrator min time
+            expect(driver.findBestSourceRoute(0x6887, undefined)).toStrictEqual([2, [0x6, 0x7, 0x8], 4]);
+            await vi.advanceTimersByTimeAsync(10); // flush
+            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(2);
+            expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1); // too soon
+            expect(driver.sourceRouteTable.get(0x6887)).toStrictEqual([{ relayAddresses: [0x6, 0x7, 0x8], pathCost: 4 }]);
+
+            //-- too many NO_ACK, no more route
+            driver.macNoACKs.set(0x8, 4);
+            await vi.advanceTimersByTimeAsync(6000); // past concentrator min time
+            expect(() => driver.findBestSourceRoute(0x6887, undefined)).toThrow("No known route to destination");
+            await vi.advanceTimersByTimeAsync(10); // flush
+            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(3);
+            expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(2);
+            expect(driver.sourceRouteTable.get(0x6887)).toBeUndefined();
         });
 
         it("checks if source route exists in entries for a given device", () => {
@@ -2185,10 +2909,144 @@ describe("OT RCP Driver", () => {
             expect(driver.hasSourceRoute(0x12345, { relayAddresses: [4, 5], pathCost: 3 })).toStrictEqual(false);
         });
 
-        it("gets routing table", async () => {
+        it("handles source routing errors", async () => {
             await fillSourceRouteTableFromRequests();
 
-            expect(driver.sourceRouteTable.size).toStrictEqual(5);
+            const findBestSourceRouteSpy = vi.spyOn(driver, "findBestSourceRoute");
+            const sendMACFrameSpy = vi.spyOn(driver, "sendMACFrame");
+
+            await expect(
+                driver.sendZigbeeNWKCommand(ZigbeeNWKCommandId.COMMISSIONING_RESPONSE, Buffer.alloc(2), true, 2314, 654, 5687n, 30),
+            ).resolves.toStrictEqual(false);
+            await expect(
+                driver.sendZigbeeAPSCommand(
+                    ZigbeeAPSCommandId.CONFIRM_KEY,
+                    Buffer.alloc(1),
+                    ZigbeeNWKRouteDiscovery.SUPPRESS,
+                    true,
+                    34256,
+                    8734545n,
+                    ZigbeeAPSDeliveryMode.UNICAST,
+                    undefined,
+                    true,
+                ),
+            ).resolves.toStrictEqual(false);
+            await expect(
+                driver.sendZigbeeAPSACK(
+                    // @ts-expect-error minimal mock
+                    {},
+                    {
+                        seqNum: 11,
+                        source16: 14556,
+                        source64: 568859n,
+                    },
+                    {
+                        sourceEndpoint: 242,
+                        clusterId: 2,
+                    },
+                ),
+            ).resolves.toStrictEqual(undefined);
+            // throws through respondToCoordinatorZDORequest
+            await expect(
+                driver.onZigbeeAPSFrame(
+                    Buffer.alloc(8),
+                    // @ts-expect-error minimal mock
+                    {
+                        source16: 34251,
+                        source64: undefined,
+                    },
+                    {
+                        seqNum: 3,
+                        source16: 34567,
+                        source64: undefined,
+                        destination16: 0x0000, // coordinator (reach code path)
+                        destination64: undefined,
+                    },
+                    {
+                        frameControl: {
+                            frameType: ZigbeeAPSFrameType.DATA,
+                        },
+                        profileId: ZigbeeConsts.ZDO_PROFILE_ID,
+                        clusterId: 0,
+                        sourceEndpoint: 0,
+                        destEndpoint: 0,
+                    },
+                    150,
+                ),
+            ).resolves.toStrictEqual(undefined);
+            expect(findBestSourceRouteSpy).toHaveBeenCalledTimes(4);
+            expect(findBestSourceRouteSpy.mock.results[0].value).toStrictEqual(expect.objectContaining({ message: "Unknown destination" }));
+            expect(findBestSourceRouteSpy.mock.results[1].value).toStrictEqual(expect.objectContaining({ message: "Unknown destination" }));
+            expect(findBestSourceRouteSpy.mock.results[2].value).toStrictEqual(expect.objectContaining({ message: "Unknown destination" }));
+            expect(findBestSourceRouteSpy.mock.results[3].value).toStrictEqual(expect.objectContaining({ message: "Unknown destination" }));
+            expect(sendMACFrameSpy).toHaveBeenCalledTimes(0);
+
+            await expect(
+                driver.sendZigbeeAPSData(
+                    Buffer.alloc(3),
+                    ZigbeeNWKRouteDiscovery.SUPPRESS,
+                    8967,
+                    6793424567n,
+                    ZigbeeAPSDeliveryMode.BCAST,
+                    1,
+                    1,
+                    1,
+                    1,
+                    undefined,
+                ),
+            ).rejects.toThrow("Unknown destination");
+            await expect(driver.sendZDO(Buffer.alloc(1), 867, 856787n, 3)).rejects.toThrow("Unknown destination");
+            await expect(driver.sendUnicast(Buffer.alloc(2), 2, 3, 12145, 34672n, 4, 2)).rejects.toThrow("Unknown destination");
+        });
+
+        it("handles routing failures", async () => {
+            await fillSourceRouteTableFromRequests();
+
+            const sendPeriodicManyToOneRouteRequestSpy = vi.spyOn(driver, "sendPeriodicManyToOneRouteRequest");
+            const sendZigbeeNWKRouteReqSpy = vi.spyOn(driver, "sendZigbeeNWKRouteReq").mockResolvedValueOnce(true);
+
+            const dest16 = 0x91d2;
+
+            expect(driver.findBestSourceRoute(0x9ed5, undefined)).toStrictEqual([0, [0x91d2], 2]);
+
+            driver.processZigbeeNWKStatus(
+                Buffer.from([2, dest16 & 0xff, (dest16 >> 8) & 0xff]),
+                0,
+                // @ts-expect-error minimal mock
+                { source16: 1, source64: 1n },
+                { source16: 1, source64: 1n },
+            );
+
+            expect(driver.routeFailures.get(0x91d2)).toStrictEqual(1);
+
+            driver.processZigbeeNWKStatus(
+                Buffer.from([2, dest16 & 0xff, (dest16 >> 8) & 0xff]),
+                0,
+                // @ts-expect-error minimal mock
+                { source16: 1, source64: 1n },
+                { source16: 1, source64: 1n },
+            );
+
+            expect(driver.routeFailures.get(0x91d2)).toStrictEqual(2);
+
+            driver.processZigbeeNWKStatus(
+                Buffer.from([2, dest16 & 0xff, (dest16 >> 8) & 0xff]),
+                0,
+                // @ts-expect-error minimal mock
+                { source16: 1, source64: 1n },
+                { source16: 1, source64: 1n },
+            );
+
+            expect(driver.routeFailures.get(0x91d2)).toStrictEqual(0);
+            expect(driver.sourceRouteTable.get(0x9ed5)).toBeUndefined();
+            expect(() => driver.findBestSourceRoute(0x9ed5, undefined)).toThrow("No known route to destination");
+            await vi.advanceTimersByTimeAsync(10); // flush
+            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1);
+            expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1);
+        });
+
+        it("gets routing table", async () => {
+            await fillSourceRouteTableFromRequests();
 
             const initialRoutingTable = Buffer.from([
                 0, // seq num
@@ -2277,9 +3135,9 @@ describe("OT RCP Driver", () => {
                 Buffer.from([
                     0, // seq num
                     0, // status
-                    4, // total entries
+                    3, // total entries
                     0, // start index
-                    4, // entries following
+                    3, // entries following
                     0x6887 & 0xff,
                     (0x6887 >> 8) & 0xff,
                     0,
@@ -2295,11 +3153,11 @@ describe("OT RCP Driver", () => {
                     0,
                     0xcb47 & 0xff,
                     (0xcb47 >> 8) & 0xff,
-                    0x2345 & 0xff,
-                    (0x2345 >> 8) & 0xff,
-                    0,
-                    5 & 0xff,
-                    (5 >> 8) & 0xff,
+                    // 0x2345 & 0xff, // device unknown, route cleaned out
+                    // (0x2345 >> 8) & 0xff,
+                    // 0,
+                    // 5 & 0xff,
+                    // (5 >> 8) & 0xff,
                 ]),
             );
 
@@ -2314,9 +3172,9 @@ describe("OT RCP Driver", () => {
                 Buffer.from([
                     0, // seq num
                     0, // status
-                    4, // total entries
+                    3, // total entries
                     0, // start index
-                    4, // entries following
+                    3, // entries following
                     0x6887 & 0xff,
                     (0x6887 >> 8) & 0xff,
                     0,
@@ -2332,11 +3190,6 @@ describe("OT RCP Driver", () => {
                     0,
                     0xcb47 & 0xff,
                     (0xcb47 >> 8) & 0xff,
-                    0x2345 & 0xff,
-                    (0x2345 >> 8) & 0xff,
-                    0,
-                    5 & 0xff,
-                    (5 >> 8) & 0xff,
                 ]),
             );
 
@@ -2391,7 +3244,7 @@ describe("OT RCP Driver", () => {
             expect(routingTable.readUInt16LE(routingTable.byteLength - 2)).not.toStrictEqual(lastRelay16);
         });
 
-        it("ignores direct routes when getting routing table ZDO", () => {
+        it("ignores direct routes when getting routing table", () => {
             driver.sourceRouteTable.set(0x4b8e, [
                 { relayAddresses: [1, 2], pathCost: 3 },
                 { relayAddresses: [11, 22], pathCost: 3 },
@@ -2635,7 +3488,7 @@ describe("OT RCP Driver", () => {
 
             const emitSpy = vi.spyOn(driver, "emit");
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
-            const onZigbeeAPSACKRequestSpy = vi.spyOn(driver, "onZigbeeAPSACKRequest");
+            const sendZigbeeAPSACKSpy = vi.spyOn(driver, "sendZigbeeAPSACK");
             const onZigbeeAPSFrameSpy = vi.spyOn(driver, "onZigbeeAPSFrame");
             const processZigbeeNWKGPFrameSpy = vi.spyOn(driver, "processZigbeeNWKGPFrame");
 
@@ -2688,7 +3541,7 @@ describe("OT RCP Driver", () => {
             };
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
-            expect(onZigbeeAPSACKRequestSpy).toHaveBeenCalledTimes(0);
+            expect(sendZigbeeAPSACKSpy).toHaveBeenCalledTimes(0);
             expect(onZigbeeAPSFrameSpy).toHaveBeenCalledTimes(0);
             expect(processZigbeeNWKGPFrameSpy).toHaveBeenCalledTimes(1);
             expect(emitSpy).toHaveBeenCalledWith("gpFrame", 0xe3, Buffer.from([0x85]), expectedMACHeader, expectedNWKGPHeader, 0);
@@ -2762,7 +3615,7 @@ describe("OT RCP Driver", () => {
             },
             {
                 eui64: 5562607920115904346n,
-                panId: 34265,
+                panId: 6342,
                 extendedPANId: Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0),
                 channel: 20,
                 nwkUpdateId: 0,
@@ -2784,7 +3637,7 @@ describe("OT RCP Driver", () => {
 
         driver.parser._transform(
             Buffer.from(
-                "7e8006712f006188aad98500001023091200001023015c7f3123feff818e582800a00b087f3123feff818e58001a471d5043f06060ea8000000a0014ffc9aa9d4900000000010000050000000000006c3d7e",
+                "7e800671300061883bc61800001e6b4802000038d11d8528c6847d310099779fbe4c38c1a4006ceeabe886fb158a3e69c907468825fa7fc78000000a0014ffd300659100000000010000050000000000000e737e",
                 "hex",
             ),
             "utf8",

@@ -219,7 +219,7 @@ export function getPackedUInt(data: Buffer, offset: number): [value: number, out
 
     do {
         if (i >= 40) {
-            throw new Error(`Invalid Packet UInt, got ${i}, expected < 40`);
+            throw new Error(`Invalid Packed UInt, got ${i}, expected < 40`);
         }
 
         value |= (data[offset] & SPINEL_PACKED_UINT_MSO_MASK) << i;
