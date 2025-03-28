@@ -172,7 +172,6 @@ describe("Zigbee", () => {
             seqNum: 151,
             destination64: undefined,
             source64: undefined,
-            multicastControl: undefined,
             relayIndex: undefined,
             relayAddresses: undefined,
             securityHeader: {
@@ -296,7 +295,6 @@ describe("Zigbee", () => {
             seqNum: 203,
             destination64: undefined,
             source64: undefined,
-            multicastControl: undefined,
             relayIndex: undefined,
             relayAddresses: undefined,
             securityHeader: {
@@ -419,7 +417,6 @@ describe("Zigbee", () => {
             seqNum: 223,
             destination64: undefined,
             source64: 5149013569654176n,
-            multicastControl: undefined,
             relayIndex: undefined,
             relayAddresses: undefined,
             securityHeader: {
@@ -518,7 +515,6 @@ describe("Zigbee", () => {
             seqNum: 128,
             destination64: undefined,
             source64: undefined,
-            multicastControl: undefined,
             relayIndex: undefined,
             relayAddresses: undefined,
             securityHeader: {
@@ -642,7 +638,6 @@ describe("Zigbee", () => {
             seqNum: 130,
             destination64: undefined,
             source64: undefined,
-            multicastControl: undefined,
             relayIndex: undefined,
             relayAddresses: undefined,
             securityHeader: {
@@ -766,7 +761,6 @@ describe("Zigbee", () => {
             seqNum: 207,
             destination64: undefined,
             source64: 5149013578478658n,
-            multicastControl: undefined,
             relayIndex: undefined,
             relayAddresses: undefined,
             securityHeader: {
@@ -859,7 +853,6 @@ describe("Zigbee", () => {
             seqNum: 237,
             destination64: undefined,
             source64: 16175115667303284240n,
-            multicastControl: undefined,
             relayIndex: undefined,
             relayAddresses: undefined,
             securityHeader: {
@@ -1113,7 +1106,6 @@ describe("Zigbee", () => {
             seqNum: 195,
             destination64: undefined,
             source64: BigInt("0xa4c1386d9b280fdf"),
-            multicastControl: undefined,
             relayIndex: undefined,
             relayAddresses: undefined,
             securityHeader: {
@@ -1405,7 +1397,6 @@ describe("Zigbee", () => {
             seqNum: 161,
             destination64: undefined,
             source64: undefined,
-            multicastControl: undefined,
             relayIndex: undefined,
             relayAddresses: undefined,
             securityHeader: undefined,
@@ -1533,7 +1524,6 @@ describe("Zigbee", () => {
             seqNum: 39,
             destination64: undefined,
             source64: undefined,
-            multicastControl: undefined,
             relayIndex: undefined,
             relayAddresses: undefined,
             securityHeader: {

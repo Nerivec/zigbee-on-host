@@ -25,6 +25,8 @@
             "style": {
                 "noNonNullAssertion": "off",
                 "noParameterAssign": "off",
+                "useThrowNewError": "error",
+                "useThrowOnlyError": "error",
                 "useNamingConvention": {
                     "level": "error",
                     "options": {

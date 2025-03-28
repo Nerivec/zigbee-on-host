@@ -250,8 +250,8 @@ export type ZigbeeNWKFrameControl = {
     frameType: ZigbeeNWKFrameType;
     protocolVersion: number;
     discoverRoute: ZigbeeNWKRouteDiscovery;
-    /** ZigBee 2006 and Later */
-    multicast: boolean;
+    /** ZigBee 2006 and Later @deprecated */
+    multicast?: boolean;
     security: boolean;
     /** ZigBee 2006 and Later */
     sourceRoute: boolean;
@@ -263,16 +263,6 @@ export type ZigbeeNWKFrameControl = {
     endDeviceInitiator: boolean;
 };
 
-/**
- * Multicast Control
- * ZigBee 2006 and later
- */
-export type ZigbeeNWKMulticastControl = {
-    mode: ZigbeeNWKMulticastMode;
-    radius: number;
-    maxRadius: number;
-};
-
 export type ZigbeeNWKHeader = {
     frameControl: ZigbeeNWKFrameControl;
     destination16?: number;
@@ -281,7 +271,6 @@ export type ZigbeeNWKHeader = {
     seqNum?: number;
     destination64?: bigint;
     source64?: bigint;
-    multicastControl?: ZigbeeNWKMulticastControl;
     relayIndex?: number;
     relayAddresses?: number[];
     securityHeader?: ZigbeeSecurityHeader;
@@ -332,32 +321,6 @@ function encodeZigbeeNWKFrameControl(view: Buffer, offset: number, fcf: ZigbeeNW
     return offset;
 }
 
-function decodeZigbeeNWKMulticastControl(data: Buffer, offset: number): [ZigbeeNWKMulticastControl, offset: number] {
-    const ctrl = data.readUInt8(offset);
-    offset += 1;
-
-    return [
-        {
-            mode: ctrl & ZigbeeNWKConsts.MCAST_MODE,
-            radius: (ctrl & ZigbeeNWKConsts.MCAST_RADIUS) >> 2,
-            maxRadius: (ctrl & ZigbeeNWKConsts.MCAST_MAX_RADIUS) >> 5,
-        },
-        offset,
-    ];
-}
-
-function encodeZigbeeNWKMulticastControl(data: Buffer, offset: number, multicastControl: ZigbeeNWKMulticastControl): number {
-    data.writeUInt8(
-        (multicastControl.mode & ZigbeeNWKConsts.MCAST_MODE) |
-            ((multicastControl.radius << 2) & ZigbeeNWKConsts.MCAST_RADIUS) |
-            ((multicastControl.maxRadius << 5) & ZigbeeNWKConsts.MCAST_MAX_RADIUS),
-        offset,
-    );
-    offset += 1;
-
-    return offset;
-}
-
 export function decodeZigbeeNWKHeader(data: Buffer, offset: number, frameControl: ZigbeeNWKFrameControl): [ZigbeeNWKHeader, offset: number] {
     let destination16: number | undefined;
     let source16: number | undefined;
@@ -365,7 +328,6 @@ export function decodeZigbeeNWKHeader(data: Buffer, offset: number, frameControl
     let seqNum: number | undefined;
     let destination64: bigint | undefined;
     let source64: bigint | undefined;
-    let multicastControl: ZigbeeNWKMulticastControl | undefined;
     let relayIndex: number | undefined;
     let relayAddresses: number[] | undefined;
 
@@ -390,7 +352,7 @@ export function decodeZigbeeNWKHeader(data: Buffer, offset: number, frameControl
         }
 
         if (frameControl.multicast) {
-            [multicastControl, offset] = decodeZigbeeNWKMulticastControl(data, offset);
+            offset += 1;
         }
 
         if (frameControl.sourceRoute) {
@@ -420,7 +382,6 @@ export function decodeZigbeeNWKHeader(data: Buffer, offset: number, frameControl
             seqNum,
             destination64,
             source64,
-            multicastControl,
             relayIndex,
             relayAddresses,
             securityHeader: undefined, // set later, or not
@@ -450,10 +411,6 @@ function encodeZigbeeNWKHeader(data: Buffer, offset: number, header: ZigbeeNWKHe
         if (header.frameControl.extendedSource) {
             data.writeBigUInt64LE(header.source64!, offset);
             offset += 8;
-        }
-
-        if (header.frameControl.multicast) {
-            offset = encodeZigbeeNWKMulticastControl(data, offset, header.multicastControl!);
         }
 
         if (header.frameControl.sourceRoute) {
