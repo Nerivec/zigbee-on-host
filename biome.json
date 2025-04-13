@@ -6,7 +6,8 @@
         "useIgnoreFile": true
     },
     "files": {
-        "ignoreUnknown": false
+        "ignoreUnknown": false,
+        "ignore": ["package.json", "package-lock.json"]
     },
     "formatter": {
         "enabled": true,
