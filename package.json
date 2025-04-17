@@ -1,11 +1,13 @@
 {
     "name": "zigbee-on-host",
-    "version": "0.1.10",
+    "version": "0.1.11",
     "description": "ZigBee stack designed to run on a host and communicate with a radio co-processor (RCP)",
     "engines": {
         "node": ">=20.17.0"
     },
-    "files": ["./dist"],
+    "files": [
+        "./dist"
+    ],
     "types": "./dist/drivers/ot-rcp-driver.d.ts",
     "main": "./dist/drivers/ot-rcp-driver.js",
     "scripts": {
@@ -26,7 +28,12 @@
         "type": "git",
         "url": "git+https://github.com/Nerivec/zigbee-on-host.git"
     },
-    "keywords": ["zigbee", "host", "stack", "rcp"],
+    "keywords": [
+        "zigbee",
+        "host",
+        "stack",
+        "rcp"
+    ],
     "author": "Nerivec",
     "license": "GPL-3.0-or-later",
     "bugs": {
@@ -35,7 +42,7 @@
     "homepage": "https://github.com/Nerivec/zigbee-on-host#readme",
     "devDependencies": {
         "@biomejs/biome": "1.9.4",
-        "@types/node": "^22.14.0",
+        "@types/node": "^22.14.1",
         "@vitest/coverage-v8": "^3.1.1",
         "serialport": "^13.0.0",
         "typescript": "^5.8.3",
