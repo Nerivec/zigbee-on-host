@@ -2633,6 +2633,16 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const linkCount = options & ZigbeeNWKConsts.CMD_LINK_OPTION_COUNT_MASK;
         const links: ZigbeeNWKLinkStatus[] = [];
 
+        let device = nwkHeader.source64 !== undefined ? this.deviceTable.get(nwkHeader.source64) : undefined;
+
+        if (!device && nwkHeader.source16 !== undefined) {
+            const source64 = this.address16ToAddress64.get(nwkHeader.source16);
+
+            if (source64 !== undefined) {
+                device = this.deviceTable.get(source64);
+            }
+        }
+
         for (let i = 0; i < linkCount; i++) {
             const address = data.readUInt16LE(offset);
             offset += 2;
@@ -2644,6 +2654,25 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 incomingCost: costByte & ZigbeeNWKConsts.CMD_LINK_INCOMING_COST_MASK,
                 outgoingCost: (costByte & ZigbeeNWKConsts.CMD_LINK_OUTGOING_COST_MASK) >> 4,
             });
+
+            if (device) {
+                if (address === ZigbeeConsts.COORDINATOR_ADDRESS) {
+                    // if neighbor is coordinator, update device table
+                    device.neighbor = true;
+                }
+
+                const entry: SourceRouteTableEntry =
+                    address === ZigbeeConsts.COORDINATOR_ADDRESS
+                        ? { relayAddresses: [], pathCost: 1 /* TODO ? */ }
+                        : { relayAddresses: [address], pathCost: 2 /* TODO ? */ };
+                const entries = this.sourceRouteTable.get(device.address16);
+
+                if (entries === undefined) {
+                    this.sourceRouteTable.set(device.address16, [entry]);
+                } else if (!this.hasSourceRoute(device.address16, entry, entries)) {
+                    entries.push(entry);
+                }
+            }
         }
 
         logger.debug(() => {
@@ -4979,6 +5008,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 this.emit("deviceLeft", source16, source64);
             });
 
+            // force new MTORR
+            await this.sendPeriodicManyToOneRouteRequest();
             // force saving after device change
             await this.savePeriodicState();
         }
@@ -5066,9 +5097,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
             if (!this.deviceTable.get(destination64 ?? this.address16ToAddress64.get(destination16)!)!.neighbor) {
                 // force immediate MTORR
+                logger.warning("No known route to destination, forcing discovery", NS);
                 setImmediate(this.sendPeriodicManyToOneRouteRequest.bind(this));
-
-                throw new Error("No known route to destination", { cause: SpinelStatus.UNKNOWN_NEIGHBOR });
+                // will send direct as "last resort"
             }
 
             return [undefined, undefined, undefined];
@@ -5105,9 +5136,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
                             if (!this.deviceTable.get(destination64 ?? this.address16ToAddress64.get(destination16)!)!.neighbor) {
                                 // force immediate MTORR
+                                logger.warning("No known route to destination, forcing discovery", NS);
                                 setImmediate(this.sendPeriodicManyToOneRouteRequest.bind(this));
-
-                                throw new Error("No known route to destination", { cause: SpinelStatus.UNKNOWN_NEIGHBOR });
+                                // will send direct as "last resort"
                             }
 
                             // no more source route, bail
