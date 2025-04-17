@@ -2883,6 +2883,19 @@ describe("OT RCP Driver", () => {
             expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(3);
             expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(2);
             expect(driver.sourceRouteTable.get(0x6887)).toBeUndefined();
+
+            //--- received LINK_STATUS indicating direct link to coordinator available
+            expect(driver.deviceTable.get(driver.address16ToAddress64.get(0x6887)!)!.neighbor).toStrictEqual(false);
+            driver.processZigbeeNWKLinkStatus(
+                Buffer.from([97, 0x00, 0x00, 17]),
+                0,
+                // @ts-expect-error minimal mock
+                { source16: 0x6887, source64: 5149013643361676n },
+                { source16: 0x6887, source64: 5149013643361676n },
+            );
+            await vi.advanceTimersByTimeAsync(10); // flush
+            expect(driver.sourceRouteTable.get(0x6887)).toStrictEqual([{ relayAddresses: [], pathCost: 1 }]);
+            expect(driver.deviceTable.get(driver.address16ToAddress64.get(0x6887)!)!.neighbor).toStrictEqual(true);
         });
 
         it("checks if source route exists in entries for a given device", () => {
@@ -3013,8 +3026,8 @@ describe("OT RCP Driver", () => {
                 Buffer.from([2, dest16 & 0xff, (dest16 >> 8) & 0xff]),
                 0,
                 // @ts-expect-error minimal mock
-                { source16: 1, source64: 1n },
-                { source16: 1, source64: 1n },
+                { source16: 0x9ed5, source64: 5149013578478658n },
+                { source16: 0x9ed5, source64: 5149013578478658n },
             );
 
             expect(driver.routeFailures.get(0x91d2)).toStrictEqual(1);
@@ -3023,8 +3036,8 @@ describe("OT RCP Driver", () => {
                 Buffer.from([2, dest16 & 0xff, (dest16 >> 8) & 0xff]),
                 0,
                 // @ts-expect-error minimal mock
-                { source16: 1, source64: 1n },
-                { source16: 1, source64: 1n },
+                { source16: 0x9ed5, source64: 5149013578478658n },
+                { source16: 0x9ed5, source64: 5149013578478658n },
             );
 
             expect(driver.routeFailures.get(0x91d2)).toStrictEqual(2);
@@ -3033,8 +3046,8 @@ describe("OT RCP Driver", () => {
                 Buffer.from([2, dest16 & 0xff, (dest16 >> 8) & 0xff]),
                 0,
                 // @ts-expect-error minimal mock
-                { source16: 1, source64: 1n },
-                { source16: 1, source64: 1n },
+                { source16: 0x9ed5, source64: 5149013578478658n },
+                { source16: 0x9ed5, source64: 5149013578478658n },
             );
 
             expect(driver.routeFailures.get(0x91d2)).toStrictEqual(0);

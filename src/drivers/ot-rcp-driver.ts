@@ -2633,6 +2633,16 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         const linkCount = options & ZigbeeNWKConsts.CMD_LINK_OPTION_COUNT_MASK;
         const links: ZigbeeNWKLinkStatus[] = [];
 
+        let device = nwkHeader.source64 !== undefined ? this.deviceTable.get(nwkHeader.source64) : undefined;
+
+        if (!device && nwkHeader.source16 !== undefined) {
+            const source64 = this.address16ToAddress64.get(nwkHeader.source16);
+
+            if (source64 !== undefined) {
+                device = this.deviceTable.get(source64);
+            }
+        }
+
         for (let i = 0; i < linkCount; i++) {
             const address = data.readUInt16LE(offset);
             offset += 2;
@@ -2644,6 +2654,25 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 incomingCost: costByte & ZigbeeNWKConsts.CMD_LINK_INCOMING_COST_MASK,
                 outgoingCost: (costByte & ZigbeeNWKConsts.CMD_LINK_OUTGOING_COST_MASK) >> 4,
             });
+
+            if (device) {
+                if (address === ZigbeeConsts.COORDINATOR_ADDRESS) {
+                    // if neighbor is coordinator, update device table
+                    device.neighbor = true;
+                }
+
+                const entry: SourceRouteTableEntry =
+                    address === ZigbeeConsts.COORDINATOR_ADDRESS
+                        ? { relayAddresses: [], pathCost: 1 /* TODO ? */ }
+                        : { relayAddresses: [address], pathCost: 2 /* TODO ? */ };
+                const entries = this.sourceRouteTable.get(device.address16);
+
+                if (entries === undefined) {
+                    this.sourceRouteTable.set(device.address16, [entry]);
+                } else if (!this.hasSourceRoute(device.address16, entry, entries)) {
+                    entries.push(entry);
+                }
+            }
         }
 
         logger.debug(() => {
