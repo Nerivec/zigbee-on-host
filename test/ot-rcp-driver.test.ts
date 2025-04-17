@@ -1117,6 +1117,8 @@ describe("OT RCP Driver", () => {
         });
 
         it("disassociates", async () => {
+            // no-op, not relevant for this test
+            vi.spyOn(driver, "sendPeriodicManyToOneRouteRequest").mockImplementation(async () => {});
             driver.allowJoins(0xfe, true);
 
             // neighbor FFD
@@ -1687,6 +1689,8 @@ describe("OT RCP Driver", () => {
         });
 
         it("performs a join & authorize - ROUTER", async () => {
+            // no-op, not relevant for this test
+            vi.spyOn(driver, "sendPeriodicManyToOneRouteRequest").mockImplementation(async () => {});
             // Expected flow (APS acks requested from device are skipped for brevity):
             // - NET2_BEACON_REQ_FROM_DEVICE
             // - NET2_BEACON_RESP_FROM_COORD
@@ -2855,9 +2859,9 @@ describe("OT RCP Driver", () => {
 
             expect(driver.sourceRouteTable.get(0x4b8e)).toBeUndefined();
             await vi.advanceTimersByTimeAsync(11000); // past concentrator min time
-            expect(() => driver.findBestSourceRoute(0x4b8e, undefined)).toThrow("No known route to destination");
+            expect(driver.findBestSourceRoute(0x4b8e, undefined)).toStrictEqual([undefined, undefined, undefined]);
             await vi.advanceTimersByTimeAsync(10); // flush
-            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1);
+            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1 + 1 /* disassociate */);
             expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1);
 
             //-- too many NO_ACK
@@ -2871,16 +2875,16 @@ describe("OT RCP Driver", () => {
             await vi.advanceTimersByTimeAsync(5000); // not past concentrator min time
             expect(driver.findBestSourceRoute(0x6887, undefined)).toStrictEqual([2, [0x6, 0x7, 0x8], 4]);
             await vi.advanceTimersByTimeAsync(10); // flush
-            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(2);
+            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(2 + 1 /* disassociate */);
             expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1); // too soon
             expect(driver.sourceRouteTable.get(0x6887)).toStrictEqual([{ relayAddresses: [0x6, 0x7, 0x8], pathCost: 4 }]);
 
             //-- too many NO_ACK, no more route
             driver.macNoACKs.set(0x8, 4);
             await vi.advanceTimersByTimeAsync(6000); // past concentrator min time
-            expect(() => driver.findBestSourceRoute(0x6887, undefined)).toThrow("No known route to destination");
+            expect(driver.findBestSourceRoute(0x6887, undefined)).toStrictEqual([undefined, undefined, undefined]);
             await vi.advanceTimersByTimeAsync(10); // flush
-            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(3);
+            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(3 + 1 /* disassociate */);
             expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(2);
             expect(driver.sourceRouteTable.get(0x6887)).toBeUndefined();
 
@@ -3052,7 +3056,7 @@ describe("OT RCP Driver", () => {
 
             expect(driver.routeFailures.get(0x91d2)).toStrictEqual(0);
             expect(driver.sourceRouteTable.get(0x9ed5)).toBeUndefined();
-            expect(() => driver.findBestSourceRoute(0x9ed5, undefined)).toThrow("No known route to destination");
+            expect(driver.findBestSourceRoute(0x9ed5, undefined)).toStrictEqual([undefined, undefined, undefined]);
             await vi.advanceTimersByTimeAsync(10); // flush
             expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1);
             expect(sendZigbeeNWKRouteReqSpy).toHaveBeenCalledTimes(1);
@@ -3175,6 +3179,7 @@ describe("OT RCP Driver", () => {
             );
 
             //-- mock LEAVE
+            vi.spyOn(driver, "sendPeriodicManyToOneRouteRequest").mockImplementationOnce(async () => {}); // no-op for disassociate
             await driver.disassociate(0x91d2, 8118874123826907736n);
 
             expect(driver.sourceRouteTable.size).toStrictEqual(5);
@@ -3440,6 +3445,7 @@ describe("OT RCP Driver", () => {
 
             expect(lqiTable).toStrictEqual(expectedLQITable.subarray(0, 5 + 3 * 22));
 
+            vi.spyOn(driver, "sendPeriodicManyToOneRouteRequest").mockImplementationOnce(async () => {}); // no-op for disassociate
             await driver.disassociate(0xcb47, 5149013569626593n);
             expect(driver.deviceTable.size).toStrictEqual(5);
 

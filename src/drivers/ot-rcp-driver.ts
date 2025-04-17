@@ -5008,6 +5008,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 this.emit("deviceLeft", source16, source64);
             });
 
+            // force new MTORR
+            await this.sendPeriodicManyToOneRouteRequest();
             // force saving after device change
             await this.savePeriodicState();
         }
@@ -5095,9 +5097,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
             if (!this.deviceTable.get(destination64 ?? this.address16ToAddress64.get(destination16)!)!.neighbor) {
                 // force immediate MTORR
+                logger.warning("No known route to destination, forcing discovery", NS);
                 setImmediate(this.sendPeriodicManyToOneRouteRequest.bind(this));
-
-                throw new Error("No known route to destination", { cause: SpinelStatus.UNKNOWN_NEIGHBOR });
+                // will send direct as "last resort"
             }
 
             return [undefined, undefined, undefined];
@@ -5134,9 +5136,9 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
                             if (!this.deviceTable.get(destination64 ?? this.address16ToAddress64.get(destination16)!)!.neighbor) {
                                 // force immediate MTORR
+                                logger.warning("No known route to destination, forcing discovery", NS);
                                 setImmediate(this.sendPeriodicManyToOneRouteRequest.bind(this));
-
-                                throw new Error("No known route to destination", { cause: SpinelStatus.UNKNOWN_NEIGHBOR });
+                                // will send direct as "last resort"
                             }
 
                             // no more source route, bail
