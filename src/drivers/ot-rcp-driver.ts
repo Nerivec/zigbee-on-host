@@ -1711,11 +1711,12 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         if (macHeader.source64 === undefined) {
             logger.debug(() => `<=x= MAC ASSOC_REQ[macSrc=${macHeader.source16}:${macHeader.source64} cap=${capabilities}] Invalid source64`, NS);
         } else {
+            const address16 = this.deviceTable.get(macHeader.source64)?.address16;
             const decodedCap = decodeMACCapabilities(capabilities);
             const [status, newAddress16] = await this.associate(
-                undefined,
+                address16,
                 macHeader.source64,
-                true /* initial join */,
+                address16 === undefined /* initial join if unknown device, else rejoin */,
                 decodedCap,
                 true /* neighbor */,
             );
@@ -4210,7 +4211,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 if (this.#trustCenterPolicies.allowAppKeyRequest === ApplicationKeyRequestPolicy.ALLOWED) {
                     await this.sendZigbeeAPSTransportKeyAPP(
                         nwkHeader.source16!,
-                        this.getOrGenerateAPPLinkKey(nwkHeader.source16!, partner),
+                        this.getOrGenerateAppLinkKey(nwkHeader.source16!, partner),
                         partner,
                         true,
                     );
@@ -4617,7 +4618,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     // NWK Sync request, indication and confirm plus NWK reset request and confirm plus NWK route discovery request and confirm SHALL be optional
     // reception of the NWK Network Status indication SHALL be supported, but no action is required
 
-    public getOrGenerateAPPLinkKey(_device16: number, _partner64: bigint): Buffer {
+    public getOrGenerateAppLinkKey(_device16: number, _partner64: bigint): Buffer {
         // TODO: whole mechanism
         return this.netParams.tcKey;
     }
