@@ -42,7 +42,7 @@
     "homepage": "https://github.com/Nerivec/zigbee-on-host#readme",
     "devDependencies": {
         "@biomejs/biome": "1.9.4",
-        "@types/node": "^22.15.24",
+        "@types/node": "^24.0.3",
         "@vitest/coverage-v8": "^3.1.4",
         "serialport": "^13.0.0",
         "typescript": "^5.8.3",
