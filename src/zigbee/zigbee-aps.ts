@@ -1,4 +1,4 @@
-import { type ZigbeeSecurityHeader, decryptZigbeePayload, encryptZigbeePayload } from "./zigbee.js";
+import { decryptZigbeePayload, encryptZigbeePayload, type ZigbeeSecurityHeader } from "./zigbee.js";
 
 /**
  * const enum with sole purpose of avoiding "magic numbers" in code for well-known values
@@ -229,7 +229,7 @@ export function decodeZigbeeAPSHeader(data: Buffer, offset: number, frameControl
         offset += 1;
     }
 
-    let fragmentation = undefined;
+    let fragmentation: ZigbeeAPSFragmentation | undefined;
     let fragBlockNumber: number | undefined;
     let fragACKBitfield: number | undefined;
 

@@ -1,5 +1,4 @@
 import { Transform, type TransformCallback, type TransformOptions } from "node:stream";
-
 import { HdlcReservedByte } from "../spinel/hdlc.js";
 import { logger } from "../utils/logger.js";
 

@@ -1,4 +1,4 @@
-import { type ZigbeeSecurityHeader, decryptZigbeePayload, encryptZigbeePayload } from "./zigbee.js";
+import { decryptZigbeePayload, encryptZigbeePayload, type ZigbeeSecurityHeader } from "./zigbee.js";
 
 /**
  * const enum with sole purpose of avoiding "magic numbers" in code for well-known values

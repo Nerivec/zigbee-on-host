@@ -1,45 +1,36 @@
 import EventEmitter from "node:events";
-
 import { existsSync, mkdirSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SpinelCommandId } from "../spinel/commands.js";
-import { HDLC_TX_CHUNK_SIZE, type HdlcFrame, HdlcReservedByte, decodeHdlcFrame } from "../spinel/hdlc.js";
+import { decodeHdlcFrame, HDLC_TX_CHUNK_SIZE, type HdlcFrame, HdlcReservedByte } from "../spinel/hdlc.js";
 import { SpinelPropertyId } from "../spinel/properties.js";
 import {
+    decodeSpinelFrame,
+    encodeSpinelFrame,
+    getPackedUInt,
+    readPropertyc,
+    readPropertyi,
+    readPropertyii,
+    readPropertyU,
+    readStreamRaw,
     SPINEL_HEADER_FLG_SPINEL,
     type SpinelFrame,
     SpinelResetReason,
     type SpinelStreamRawMetadata,
     type StreamRawConfig,
-    decodeSpinelFrame,
-    encodeSpinelFrame,
-    getPackedUInt,
-    readPropertyU,
-    readPropertyc,
-    readPropertyi,
-    readPropertyii,
-    readStreamRaw,
     writePropertyAC,
+    writePropertyb,
     writePropertyC,
+    writePropertyc,
     writePropertyE,
     writePropertyId,
     writePropertyS,
     writePropertyStreamRaw,
-    writePropertyb,
-    writePropertyc,
 } from "../spinel/spinel.js";
 import { SpinelStatus } from "../spinel/statuses.js";
 import { logger } from "../utils/logger.js";
 import {
-    MACAssociationStatus,
-    type MACCapabilities,
-    MACCommandId,
-    MACFrameAddressMode,
-    MACFrameType,
-    MACFrameVersion,
-    type MACHeader,
-    ZigbeeMACConsts,
     decodeMACCapabilities,
     decodeMACFrameControl,
     decodeMACHeader,
@@ -48,20 +39,42 @@ import {
     encodeMACFrame,
     encodeMACFrameZigbee,
     encodeMACZigbeeBeacon,
+    MACAssociationStatus,
+    type MACCapabilities,
+    MACCommandId,
+    MACFrameAddressMode,
+    MACFrameType,
+    MACFrameVersion,
+    type MACHeader,
+    ZigbeeMACConsts,
 } from "../zigbee/mac.js";
 import {
+    convertMaskToChannels,
+    makeKeyedHash,
+    makeKeyedHashByType,
+    registerDefaultHashedKeys,
+    ZigbeeConsts,
+    ZigbeeKeyType,
+    type ZigbeeSecurityHeader,
+    ZigbeeSecurityLevel,
+} from "../zigbee/zigbee.js";
+import {
+    decodeZigbeeAPSFrameControl,
+    decodeZigbeeAPSHeader,
+    decodeZigbeeAPSPayload,
+    encodeZigbeeAPSFrame,
     ZigbeeAPSCommandId,
     ZigbeeAPSConsts,
     ZigbeeAPSDeliveryMode,
     ZigbeeAPSFrameType,
     type ZigbeeAPSHeader,
     type ZigbeeAPSPayload,
-    decodeZigbeeAPSFrameControl,
-    decodeZigbeeAPSHeader,
-    decodeZigbeeAPSPayload,
-    encodeZigbeeAPSFrame,
 } from "../zigbee/zigbee-aps.js";
 import {
+    decodeZigbeeNWKFrameControl,
+    decodeZigbeeNWKHeader,
+    decodeZigbeeNWKPayload,
+    encodeZigbeeNWKFrame,
     ZigbeeNWKCommandId,
     ZigbeeNWKConsts,
     ZigbeeNWKFrameType,
@@ -70,29 +83,15 @@ import {
     ZigbeeNWKManyToOne,
     ZigbeeNWKRouteDiscovery,
     ZigbeeNWKStatus,
-    decodeZigbeeNWKFrameControl,
-    decodeZigbeeNWKHeader,
-    decodeZigbeeNWKPayload,
-    encodeZigbeeNWKFrame,
 } from "../zigbee/zigbee-nwk.js";
 import {
-    ZigbeeNWKGPCommandId,
-    ZigbeeNWKGPFrameType,
-    type ZigbeeNWKGPHeader,
     decodeZigbeeNWKGPFrameControl,
     decodeZigbeeNWKGPHeader,
     decodeZigbeeNWKGPPayload,
+    ZigbeeNWKGPCommandId,
+    ZigbeeNWKGPFrameType,
+    type ZigbeeNWKGPHeader,
 } from "../zigbee/zigbee-nwkgp.js";
-import {
-    ZigbeeConsts,
-    ZigbeeKeyType,
-    type ZigbeeSecurityHeader,
-    ZigbeeSecurityLevel,
-    convertMaskToChannels,
-    makeKeyedHash,
-    makeKeyedHashByType,
-    registerDefaultHashedKeys,
-} from "../zigbee/zigbee.js";
 import { encodeCoordinatorDescriptors } from "./descriptors.js";
 import { OTRCPParser } from "./ot-rcp-parser.js";
 import { OTRCPWriter } from "./ot-rcp-writer.js";

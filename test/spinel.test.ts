@@ -3,13 +3,13 @@ import { SpinelCommandId } from "../src/spinel/commands.js";
 import * as Hdlc from "../src/spinel/hdlc.js";
 import { SpinelPropertyId } from "../src/spinel/properties.js";
 import {
-    type SpinelFrame,
     decodeSpinelFrame,
     encodeSpinelFrame,
     getPackedUInt,
     readPropertyE,
     readPropertyS,
     readStreamRaw,
+    type SpinelFrame,
     setPackedUInt,
     writePropertyAC,
     writePropertyE,

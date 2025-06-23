@@ -1,16 +1,19 @@
 import { randomBytes } from "node:crypto";
-import { type Socket, createSocket } from "node:dgram";
+import { createSocket, type Socket } from "node:dgram";
 import { existsSync, rmSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_WIRESHARK_IP, DEFAULT_ZEP_UDP_PORT, createWiresharkZEPFrame } from "../src/dev/wireshark";
+import { createWiresharkZEPFrame, DEFAULT_WIRESHARK_IP, DEFAULT_ZEP_UDP_PORT } from "../src/dev/wireshark";
 import { OTRCPDriver, type SourceRouteTableEntry } from "../src/drivers/ot-rcp-driver";
 import { SpinelCommandId } from "../src/spinel/commands";
 import { SpinelPropertyId } from "../src/spinel/properties";
-import { SPINEL_HEADER_FLG_SPINEL, encodeSpinelFrame } from "../src/spinel/spinel";
+import { encodeSpinelFrame, SPINEL_HEADER_FLG_SPINEL } from "../src/spinel/spinel";
 import { SpinelStatus } from "../src/spinel/statuses";
 import {
+    decodeMACFrameControl,
+    decodeMACHeader,
+    decodeMACPayload,
     MACAssociationStatus,
     type MACCapabilities,
     MACFrameAddressMode,
@@ -18,20 +21,20 @@ import {
     MACFrameVersion,
     type MACHeader,
     ZigbeeMACConsts,
-    decodeMACFrameControl,
-    decodeMACHeader,
-    decodeMACPayload,
 } from "../src/zigbee/mac";
 import { ZigbeeConsts } from "../src/zigbee/zigbee";
 import {
-    ZigbeeAPSCommandId,
-    ZigbeeAPSDeliveryMode,
-    ZigbeeAPSFrameType,
     decodeZigbeeAPSFrameControl,
     decodeZigbeeAPSHeader,
     decodeZigbeeAPSPayload,
+    ZigbeeAPSCommandId,
+    ZigbeeAPSDeliveryMode,
+    ZigbeeAPSFrameType,
 } from "../src/zigbee/zigbee-aps";
 import {
+    decodeZigbeeNWKFrameControl,
+    decodeZigbeeNWKHeader,
+    decodeZigbeeNWKPayload,
     ZigbeeNWKCommandId,
     ZigbeeNWKConsts,
     ZigbeeNWKFrameType,
@@ -39,9 +42,6 @@ import {
     ZigbeeNWKManyToOne,
     ZigbeeNWKRouteDiscovery,
     ZigbeeNWKStatus,
-    decodeZigbeeNWKFrameControl,
-    decodeZigbeeNWKHeader,
-    decodeZigbeeNWKPayload,
 } from "../src/zigbee/zigbee-nwk";
 import type { ZigbeeNWKGPHeader } from "../src/zigbee/zigbee-nwkgp";
 import {

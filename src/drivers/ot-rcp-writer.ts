@@ -1,5 +1,4 @@
 import { Readable } from "node:stream";
-
 import { logger } from "../utils/logger.js";
 
 const NS = "ot-rcp-driver:writer";

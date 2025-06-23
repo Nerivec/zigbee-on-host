@@ -7,7 +7,7 @@ import {
     encodeMACFrame,
     encodeMACFrameZigbee,
 } from "../src/zigbee/mac";
-import { ZigbeeKeyType, makeKeyedHashByType, registerDefaultHashedKeys } from "../src/zigbee/zigbee";
+import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeKeyType } from "../src/zigbee/zigbee";
 import { decodeZigbeeAPSFrameControl, decodeZigbeeAPSHeader, decodeZigbeeAPSPayload, encodeZigbeeAPSFrame } from "../src/zigbee/zigbee-aps";
 import { decodeZigbeeNWKFrameControl, decodeZigbeeNWKHeader, decodeZigbeeNWKPayload, encodeZigbeeNWKFrame } from "../src/zigbee/zigbee-nwk";
 import { decodeZigbeeNWKGPFrameControl, decodeZigbeeNWKGPHeader, decodeZigbeeNWKGPPayload, encodeZigbeeNWKGPFrame } from "../src/zigbee/zigbee-nwkgp";

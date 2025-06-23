@@ -1,4 +1,4 @@
-import { ZigbeeConsts, aes128CcmStar, computeAuthTag } from "./zigbee.js";
+import { aes128CcmStar, computeAuthTag, ZigbeeConsts } from "./zigbee.js";
 
 /**
  * const enum with sole purpose of avoiding "magic numbers" in code for well-known values
