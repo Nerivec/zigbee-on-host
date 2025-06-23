@@ -1,4 +1,4 @@
-import { ZigbeeKeyType, makeKeyedHash, makeKeyedHashByType } from "../src/zigbee/zigbee";
+import { makeKeyedHash, makeKeyedHashByType, ZigbeeKeyType } from "../src/zigbee/zigbee";
 
 export const A_CHANNEL = 15;
 export const A_PAN_ID = 0xcd12;

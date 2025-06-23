@@ -1,6 +1,5 @@
 import assert from "node:assert";
-
-import { type HdlcFrame, encodeHdlcFrame } from "./hdlc.js";
+import { encodeHdlcFrame, type HdlcFrame } from "./hdlc.js";
 import { SpinelPropertyId } from "./properties.js";
 
 /**
