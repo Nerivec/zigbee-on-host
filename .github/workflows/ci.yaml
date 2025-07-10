@@ -5,6 +5,10 @@ on:
     branches-ignore: 
       - built-main
       - built-dev
+  pull_request:
+    branches-ignore: 
+      - built-main
+      - built-dev
 
 permissions:
   contents: read
