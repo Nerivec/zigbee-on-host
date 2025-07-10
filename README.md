@@ -152,16 +152,16 @@ npm run dev:cli help
 > [!TIP]
 > `dev:cli` commands can be configured in more details using the file `dist/dev/conf.json`. Some environment variables are also available to quickly configure the adapter & wireshark. _The effective config is printed at the start of every command (`help` included)._
 
-##### Using 'Docker.dev' and 'compose.dev.yaml'
+##### Using Docker
 
 ###### Prerequisites
 
 ```bash
 git clone https://github.com/Nerivec/zigbee-on-host
 cd zigbee-on-host
-docker compose -f docker/compose.dev.yaml up -d --pull never
-docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm ci
-docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm run build
+docker compose -f docker-dev/compose.yaml up -d --pull never
+docker compose -f docker-dev/compose.yaml exec zigbee-on-host npm ci
+docker compose -f docker-dev/compose.yaml exec zigbee-on-host npm run build
 ```
 
 ###### Running util commands
@@ -169,19 +169,19 @@ docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm run build
 Create 'zoh.save' (details above):
 
 ```bash
-docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm run dev:z2z ./path/to/data
+docker compose -f docker-dev/compose.yaml exec zigbee-on-host npm run dev:z2z ./path/to/data
 ```
 
 Print readable 'zoh.save' content (details above):
 
 ```bash
-docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm run dev:z2r ./path/to/data
+docker compose -f docker-dev/compose.yaml exec zigbee-on-host npm run dev:z2r ./path/to/data
 ```
 
 CLI:
 
 ```bash
-docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm run dev:cli help
+docker compose -f docker-dev/compose.yaml exec zigbee-on-host npm run dev:cli help
 ```
 
 > [!TIP]
@@ -190,5 +190,5 @@ docker compose -f docker/compose.dev.yaml exec zigbee-on-host npm run dev:cli he
 ###### Stopping & removing the container
 
 ```bash
-docker compose -f docker/compose.dev.yaml down
+docker compose -f docker-dev/compose.yaml down
 ```

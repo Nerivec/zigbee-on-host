@@ -23,3 +23,10 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+
+  - package-ecosystem: docker
+    directories:
+      - "/"
+      - "/docker-dev"
+    schedule:
+      interval: weekly
