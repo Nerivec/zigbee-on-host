@@ -2,13 +2,9 @@ name: CI
 
 on:
   push:
-    branches-ignore: 
-      - built-main
-      - built-dev
+    branches: [main]
   pull_request:
-    branches-ignore: 
-      - built-main
-      - built-dev
+    branches-ignore: [built-main]
 
 permissions:
   contents: read
