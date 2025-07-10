@@ -23,11 +23,20 @@ jobs:
         with:
           node-version-file: 'package.json'
 
-      - run: npm ci
+      - name: Install deps
+        run: npm ci
 
-      - run: npm run build:prod
+      - name: Build
+        run: npm run build:prod
 
-      - run: npm run check:ci
+      - name: Check
+        run: npm run check:ci
+
+      - name: Bench
+        uses: CodSpeedHQ/action@v3
+        with:
+          run: npm run bench
+          token: ${{ secrets.CODSPEED_TOKEN }}
 
   tests:
     strategy:
@@ -43,12 +52,11 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
-      - run: npm ci
+      - name: Install deps
+        run: npm ci
 
-      - run: npm run build:prod
+      - name: Build
+        run: npm run build:prod
 
-      - run: npm run test:cov
-
-      # get some "in-workflow" reference numbers for future comparison
-      # TODO: send results to PR as needed
-      - run: npm run bench
+      - name: Test
+        run: npm run test:cov
