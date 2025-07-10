@@ -1,5 +1,5 @@
 {
-    "$schema": "https://biomejs.dev/schemas/2.0.4/schema.json",
+    "$schema": "https://biomejs.dev/schemas/2.0.6/schema.json",
     "vcs": {
         "enabled": true,
         "clientKind": "git",
@@ -16,7 +16,13 @@
         "lineWidth": 150,
         "lineEnding": "lf"
     },
-    "assist": { "actions": { "source": { "organizeImports": "on" } } },
+    "assist": {
+        "actions": {
+            "source": {
+                "organizeImports": "on"
+            }
+        }
+    },
     "linter": {
         "enabled": true,
         "rules": {
@@ -31,7 +37,14 @@
                     "options": {
                         "strictCase": false,
                         "requireAscii": true,
-                        "conventions": [{ "selector": { "kind": "enumMember" }, "formats": ["CONSTANT_CASE"] }]
+                        "conventions": [
+                            {
+                                "selector": {
+                                    "kind": "enumMember"
+                                },
+                                "formats": ["CONSTANT_CASE"]
+                            }
+                        ]
                     }
                 },
                 "useAsConstAssertion": "error",
