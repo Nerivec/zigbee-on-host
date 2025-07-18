@@ -2,6 +2,8 @@ version: 2
 updates:
   - package-ecosystem: "npm"
     versioning-strategy: increase
+    commit-message:
+      prefix: fix
     directory: "/"
     schedule:
       interval: "weekly"
@@ -20,11 +22,15 @@ updates:
           - "patch"
 
   - package-ecosystem: github-actions
+    commit-message:
+      prefix: chore
     directory: "/"
     schedule:
       interval: weekly
 
   - package-ecosystem: docker
+    commit-message:
+      prefix: fix
     directories:
       - "/"
       - "/docker-dev"
