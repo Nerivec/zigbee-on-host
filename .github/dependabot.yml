@@ -32,7 +32,6 @@ updates:
     commit-message:
       prefix: fix
     directories:
-      - "/"
       - "/docker-dev"
     schedule:
       interval: weekly
