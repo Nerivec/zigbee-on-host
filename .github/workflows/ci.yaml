@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version-file: 'package.json'
+          node-version-file: "package.json"
 
       - name: Install deps
         run: npm ci
@@ -29,10 +29,13 @@ jobs:
         run: npm run check:ci
 
       - name: Bench
-        uses: CodSpeedHQ/action@v3
+        uses: Nerivec/action-ci-bench@main
         with:
-          run: npm run bench
-          token: ${{ secrets.CODSPEED_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          compare-against: main
+          base-cmd: npx vitest bench --run --config ./test/vitest.config.mts --outputJson bench.json
+          compare-cmd: npx vitest bench --run --config ./test/vitest.config.mts --compare bench.json
+          base-result: bench.json
 
   tests:
     strategy:
