@@ -11,6 +11,7 @@ import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeKeyType } from ".
 import { decodeZigbeeAPSFrameControl, decodeZigbeeAPSHeader, decodeZigbeeAPSPayload, encodeZigbeeAPSFrame } from "../src/zigbee/zigbee-aps";
 import { decodeZigbeeNWKFrameControl, decodeZigbeeNWKHeader, decodeZigbeeNWKPayload, encodeZigbeeNWKFrame } from "../src/zigbee/zigbee-nwk";
 import { decodeZigbeeNWKGPFrameControl, decodeZigbeeNWKGPHeader, decodeZigbeeNWKGPPayload, encodeZigbeeNWKGPFrame } from "../src/zigbee/zigbee-nwkgp";
+import { BENCH_OPTIONS } from "./bench-options";
 import {
     NET2_ASSOC_REQ_FROM_DEVICE,
     NET2_ASSOC_RESP_FROM_COORD,
@@ -69,7 +70,7 @@ describe("Zigbee", () => {
 
             encodeZigbeeAPSFrame(encAPSHeader, apsPayload, encAPSHeader.securityHeader!, undefined);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -100,7 +101,7 @@ describe("Zigbee", () => {
 
             encodeZigbeeAPSFrame(encAPSHeader, apsPayload, encAPSHeader.securityHeader!, undefined);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -123,7 +124,7 @@ describe("Zigbee", () => {
 
             encodeZigbeeNWKFrame(encNWKHeader, nwkPayload, encNWKHeader.securityHeader!, undefined);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -154,7 +155,7 @@ describe("Zigbee", () => {
 
             encodeZigbeeAPSFrame(encAPSHeader, apsPayload, encAPSHeader.securityHeader!, undefined);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -185,7 +186,7 @@ describe("Zigbee", () => {
 
             encodeZigbeeAPSFrame(encAPSHeader, apsPayload, encAPSHeader.securityHeader!, undefined);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -210,7 +211,7 @@ describe("Zigbee", () => {
 
             encodeZigbeeNWKFrame(encNWKHeader, nwkPayload, encNWKHeader.securityHeader!, undefined);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -235,7 +236,7 @@ describe("Zigbee", () => {
 
             encodeZigbeeNWKFrame(encNWKHeader, nwkPayload, encNWKHeader.securityHeader!, undefined);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -258,7 +259,7 @@ describe("Zigbee", () => {
 
             encodeZigbeeNWKGPFrame(encNWKGPHeader, nwkGPPayload, NETDEF_NETWORK_KEY, macHeader.source64);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -281,7 +282,7 @@ describe("Zigbee", () => {
 
             encodeZigbeeNWKGPFrame(encNWKGPHeader, nwkGPPayload, NETDEF_NETWORK_KEY, macHeader.source64);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -304,7 +305,7 @@ describe("Zigbee", () => {
 
             encodeZigbeeNWKFrame(encNWKHeader, nwkPayload, encNWKHeader.securityHeader!, undefined);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -314,7 +315,7 @@ describe("Zigbee", () => {
             const [macHeader, macHOutOffset] = decodeMACHeader(NET2_BEACON_REQ_FROM_DEVICE, macFCFOutOffset, macFCF);
             decodeMACPayload(NET2_BEACON_REQ_FROM_DEVICE, macHOutOffset, macFCF, macHeader);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -325,7 +326,7 @@ describe("Zigbee", () => {
             const macPayload = decodeMACPayload(NET2_BEACON_RESP_FROM_COORD, macHOutOffset, macFCF, macHeader);
             decodeMACZigbeeBeacon(macPayload, 0);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -339,7 +340,7 @@ describe("Zigbee", () => {
 
             encodeMACFrame(encHeader, macPayload);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -353,7 +354,7 @@ describe("Zigbee", () => {
 
             encodeMACFrame(encHeader, macPayload);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -384,7 +385,7 @@ describe("Zigbee", () => {
 
             encodeZigbeeAPSFrame(encAPSHeader, apsPayload, encAPSHeader.securityHeader!, undefined);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 
     bench(
@@ -412,6 +413,6 @@ describe("Zigbee", () => {
             const encAPSHeader = structuredClone(apsHeader);
             encodeZigbeeAPSFrame(encAPSHeader, apsPayload, encAPSHeader.securityHeader!, undefined);
         },
-        { warmupTime: 1000 },
+        BENCH_OPTIONS,
     );
 });
