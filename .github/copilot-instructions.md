@@ -11,11 +11,19 @@ ZigBee on Host is an open-source ZigBee stack designed to run on a host and comm
 - License: GPL-3.0-or-later
 - Architecture: Host-based ZigBee stack with RCP communication
 
+## Development Environment
+
+- **Node.js**: >=22.12.0
+- **TypeScript**: ES2022 target, NodeNext module system
+- **Linter**: Biome (configuration in `biome.json`)
+- **Testing**: Vitest with coverage support
+- **Build**: TypeScript compiler with composite project structure
+
 ## Build Instructions
 
 ### Prerequisites
-- Node.js version ^20.19.0 || >=22.12.0
-- npm (tested with 10.8.2+)
+- **Node.js**: version >=22.12.0
+- **npm**: tested with 10.8.2+
 
 ### Essential Build Commands
 
@@ -156,6 +164,7 @@ npm run bench     # Optional, takes ~27s
 - **Dependencies:** No external production dependencies (keeps bundle lean)
 
 ### Development Guidelines
+- **Zero external production dependencies** - Keep the core lightweight
 - **Performance focused:** No expensive calls (stringify, etc.), early bail-outs
 - **ZigBee compliance:** Align with ZigBee 3.0 specification and Wireshark property names
 - **Code markers:** Search for `TODO`, `XXX`, `@deprecated` for active development areas
@@ -171,6 +180,13 @@ npm run bench     # Optional, takes ~27s
 - **Benchmarks:** `test/*.bench.ts` for performance testing  
 - **Coverage:** Stored in `coverage/` directory (excluded from git)
 - **Skipped tests:** Some Wireshark integration tests are environment-dependent
+
+### Protocols and Standards
+- **ZigBee 3.0**: Application layer protocol for IoT devices
+- **Spinel**: Host-RCP communication protocol
+- **IEEE 802.15.4**: Underlying radio standard
+- **OpenThread RCP**: Radio Co-Processor firmware used for 802.15.4 communication
+- Handle different RCP firmware variations (Texas Instruments, Silicon Labs, etc.)
 
 ## File Locations Reference
 
