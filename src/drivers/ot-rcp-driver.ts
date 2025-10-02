@@ -382,9 +382,16 @@ export type DeviceTableEntry = {
 };
 
 export type SourceRouteTableEntry = {
+    /** Relay addresses (empty if direct route) */
     relayAddresses: number[];
-    /** TODO: formula? */
+    /** Cost of the path (based on hop count and link quality) */
     pathCost: number;
+    /** Timestamp when this route was last updated (used for route aging) */
+    lastUpdated: number;
+    /** Count of consecutive failures using this route */
+    failureCount: number;
+    /** Timestamp when this route was last used successfully (undefined if never used) */
+    lastUsed?: number;
 };
 
 /**
@@ -671,9 +678,13 @@ const CONFIG_NWK_CONCENTRATOR_DISCOVERY_TIME = 60000;
 const CONFIG_NWK_CONCENTRATOR_RADIUS = CONFIG_NWK_MAX_HOPS;
 /** The number of delivery failures that trigger an immediate concentrator route discoveries. */
 const CONFIG_NWK_CONCENTRATOR_DELIVERY_FAILURE_THRESHOLD = 1;
-/** The number of route failures that trigger an immediate concentrator route discoveries. */
-const CONFIG_NWK_CONCENTRATOR_ROUTE_FAILURE_THRESHOLD = 3;
-/** Minimum Time between MTORR broadcasts (msec) */
+/** The time before a route is considered stale and less preferred (msec) */
+const CONFIG_NWK_ROUTE_STALENESS_TIME = 120000;
+/** The maximum age before a route is considered expired and removed (msec) */
+const CONFIG_NWK_ROUTE_EXPIRY_TIME = 300000;
+/** The maximum number of consecutive failures before a route is blacklisted (count) */
+const CONFIG_NWK_ROUTE_MAX_FAILURES = 3;
+/** Minimum time between many-to-one route request broadcasts to avoid flooding (msec) */
 const CONFIG_NWK_CONCENTRATOR_MIN_TIME = 10000;
 /** The time between state saving to disk. (msec) */
 const CONFIG_SAVE_STATE_TIME = 60000;
@@ -747,8 +758,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public readonly indirectTransmissions: Map<bigint, { sendFrame: () => Promise<boolean>; timestamp: number }[]>;
     /** Count of MAC NO_ACK reported by Spinel for each device (only present if any). Mapping by network16 */
     public readonly macNoACKs: Map<number, number>;
-    /** Count of route failures reported by the network for each device (only present if any). Mapping by network16 */
-    public readonly routeFailures: Map<number, number>;
 
     //---- Trust Center (see 05-3474-R #4.7.1)
 
@@ -818,7 +827,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.pendingAssociations = new Map();
         this.indirectTransmissions = new Map();
         this.macNoACKs = new Map();
-        this.routeFailures = new Map();
 
         //---- Trust Center
         this.#trustCenterPolicies = {
@@ -946,6 +954,79 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.#routeRequestId = (this.#routeRequestId + 1) & 0xff;
 
         return this.#routeRequestId;
+    }
+
+    /**
+     * Create a new source route entry with proper initialization
+     * @param relayAddresses Array of relay addresses (empty for direct route)
+     * @param pathCost Cost of the path
+     * @returns Initialized SourceRouteTableEntry
+     */
+    private createSourceRouteEntry(relayAddresses: number[], pathCost: number): SourceRouteTableEntry {
+        return {
+            relayAddresses,
+            pathCost,
+            lastUpdated: Date.now(),
+            failureCount: 0,
+            lastUsed: undefined,
+        };
+    }
+
+    /**
+     * Mark a route as successfully used
+     * @param destination16 Network address of the destination
+     */
+    private markRouteSuccess(destination16: number): void {
+        const entries = this.sourceRouteTable.get(destination16);
+
+        if (entries && entries.length > 0) {
+            const entry = entries[0]; // mark the currently-selected best route
+            entry.lastUsed = Date.now();
+            entry.failureCount = 0; // reset failure count on success
+        }
+    }
+
+    /**
+     * Mark a route as failed and handle route repair if needed.
+     * Consolidates failure tracking and MTORR triggering per ZigBee spec.
+     *
+     * @param destination16 Network address of the destination
+     * @param triggerRepair If true, will purge routes using this destination as relay and trigger MTORR
+     */
+    private markRouteFailure(destination16: number, triggerRepair = false): void {
+        const entries = this.sourceRouteTable.get(destination16);
+
+        if (entries && entries.length > 0) {
+            const entry = entries[0]; // mark the currently-selected best route
+            entry.failureCount += 1;
+
+            logger.debug(() => `Route to ${destination16} failed (failureCount=${entry.failureCount})`, NS);
+
+            // if blacklisted or explicit repair requested, purge and trigger MTORR
+            if (triggerRepair || entry.failureCount >= CONFIG_NWK_ROUTE_MAX_FAILURES) {
+                logger.warning(
+                    `Route to ${destination16} ${triggerRepair ? "requires repair" : `blacklisted after ${entry.failureCount} failures`}, purging related routes and forcing discovery`,
+                    NS,
+                );
+
+                // purge all routes using this destination as a relay
+                for (const [addr16, routeEntries] of this.sourceRouteTable) {
+                    const filteredEntries = routeEntries.filter((e) => !e.relayAddresses.includes(destination16));
+
+                    if (filteredEntries.length === 0) {
+                        this.sourceRouteTable.delete(addr16);
+                    } else if (filteredEntries.length !== routeEntries.length) {
+                        this.sourceRouteTable.set(addr16, filteredEntries);
+                    }
+                }
+
+                // remove direct routes to the target as well
+                this.sourceRouteTable.delete(destination16);
+
+                // trigger immediate route discovery
+                setImmediate(this.sendPeriodicManyToOneRouteRequest.bind(this));
+            }
+        }
     }
 
     private decrementRadius(radius: number): number {
@@ -1540,7 +1621,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
             if (dest16 !== undefined) {
                 this.macNoACKs.delete(dest16);
-                this.routeFailures.delete(dest16);
+                this.markRouteSuccess(dest16);
             }
 
             return true;
@@ -1549,6 +1630,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
             if ((error as Error).cause === SpinelStatus.NO_ACK && dest16 !== undefined) {
                 this.macNoACKs.set(dest16, (this.macNoACKs.get(dest16) ?? 0) + 1);
+                this.markRouteFailure(dest16);
             }
             // TODO: ?
             // - NOMEM
@@ -2312,31 +2394,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             target16 = data.readUInt16LE(offset);
             offset += 2;
 
-            let routeFailures = this.routeFailures.get(target16);
-
-            if (routeFailures === undefined) {
-                this.routeFailures.set(target16, 1);
-            } else {
-                routeFailures += 1;
-
-                if (routeFailures >= CONFIG_NWK_CONCENTRATOR_ROUTE_FAILURE_THRESHOLD) {
-                    for (const [addr16, entries] of this.sourceRouteTable) {
-                        // entries using target as relay are no longer valid
-                        const filteredEntries = entries.filter((entry) => !entry.relayAddresses.includes(target16!));
-
-                        if (filteredEntries.length === 0) {
-                            this.sourceRouteTable.delete(addr16);
-                        } else if (filteredEntries.length !== entries.length) {
-                            this.sourceRouteTable.set(addr16, filteredEntries);
-                        }
-                    }
-
-                    this.sourceRouteTable.delete(target16!); // TODO: delete the source routes for the target itself?
-                    this.routeFailures.set(target16, 0); // reset
-                } else {
-                    this.routeFailures.set(target16, routeFailures);
-                }
-            }
+            // mark route as failed with repair - this will purge routes using target as relay and trigger MTORR once
+            this.markRouteFailure(target16, true);
         } else if (status === ZigbeeNWKStatus.ADDRESS_CONFLICT) {
             // In case of an address conflict, it SHALL contain the offending network address.
             target16 = data.readUInt16LE(offset);
@@ -2473,10 +2532,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 : nwkHeader.source16;
 
         if (source16 !== undefined) {
-            const entry: SourceRouteTableEntry = {
-                relayAddresses: relays,
-                pathCost: relayCount + 1, // TODO: ?
-            };
+            const entry = this.createSourceRouteEntry(relays, relayCount + 1);
             const entries = this.sourceRouteTable.get(source16);
 
             if (entries === undefined) {
@@ -2661,16 +2717,34 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     device.neighbor = true;
                 }
 
-                const entry: SourceRouteTableEntry =
+                // use the incoming cost as the path cost (represents link quality from the neighbor's perspective)
+                const incomingCost = costByte & ZigbeeNWKConsts.CMD_LINK_INCOMING_COST_MASK;
+                const pathCost = Math.max(1, incomingCost);
+
+                const entry =
                     address === ZigbeeConsts.COORDINATOR_ADDRESS
-                        ? { relayAddresses: [], pathCost: 1 /* TODO ? */ }
-                        : { relayAddresses: [address], pathCost: 2 /* TODO ? */ };
+                        ? this.createSourceRouteEntry([], pathCost)
+                        : this.createSourceRouteEntry([address], pathCost + 1);
                 const entries = this.sourceRouteTable.get(device.address16);
 
                 if (entries === undefined) {
                     this.sourceRouteTable.set(device.address16, [entry]);
-                } else if (!this.hasSourceRoute(device.address16, entry, entries)) {
-                    entries.push(entry);
+                } else {
+                    // check if we already have this route; if so, update it
+                    const existingIndex = entries.findIndex(
+                        (e) =>
+                            e.relayAddresses.length === entry.relayAddresses.length &&
+                            e.relayAddresses.every((relay, idx) => relay === entry.relayAddresses[idx]),
+                    );
+
+                    if (existingIndex !== -1) {
+                        // update existing route with new cost and reset failure count
+                        entries[existingIndex].pathCost = entry.pathCost;
+                        entries[existingIndex].lastUpdated = entry.lastUpdated;
+                        entries[existingIndex].failureCount = 0;
+                    } else if (!this.hasSourceRoute(device.address16, entry, entries)) {
+                        entries.push(entry);
+                    }
                 }
             }
         }
@@ -3999,10 +4073,10 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
                 if (parentRelays) {
                     // parent is nested
-                    this.sourceRouteTable.set(device16, [{ relayAddresses: parentRelays, pathCost: parentRelays.length + 1 }]);
+                    this.sourceRouteTable.set(device16, [this.createSourceRouteEntry(parentRelays, parentRelays.length + 1)]);
                 } else {
                     // parent is direct to coordinator
-                    this.sourceRouteTable.set(device16, [{ relayAddresses: [nwkHeader.source16!], pathCost: 2 }]);
+                    this.sourceRouteTable.set(device16, [this.createSourceRouteEntry([nwkHeader.source16!], 2)]);
                 }
             } catch {
                 /* ignore */
@@ -4723,13 +4797,27 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         for (const [device64, entry] of this.deviceTable.entries()) {
             if (entry.neighbor) {
                 try {
-                    // TODO: proper cost values
+                    // calculate cost based on path cost and recent link quality
                     const [, , pathCost] = this.findBestSourceRoute(entry.address16, device64);
+                    let linkCost = pathCost ?? 1;
+
+                    // adjust cost based on recent LQA (link quality assessment) only if we have data
+                    if (entry.recentLQAs.length > 0) {
+                        const avgLQA = entry.recentLQAs.reduce((sum, lqa) => sum + lqa, 0) / entry.recentLQAs.length;
+
+                        // only apply penalty if avgLQA is valid
+                        if (!Number.isNaN(avgLQA)) {
+                            // LQA range [0..255], convert to cost penalty [0..7]
+                            // high LQA (good link) = low penalty, low LQA (bad link) = high penalty
+                            const lqaPenalty = Math.max(0, Math.min(7, Math.floor((255 - avgLQA) / 36)));
+                            linkCost = Math.min(7, linkCost + lqaPenalty);
+                        }
+                    }
 
                     links.push({
                         address: entry.address16,
-                        incomingCost: pathCost ?? 0,
-                        outgoingCost: pathCost ?? 0,
+                        incomingCost: linkCost,
+                        outgoingCost: linkCost,
                     });
                 } catch {
                     /* ignore */
@@ -4988,7 +5076,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             this.sourceRouteTable.delete(source16);
             this.pendingAssociations.delete(source64); // should never amount to a delete
             this.macNoACKs.delete(source16);
-            this.routeFailures.delete(source16);
 
             // XXX: should only be needed for `rxOnWhenIdle`, but for now always trigger (tricky bit, not always correct)
             for (const [addr16, entries] of this.sourceRouteTable) {
@@ -5054,7 +5141,8 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
 
     /**
      * Finds the best source route to the destination.
-     * Entries with relays with too many NO_ACK will be purged.
+     * Implements route aging, failure tracking, and intelligent route selection.
+     * Entries with expired routes or too many failures will be purged.
      * Bails early if destination16 is broadcast.
      * Throws if both 16/64 are undefined or if destination is unknown (not in device table).
      * Throws if no route and device is not neighbor.
@@ -5105,66 +5193,105 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
             return [undefined, undefined, undefined];
         }
 
-        if (sourceRouteEntries.length > 1) {
-            // sort by lowest cost first, if more than one entry
-            // TODO: add property that keeps track of error count to further sort identical cost matches?
-            sourceRouteEntries.sort((a, b) => a.pathCost - b.pathCost);
-        }
+        const now = Date.now();
+        const validEntries: SourceRouteTableEntry[] = [];
 
-        let relays = sourceRouteEntries[0].relayAddresses;
-        let relayLastIndex = relays.length - 1;
+        // filter out expired and blacklisted routes
+        for (const entry of sourceRouteEntries) {
+            const age = now - entry.lastUpdated;
 
-        // don't check relays validity when direct
-        if (relayLastIndex !== -1) {
-            let mtorr = false;
-            let valid = true;
+            // remove expired routes
+            if (age > CONFIG_NWK_ROUTE_EXPIRY_TIME) {
+                logger.debug(() => `Route to ${destination16} expired (age=${age}ms)`, NS);
 
-            do {
-                valid = true;
+                continue;
+            }
 
-                // check relays for NO_ACK state, and either continue, or find the next best route
-                for (const relay of relays) {
-                    const macNoACKs = this.macNoACKs.get(relay);
+            // remove blacklisted routes (too many consecutive failures)
+            if (entry.failureCount >= CONFIG_NWK_ROUTE_MAX_FAILURES) {
+                logger.debug(() => `Route to ${destination16} blacklisted (failures=${entry.failureCount})`, NS);
 
-                    if (macNoACKs !== undefined && macNoACKs >= CONFIG_NWK_CONCENTRATOR_DELIVERY_FAILURE_THRESHOLD) {
-                        mtorr = true;
+                continue;
+            }
 
-                        sourceRouteEntries.shift();
+            // check if any relay has too many NO_ACK
+            let relayFailed = false;
 
-                        if (sourceRouteEntries.length === 0) {
-                            this.sourceRouteTable.delete(destination16);
+            for (const relay of entry.relayAddresses) {
+                const macNoACKs = this.macNoACKs.get(relay);
 
-                            if (!this.deviceTable.get(destination64 ?? this.address16ToAddress64.get(destination16)!)!.neighbor) {
-                                // force immediate MTORR
-                                logger.warning("No known route to destination, forcing discovery", NS);
-                                setImmediate(this.sendPeriodicManyToOneRouteRequest.bind(this));
-                                // will send direct as "last resort"
-                            }
+                if (macNoACKs !== undefined && macNoACKs >= CONFIG_NWK_CONCENTRATOR_DELIVERY_FAILURE_THRESHOLD) {
+                    logger.debug(() => `Route to ${destination16} via relay ${relay} has too many NO_ACKs (${macNoACKs})`, NS);
 
-                            // no more source route, bail
-                            return [undefined, undefined, undefined];
-                        }
+                    relayFailed = true;
 
-                        relays = sourceRouteEntries[0].relayAddresses;
-                        relayLastIndex = relays.length - 1;
-                        valid = false;
-
-                        break;
-                    }
+                    break;
                 }
-            } while (!valid);
+            }
 
-            if (mtorr) {
-                // force immediate MTORR
-                setImmediate(this.sendPeriodicManyToOneRouteRequest.bind(this));
+            if (!relayFailed) {
+                validEntries.push(entry);
             }
         }
 
-        if (relayLastIndex >= 0) {
-            return [relayLastIndex, relays, sourceRouteEntries[0].pathCost];
+        // update the source route table with valid entries only
+        if (validEntries.length === 0) {
+            this.sourceRouteTable.delete(destination16);
+
+            if (!this.deviceTable.get(destination64 ?? this.address16ToAddress64.get(destination16)!)!.neighbor) {
+                // force immediate MTORR
+                logger.warning("No known route to destination, forcing discovery", NS);
+                setImmediate(this.sendPeriodicManyToOneRouteRequest.bind(this));
+                // will send direct as "last resort"
+            }
+
+            return [undefined, undefined, undefined];
         }
 
-        return [undefined, undefined, sourceRouteEntries[0].pathCost];
+        if (validEntries.length !== sourceRouteEntries.length) {
+            this.sourceRouteTable.set(destination16, validEntries);
+        }
+
+        // sort routes by composite score: path cost + staleness penalty + failure penalty + recency bonus
+        if (validEntries.length > 1) {
+            validEntries.sort((a, b) => {
+                const ageA = now - a.lastUpdated;
+                const ageB = now - b.lastUpdated;
+
+                // add staleness penalty (0-2 points based on age)
+                const stalenessPenaltyA =
+                    ageA > CONFIG_NWK_ROUTE_STALENESS_TIME
+                        ? Math.min(2, (ageA - CONFIG_NWK_ROUTE_STALENESS_TIME) / CONFIG_NWK_ROUTE_STALENESS_TIME)
+                        : 0;
+                const stalenessPenaltyB =
+                    ageB > CONFIG_NWK_ROUTE_STALENESS_TIME
+                        ? Math.min(2, (ageB - CONFIG_NWK_ROUTE_STALENESS_TIME) / CONFIG_NWK_ROUTE_STALENESS_TIME)
+                        : 0;
+
+                // add failure penalty (1 point per failure)
+                const failurePenaltyA = a.failureCount;
+                const failurePenaltyB = b.failureCount;
+
+                // add recency bonus (prefer recently used routes)
+                const recencyBonusA = a.lastUsed && now - a.lastUsed < 30000 ? -1 : 0;
+                const recencyBonusB = b.lastUsed && now - b.lastUsed < 30000 ? -1 : 0;
+
+                const scoreA = a.pathCost + stalenessPenaltyA + failurePenaltyA + recencyBonusA;
+                const scoreB = b.pathCost + stalenessPenaltyB + failurePenaltyB + recencyBonusB;
+
+                return scoreA - scoreB;
+            });
+        }
+
+        const bestRoute = validEntries[0];
+        const relays = bestRoute.relayAddresses;
+        const relayLastIndex = relays.length - 1;
+
+        if (relayLastIndex >= 0) {
+            return [relayLastIndex, relays, bestRoute.pathCost];
+        }
+
+        return [undefined, undefined, bestRoute.pathCost];
     }
 
     // TODO: interference detection (& optionally auto channel changing)
@@ -5759,7 +5886,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                             offset += 2;
                         }
 
-                        sourceRouteEntries.push({ pathCost, relayAddresses });
+                        sourceRouteEntries.push(this.createSourceRouteEntry(relayAddresses, pathCost));
                     }
 
                     this.sourceRouteTable.set(address16, sourceRouteEntries);
