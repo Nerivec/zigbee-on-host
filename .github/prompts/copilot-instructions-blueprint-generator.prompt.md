@@ -279,7 +279,7 @@ To create the copilot-instructions.md file, first analyze the codebase to:
 ### 3. Implementation Notes
 
 The final copilot-instructions.md should:
-- Be placed in the .github/copilot directory
+- Be placed in the .github directory
 - Reference only patterns and standards that exist in the codebase
 - Include explicit version compatibility requirements
 - Avoid prescribing any practices not evident in the code
