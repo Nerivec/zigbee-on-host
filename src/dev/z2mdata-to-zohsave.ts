@@ -154,7 +154,7 @@ async function convert(dataPath: string): Promise<void> {
         const txPowerMatch = conf.match(/transmit_power: (\d*)$/m);
 
         if (txPowerMatch) {
-            txPower = Number.parseInt(txPowerMatch[1]);
+            txPower = Number.parseInt(txPowerMatch[1], 10);
         }
     }
 

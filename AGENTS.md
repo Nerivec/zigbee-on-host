@@ -223,7 +223,7 @@ npm run prepack        # Automatically runs: clean + build:prod
 ### TypeScript Configuration
 
 **Compiler settings:**
-- Target: ES2022
+- Target: esnext
 - Module: NodeNext
 - Module resolution: NodeNext
 - Composite project enabled
@@ -482,6 +482,10 @@ docker compose -f docker-dev/compose.yaml down
 - Search for `TODO`, `HACK`, `XXX` markers for areas needing work
 - Maintain zero production dependencies policy
 - Align with ZigBee 3.0 specification
+  - Zigbee specification (05-3474-23): Revision 23.1
+  - Base device behavior (16-02828-012): v3.0.1
+  - ZCL specification (07-5123): Revision 8
+  - Green Power specification (14-0563-19): Version 1.1.2
 - Use Wireshark property names for consistency
 
 ### Testing Status
