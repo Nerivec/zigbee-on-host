@@ -161,7 +161,7 @@ async function convert(dataPath: string): Promise<void> {
     const eui64Buf = Buffer.from(backup.coordinator_ieee, "hex");
     const eui64 = isEmber ? eui64Buf.readBigUInt64LE(0) : /* isZstack */ eui64Buf.readBigUInt64BE(0);
     const panId = Number.parseInt(backup.pan_id, 16);
-    const extendedPANId = Buffer.from(backup.extended_pan_id, "hex").readBigUInt64LE(0);
+    const extendedPanId = Buffer.from(backup.extended_pan_id, "hex").readBigUInt64LE(0);
     const channel = backup.channel;
     const nwkUpdateId = backup.nwk_update_id;
     const networkKey = Buffer.from(backup.network_key.key, "hex");
@@ -174,7 +174,7 @@ async function convert(dataPath: string): Promise<void> {
         {
             eui64,
             panId,
-            extendedPANId,
+            extendedPanId,
             channel,
             nwkUpdateId,
             txPower,
@@ -221,7 +221,7 @@ async function convert(dataPath: string): Promise<void> {
         {
             eui64: 0n,
             panId: 0,
-            extendedPANId: 0n,
+            extendedPanId: 0n,
             channel: 0,
             nwkUpdateId: -1,
             txPower: 5,
@@ -239,7 +239,7 @@ async function convert(dataPath: string): Promise<void> {
 
     assert(driver.netParams.eui64 === eui64);
     assert(driver.netParams.panId === panId);
-    assert(driver.netParams.extendedPANId === extendedPANId);
+    assert(driver.netParams.extendedPanId === extendedPanId);
     assert(driver.netParams.nwkUpdateId === nwkUpdateId);
     assert(driver.netParams.networkKey.equals(networkKey));
     assert(driver.netParams.networkKeyFrameCounter === networkKeyFrameCounter + 1024);

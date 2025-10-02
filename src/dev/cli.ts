@@ -92,7 +92,7 @@ if (require.main === module) {
             {
                 eui64: Buffer.from(conf.network.eui64).readBigUInt64LE(0),
                 panId: conf.network.panId,
-                extendedPANId: Buffer.from(conf.network.extendedPANId).readBigUInt64LE(0),
+                extendedPanId: Buffer.from(conf.network.extendedPANId).readBigUInt64LE(0),
                 channel: conf.network.channel,
                 nwkUpdateId: conf.network.nwkUpdateId,
                 txPower: conf.network.txPower,

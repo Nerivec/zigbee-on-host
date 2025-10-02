@@ -10,7 +10,7 @@ async function printSave(dataPath: string): Promise<void> {
         {
             eui64: 0n,
             panId: 0,
-            extendedPANId: 0n,
+            extendedPanId: 0n,
             channel: 0,
             nwkUpdateId: -1,
             txPower: 5,

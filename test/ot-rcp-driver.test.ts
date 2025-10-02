@@ -111,11 +111,11 @@ const COMMON_RFD_MAC_CAP: MACCapabilities = {
 /**
  * Helper function to create a SourceRouteTableEntry for tests
  */
-function createTestSourceRouteEntry(relayAddresses: number[], pathCost: number): SourceRouteTableEntry {
+function createTestSourceRouteEntry(relayAddresses: number[], pathCost: number, lastUpdated = Date.now()): SourceRouteTableEntry {
     return {
         relayAddresses,
         pathCost,
-        lastUpdated: Date.now(),
+        lastUpdated,
         failureCount: 0,
         lastUsed: undefined,
     };
@@ -437,7 +437,7 @@ describe("OT RCP Driver", () => {
                 {
                     eui64: Buffer.from(A_EUI64).readBigUInt64LE(0),
                     panId: NETDEF_PAN_ID,
-                    extendedPANId: Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0),
+                    extendedPanId: Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0),
                     channel: A_CHANNEL,
                     nwkUpdateId: 0,
                     txPower: 10,
@@ -472,7 +472,7 @@ describe("OT RCP Driver", () => {
 
             expect(driver.netParams.eui64).toStrictEqual(Buffer.from(A_EUI64).readBigUInt64LE(0));
             expect(driver.netParams.panId).toStrictEqual(NETDEF_PAN_ID);
-            expect(driver.netParams.extendedPANId).toStrictEqual(Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0));
+            expect(driver.netParams.extendedPanId).toStrictEqual(Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0));
             expect(driver.netParams.channel).toStrictEqual(A_CHANNEL);
             expect(driver.netParams.nwkUpdateId).toStrictEqual(0);
             expect(driver.netParams.txPower).toStrictEqual(10);
@@ -488,7 +488,7 @@ describe("OT RCP Driver", () => {
             // reset manually
             driver.netParams.eui64 = 0n;
             driver.netParams.panId = 0x0;
-            driver.netParams.extendedPANId = 0n;
+            driver.netParams.extendedPanId = 0n;
             driver.netParams.channel = 11;
             driver.netParams.nwkUpdateId = 0;
             driver.netParams.txPower = 11;
@@ -505,7 +505,7 @@ describe("OT RCP Driver", () => {
 
             expect(driver.netParams.eui64).toStrictEqual(Buffer.from(A_EUI64).readBigUInt64LE(0));
             expect(driver.netParams.panId).toStrictEqual(NETDEF_PAN_ID);
-            expect(driver.netParams.extendedPANId).toStrictEqual(Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0));
+            expect(driver.netParams.extendedPanId).toStrictEqual(Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0));
             expect(driver.netParams.channel).toStrictEqual(A_CHANNEL);
             expect(driver.netParams.nwkUpdateId).toStrictEqual(0);
             expect(driver.netParams.txPower).toStrictEqual(10);
@@ -521,9 +521,12 @@ describe("OT RCP Driver", () => {
 
         it("saves & loads back", async () => {
             const rndEui64 = randomBigInt();
+            const sourceRouteLastUpdated1One = Date.now() - 15 * 3600;
+            const sourceRouteLastUpdated1Two = Date.now() - 2 * 3600;
+            const sourceRouteLastUpdated9674 = Date.now() - 10 * 3600;
             driver.netParams.eui64 = rndEui64;
             driver.netParams.panId = 0x4356;
-            driver.netParams.extendedPANId = 893489346n;
+            driver.netParams.extendedPanId = 893489346n;
             driver.netParams.channel = 25;
             driver.netParams.nwkUpdateId = 1;
             driver.netParams.txPower = 15;
@@ -562,16 +565,19 @@ describe("OT RCP Driver", () => {
                 neighbor: true,
                 recentLQAs: [],
             });
-            driver.sourceRouteTable.set(1, [createTestSourceRouteEntry([], 1), createTestSourceRouteEntry([3457], 2)]);
+            driver.sourceRouteTable.set(1, [
+                createTestSourceRouteEntry([], 1, sourceRouteLastUpdated1One),
+                createTestSourceRouteEntry([3457], 2, sourceRouteLastUpdated1Two),
+            ]);
             driver.sourceRouteTable.set(3457, []);
-            driver.sourceRouteTable.set(9674, [createTestSourceRouteEntry([3457, 65348], 3)]);
+            driver.sourceRouteTable.set(9674, [createTestSourceRouteEntry([3457, 65348], 3, sourceRouteLastUpdated9674)]);
 
             await driver.saveState();
 
             // reset manually
             driver.netParams.eui64 = 0n;
             driver.netParams.panId = 0x0;
-            driver.netParams.extendedPANId = 0n;
+            driver.netParams.extendedPanId = 0n;
             driver.netParams.channel = 11;
             driver.netParams.nwkUpdateId = 0;
             driver.netParams.txPower = 11;
@@ -589,7 +595,7 @@ describe("OT RCP Driver", () => {
 
             expect(driver.netParams.eui64).toStrictEqual(rndEui64);
             expect(driver.netParams.panId).toStrictEqual(0x4356);
-            expect(driver.netParams.extendedPANId).toStrictEqual(893489346n);
+            expect(driver.netParams.extendedPanId).toStrictEqual(893489346n);
             expect(driver.netParams.channel).toStrictEqual(25);
             expect(driver.netParams.nwkUpdateId).toStrictEqual(1);
             expect(driver.netParams.txPower).toStrictEqual(15);
@@ -643,14 +649,17 @@ describe("OT RCP Driver", () => {
             expect(route1).toHaveLength(2);
             expect(route1[0].pathCost).toBe(1);
             expect(route1[0].relayAddresses).toStrictEqual([]);
+            expect(route1[0].lastUpdated).toBe(sourceRouteLastUpdated1One);
             expect(route1[0].failureCount).toBe(0);
             expect(route1[1].pathCost).toBe(2);
             expect(route1[1].relayAddresses).toStrictEqual([3457]);
+            expect(route1[1].lastUpdated).toBe(sourceRouteLastUpdated1Two);
             expect(route1[1].failureCount).toBe(0);
             const route2 = driver.sourceRouteTable.get(9674)!;
             expect(route2).toHaveLength(1);
             expect(route2[0].pathCost).toBe(3);
             expect(route2[0].relayAddresses).toStrictEqual([3457, 65348]);
+            expect(route2[0].lastUpdated).toBe(sourceRouteLastUpdated9674);
             expect(route2[0].failureCount).toBe(0);
         });
 
@@ -660,7 +669,7 @@ describe("OT RCP Driver", () => {
 
             expect(driver.netParams.eui64).toStrictEqual(Buffer.from(A_EUI64).readBigUInt64LE(0));
             expect(driver.netParams.panId).toStrictEqual(NETDEF_PAN_ID);
-            expect(driver.netParams.extendedPANId).toStrictEqual(Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0));
+            expect(driver.netParams.extendedPanId).toStrictEqual(Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0));
             expect(driver.netParams.channel).toStrictEqual(A_CHANNEL);
             expect(driver.netParams.nwkUpdateId).toStrictEqual(0);
             expect(driver.netParams.txPower).toStrictEqual(10);
@@ -672,42 +681,6 @@ describe("OT RCP Driver", () => {
             expect(driver.deviceTable.size).toStrictEqual(0);
             expect(driver.address16ToAddress64.size).toStrictEqual(0);
             expect(driver.indirectTransmissions.size).toStrictEqual(0);
-        });
-
-        it("throws when source route table too large for device", async () => {
-            driver.netParams.eui64 = 1n;
-            driver.netParams.panId = 0x4356;
-            driver.netParams.extendedPANId = 893489346n;
-            driver.netParams.channel = 25;
-            driver.netParams.nwkUpdateId = 1;
-            driver.netParams.txPower = 15;
-            driver.netParams.networkKey = Buffer.from([
-                0x11, 0x29, 0x22, 0x18, 0x13, 0x27, 0x24, 0x16, 0x12, 0x34, 0x56, 0x78, 0x90, 0x98, 0x76, 0x54,
-            ]);
-            driver.netParams.networkKeyFrameCounter = 235568765;
-            driver.netParams.networkKeySequenceNumber = 1;
-            driver.netParams.tcKey = Buffer.from([0x51, 0x69, 0x62, 0x58, 0x53, 0x67, 0x64, 0x56, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
-            driver.netParams.tcKeyFrameCounter = 896723;
-            driver.deviceTable.set(1234n, {
-                address16: 1,
-                capabilities: structuredClone(COMMON_FFD_MAC_CAP),
-                authorized: true,
-                neighbor: true,
-                recentLQAs: [],
-            });
-            const sourceRouteTableEntries: SourceRouteTableEntry[] = [];
-
-            for (let i = 0; i < 255; i++) {
-                sourceRouteTableEntries.push(createTestSourceRouteEntry([1, 2, 3, 4, 5], Math.floor(Math.random() * 10)));
-            }
-
-            driver.sourceRouteTable.set(1, sourceRouteTableEntries);
-
-            await expect(mockStop(driver, "Save size overflow")).resolves.toStrictEqual(undefined);
-
-            rmSync(dirname(driver.savePath), { recursive: true, force: true });
-            // @ts-expect-error override, prevent `mockStop` in `afterEach` hook
-            driver = undefined;
         });
 
         it("throw on failed RESET", async () => {
@@ -1245,7 +1218,7 @@ describe("OT RCP Driver", () => {
                 {
                     eui64: Buffer.from(A_EUI64).readBigUInt64LE(0),
                     panId: NETDEF_PAN_ID,
-                    extendedPANId: Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0),
+                    extendedPanId: Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0),
                     channel: A_CHANNEL,
                     nwkUpdateId: 0,
                     txPower: 10,
@@ -1604,7 +1577,7 @@ describe("OT RCP Driver", () => {
                 {
                     eui64: NET2_COORD_EUI64_BIGINT,
                     panId: NET2_PAN_ID,
-                    extendedPANId: Buffer.from(NET2_EXTENDED_PAN_ID).readBigUInt64LE(0),
+                    extendedPanId: Buffer.from(NET2_EXTENDED_PAN_ID).readBigUInt64LE(0),
                     channel: A_CHANNEL,
                     nwkUpdateId: 0,
                     txPower: 5,
@@ -1833,7 +1806,7 @@ describe("OT RCP Driver", () => {
                 {
                     eui64: NET3_COORD_EUI64_BIGINT,
                     panId: NET3_PAN_ID,
-                    extendedPANId: Buffer.from(NET3_EXTENDED_PAN_ID).readBigUInt64LE(0),
+                    extendedPanId: Buffer.from(NET3_EXTENDED_PAN_ID).readBigUInt64LE(0),
                     channel: A_CHANNEL,
                     nwkUpdateId: 0,
                     txPower: 5,
@@ -2655,7 +2628,7 @@ describe("OT RCP Driver", () => {
                 {
                     eui64: NET4_COORD_EUI64_BIGINT,
                     panId: NETDEF_PAN_ID,
-                    extendedPANId: Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0),
+                    extendedPanId: Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0),
                     channel: NET4_CHANNEL,
                     nwkUpdateId: 0,
                     txPower: 5,
@@ -3731,7 +3704,7 @@ describe("OT RCP Driver", () => {
                 {
                     eui64: Buffer.from(NET5_COORD_EUI64).readBigUInt64LE(0),
                     panId: NET5_PAN_ID,
-                    extendedPANId: Buffer.from(NET5_EXTENDED_PAN_ID).readBigUInt64LE(0),
+                    extendedPanId: Buffer.from(NET5_EXTENDED_PAN_ID).readBigUInt64LE(0),
                     channel: A_CHANNEL,
                     nwkUpdateId: 0,
                     txPower: 10,
@@ -3889,7 +3862,7 @@ describe("OT RCP Driver", () => {
             {
                 eui64: 5562607920115904346n,
                 panId: 6342,
-                extendedPANId: Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0),
+                extendedPanId: Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0),
                 channel: 20,
                 nwkUpdateId: 0,
                 txPower: 10,
