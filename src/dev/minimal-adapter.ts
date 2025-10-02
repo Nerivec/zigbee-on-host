@@ -73,7 +73,7 @@ export class MinimalAdapter {
     constructor(portOptions: PortOptions, streamRawConfig: StreamRawConfig, netParams: NetworkParameters, sendMACToZEP: boolean) {
         this.#wiresharkSeqNum = 0; // start at 1
         this.#wiresharkSocket = createSocket("udp4");
-        this.#wiresharkPort = process.env.WIRESHARK_ZEP_PORT ? Number.parseInt(process.env.WIRESHARK_ZEP_PORT) : DEFAULT_ZEP_UDP_PORT;
+        this.#wiresharkPort = process.env.WIRESHARK_ZEP_PORT ? Number.parseInt(process.env.WIRESHARK_ZEP_PORT, 10) : DEFAULT_ZEP_UDP_PORT;
         this.#wiresharkAddress = process.env.WIRESHARK_ADDRESS ? process.env.WIRESHARK_ADDRESS : DEFAULT_WIRESHARK_IP;
         this.#wiresharkSocket.bind(this.#wiresharkPort);
 
