@@ -31,6 +31,19 @@ import {
 import { SpinelStatus } from "../spinel/statuses.js";
 import { logger } from "../utils/logger.js";
 import {
+    estimateTLVStateSize,
+    readTLVs,
+    SAVE_FORMAT_VERSION,
+    serializeDeviceEntry,
+    TLVTag,
+    writeTLV,
+    writeTLVBigUInt64LE,
+    writeTLVInt8,
+    writeTLVUInt8,
+    writeTLVUInt16LE,
+    writeTLVUInt32LE,
+} from "../utils/save-serializer.js";
+import {
     decodeMACCapabilities,
     decodeMACFrameControl,
     decodeMACHeader,
@@ -109,12 +122,6 @@ interface AdapterDriverEventMap {
     deviceAuthorized: [source16: number, source64: bigint];
 }
 
-const enum SaveConsts {
-    NETWORK_DATA_SIZE = 1024,
-    DEVICE_DATA_SIZE = 512,
-    FRAME_COUNTER_JUMP_OFFSET = 1024,
-}
-
 export enum InstallCodePolicy {
     /** Do not support Install Codes */
     NOT_SUPPORTED = 0x00,
@@ -150,7 +157,7 @@ export enum NetworkKeyUpdateMethod {
 export type NetworkParameters = {
     eui64: bigint;
     panId: number;
-    extendedPANId: bigint;
+    extendedPanId: bigint;
     channel: number;
     nwkUpdateId: number;
     txPower: number;
@@ -688,6 +695,8 @@ const CONFIG_NWK_ROUTE_MAX_FAILURES = 3;
 const CONFIG_NWK_CONCENTRATOR_MIN_TIME = 10000;
 /** The time between state saving to disk. (msec) */
 const CONFIG_SAVE_STATE_TIME = 60000;
+/** Offset added to frame counter properties on save */
+const CONFIG_SAVE_FRAME_COUNTER_JUMP_OFFSET = 1024;
 
 export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     public readonly writer: OTRCPWriter;
@@ -1916,7 +1925,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 routerCapacity: true,
                 deviceDepth: 0, // coordinator
                 endDeviceCapacity: true,
-                extendedPANId: this.netParams.extendedPANId,
+                extendedPANId: this.netParams.extendedPanId,
                 txOffset: 0xffffff, // XXX: value from sniffed frames
                 updateId: this.netParams.nwkUpdateId, // XXX: correct?
             }),
@@ -5453,7 +5462,7 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                 const depth = 1; // TODO // 0x00 indicates that the device is the Zigbee coordinator for the network
                 const lqa = this.computeDeviceLQA(entry.address16, addr64);
 
-                lqiTableArr.push(this.netParams.extendedPANId);
+                lqiTableArr.push(this.netParams.extendedPanId);
                 lqiTableArr.push(addr64);
                 lqiTableArr.push(entry.address16);
                 lqiTableArr.push(deviceTypeByte);
@@ -5722,91 +5731,63 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
     // #region State Management
 
     /**
-     * Format is:
-     * - network data: ${SaveConsts.NETWORK_STATE_SIZE} bytes
-     * - device count: 2 bytes
-     * - device data: ${SaveConsts.DEVICE_STATE_SIZE} bytes * ${device count}
+     * Save state to file system in TLV format.
+     * Format version 1:
+     * - VERSION tag
+     * - Network parameter tags (EUI64, PAN_ID, etc.)
+     * - DEVICE_ENTRY tags (each containing nested TLV device data)
+     * - END_MARKER
      */
     public async saveState(): Promise<void> {
-        const state = Buffer.alloc(SaveConsts.NETWORK_DATA_SIZE + 2 + this.deviceTable.size * SaveConsts.DEVICE_DATA_SIZE);
+        // estimate buffer size (generous upper bound)
+        const estimatedSize = estimateTLVStateSize(this.deviceTable.size);
+        const state = Buffer.allocUnsafe(estimatedSize);
         let offset = 0;
 
-        state.writeBigUInt64LE(this.netParams.eui64, offset);
-        offset += 8;
-        state.writeUInt16LE(this.netParams.panId, offset);
-        offset += 2;
-        state.writeBigUInt64LE(this.netParams.extendedPANId, offset);
-        offset += 8;
-        state.writeUInt8(this.netParams.channel, offset);
-        offset += 1;
-        state.writeUInt8(this.netParams.nwkUpdateId, offset);
-        offset += 1;
-        state.writeInt8(this.netParams.txPower, offset);
-        offset += 1;
-        state.set(this.netParams.networkKey, offset);
-        offset += ZigbeeConsts.SEC_KEYSIZE;
-        state.writeUInt32LE(this.netParams.networkKeyFrameCounter + SaveConsts.FRAME_COUNTER_JUMP_OFFSET, offset);
-        offset += 4;
-        state.writeUInt8(this.netParams.networkKeySequenceNumber, offset);
-        offset += 1;
-        state.set(this.netParams.tcKey, offset);
-        offset += ZigbeeConsts.SEC_KEYSIZE;
-        state.writeUInt32LE(this.netParams.tcKeyFrameCounter + SaveConsts.FRAME_COUNTER_JUMP_OFFSET, offset);
-        offset += 4;
+        // write version first
+        offset = writeTLVUInt8(state, offset, TLVTag.VERSION, SAVE_FORMAT_VERSION);
+        // network parameters (can be added/removed without breaking old readers)
+        offset = writeTLVBigUInt64LE(state, offset, TLVTag.EUI64, this.netParams.eui64);
+        offset = writeTLVUInt16LE(state, offset, TLVTag.PAN_ID, this.netParams.panId);
+        offset = writeTLVBigUInt64LE(state, offset, TLVTag.EXTENDED_PAN_ID, this.netParams.extendedPanId);
+        offset = writeTLVUInt8(state, offset, TLVTag.CHANNEL, this.netParams.channel);
+        offset = writeTLVUInt8(state, offset, TLVTag.NWK_UPDATE_ID, this.netParams.nwkUpdateId);
+        offset = writeTLVInt8(state, offset, TLVTag.TX_POWER, this.netParams.txPower);
+        offset = writeTLV(state, offset, TLVTag.NETWORK_KEY, this.netParams.networkKey);
+        offset = writeTLVUInt32LE(
+            state,
+            offset,
+            TLVTag.NETWORK_KEY_FRAME_COUNTER,
+            this.netParams.networkKeyFrameCounter + CONFIG_SAVE_FRAME_COUNTER_JUMP_OFFSET,
+        );
+        offset = writeTLVUInt8(state, offset, TLVTag.NETWORK_KEY_SEQUENCE_NUMBER, this.netParams.networkKeySequenceNumber);
+        offset = writeTLV(state, offset, TLVTag.TC_KEY, this.netParams.tcKey);
+        offset = writeTLVUInt32LE(
+            state,
+            offset,
+            TLVTag.TC_KEY_FRAME_COUNTER,
+            this.netParams.tcKeyFrameCounter + CONFIG_SAVE_FRAME_COUNTER_JUMP_OFFSET,
+        );
 
-        // reserved
-        offset = SaveConsts.NETWORK_DATA_SIZE;
-
-        state.writeUInt16LE(this.deviceTable.size, offset);
-        offset += 2;
-
+        // device table (count is implicit in number of DEVICE_ENTRY tags)
         for (const [device64, device] of this.deviceTable) {
-            state.writeBigUInt64LE(device64, offset);
-            offset += 8;
-            state.writeUInt16LE(device.address16, offset);
-            offset += 2;
-            state.writeUInt8(device.capabilities ? encodeMACCapabilities(device.capabilities) : 0x00, offset);
-            offset += 1;
-            state.writeUInt8(device.authorized ? 1 : 0, offset);
-            offset += 1;
-            state.writeUInt8(device.neighbor ? 1 : 0, offset);
-            offset += 1;
-
-            // reserved
-            offset += 64 - 13; // currently: 51
-
             const sourceRouteEntries = this.sourceRouteTable.get(device.address16);
-            const sourceRouteEntryCount = sourceRouteEntries?.length ?? 0;
-            let sourceRouteTableSize = 0;
-
-            state.writeUInt8(sourceRouteEntryCount, offset);
-            offset += 1;
-
-            if (sourceRouteEntries) {
-                for (const sourceRouteEntry of sourceRouteEntries) {
-                    sourceRouteTableSize += 2 + sourceRouteEntry.relayAddresses.length * 2;
-
-                    if (64 + 1 + sourceRouteTableSize > SaveConsts.DEVICE_DATA_SIZE) {
-                        throw new Error("Save size overflow", { cause: SpinelStatus.INTERNAL_ERROR });
-                    }
-
-                    state.writeUInt8(sourceRouteEntry.pathCost, offset);
-                    offset += 1;
-                    state.writeUInt8(sourceRouteEntry.relayAddresses.length, offset);
-                    offset += 1;
-
-                    for (const relayAddress of sourceRouteEntry.relayAddresses) {
-                        state.writeUInt16LE(relayAddress, offset);
-                        offset += 2;
-                    }
-                }
-            }
-
-            // reserved
-            offset += SaveConsts.DEVICE_DATA_SIZE - 64 - 1 - sourceRouteTableSize;
+            const deviceEntry = serializeDeviceEntry(
+                device64,
+                device.address16,
+                device.capabilities ? encodeMACCapabilities(device.capabilities) : 0x00,
+                device.authorized,
+                device.neighbor,
+                sourceRouteEntries,
+            );
+            offset = writeTLV(state, offset, TLVTag.DEVICE_ENTRY, deviceEntry);
         }
 
-        await writeFile(this.savePath, state);
+        // write end marker (aids debugging and validates complete write)
+        state.writeUInt8(TLVTag.END_MARKER, offset++);
+
+        // write only the used portion
+        await writeFile(this.savePath, state.subarray(0, offset));
     }
 
     /**
@@ -5818,39 +5799,41 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.#stateLoaded = true;
 
         try {
-            const state = await readFile(this.savePath);
+            const stateBuffer = await readFile(this.savePath);
 
-            logger.debug(() => `Loaded state from ${this.savePath} (${state.byteLength} bytes)`, NS);
+            logger.debug(() => `Loaded state from ${this.savePath} (${stateBuffer.byteLength} bytes)`, NS);
 
-            if (state.byteLength < SaveConsts.NETWORK_DATA_SIZE) {
-                throw new Error("Invalid save state size", { cause: SpinelStatus.INTERNAL_ERROR });
+            // Parse state once into typed structure with all values already converted to final types
+            const state = readTLVs(stateBuffer);
+
+            // Check version (already parsed to number)
+            const version = state.version ?? 1;
+
+            if (version > SAVE_FORMAT_VERSION) {
+                logger.warning(`Unknown save format version ${version}, attempting to load`, NS);
             }
 
-            this.netParams = await this.readNetworkState(state);
+            // Network parameters already parsed to final types - just assign directly!
+            this.netParams = {
+                eui64: state.eui64,
+                panId: state.panId,
+                extendedPanId: state.extendedPanId,
+                channel: state.channel,
+                nwkUpdateId: state.nwkUpdateId,
+                txPower: state.txPower,
+                networkKey: state.networkKey,
+                networkKeyFrameCounter: state.networkKeyFrameCounter,
+                networkKeySequenceNumber: state.networkKeySequenceNumber,
+                tcKey: state.tcKey,
+                tcKeyFrameCounter: state.tcKeyFrameCounter,
+            };
 
-            // reserved
-            let offset = SaveConsts.NETWORK_DATA_SIZE;
+            // Device entries already parsed with all nested source routes
+            logger.debug(() => `Current save devices: ${state.deviceEntries.length}`, NS);
 
-            const deviceCount = state.readUInt16LE(offset);
-            offset += 2;
-
-            logger.debug(() => `Current save devices: ${deviceCount}`, NS);
-
-            for (let i = 0; i < deviceCount; i++) {
-                const address64 = state.readBigUInt64LE(offset);
-                offset += 8;
-                const address16 = state.readUInt16LE(offset);
-                offset += 2;
-                const capabilities = state.readUInt8(offset);
-                offset += 1;
-                const authorized = Boolean(state.readUInt8(offset));
-                offset += 1;
-                const neighbor = Boolean(state.readUInt8(offset));
-                offset += 1;
-
-                // reserved
-                offset += 64 - 13; // currently: 51
-
+            for (const device of state.deviceEntries) {
+                // Device values already parsed - just destructure
+                const { address64, address16, capabilities, authorized, neighbor, sourceRouteEntries } = device;
                 const decodedCap = capabilities !== 0 ? decodeMACCapabilities(capabilities) : undefined;
 
                 this.deviceTable.set(address64, {
@@ -5866,41 +5849,24 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
                     this.indirectTransmissions.set(address64, []);
                 }
 
-                let sourceRouteTableSize = 0;
-                const sourceRouteEntryCount = state.readUInt8(offset);
-                offset += 1;
+                if (sourceRouteEntries.length > 0) {
+                    const routes = sourceRouteEntries.map((entry) => ({
+                        relayAddresses: entry.relayAddresses,
+                        pathCost: entry.pathCost,
+                        lastUpdated: entry.lastUpdated,
+                        failureCount: 0,
+                        lastUsed: undefined,
+                    }));
 
-                if (sourceRouteEntryCount > 0) {
-                    const sourceRouteEntries: SourceRouteTableEntry[] = [];
-
-                    for (let i = 0; i < sourceRouteEntryCount; i++) {
-                        const pathCost = state.readUInt8(offset);
-                        offset += 1;
-                        const relayAddressCount = state.readUInt8(offset);
-                        offset += 1;
-                        const relayAddresses: number[] = [];
-                        sourceRouteTableSize += 2 + relayAddressCount * 2;
-
-                        for (let j = 0; j < relayAddressCount; j++) {
-                            relayAddresses.push(state.readUInt16LE(offset));
-                            offset += 2;
-                        }
-
-                        sourceRouteEntries.push(this.createSourceRouteEntry(relayAddresses, pathCost));
-                    }
-
-                    this.sourceRouteTable.set(address16, sourceRouteEntries);
+                    this.sourceRouteTable.set(address16, routes);
                 }
-
-                // reserved
-                offset += SaveConsts.DEVICE_DATA_SIZE - 64 - 1 - sourceRouteTableSize;
             }
         } catch {
             // `this.savePath` does not exist, using constructor-given network params, do initial save
             await this.saveState();
         }
 
-        // pre-compure hashes for default keys for faster processing
+        // pre-compute hashes for default keys for faster processing
         registerDefaultHashedKeys(
             makeKeyedHashByType(ZigbeeKeyType.LINK, this.netParams.tcKey),
             makeKeyedHashByType(ZigbeeKeyType.NWK, this.netParams.networkKey),
@@ -5917,61 +5883,6 @@ export class OTRCPDriver extends EventEmitter<AdapterDriverEventMap> {
         this.configAttributes.powerDescriptor = powerDescriptor;
         this.configAttributes.simpleDescriptors = simpleDescriptors;
         this.configAttributes.activeEndpoints = activeEndpoints;
-    }
-
-    /**
-     * Read the current network state in the save file, if any present.
-     * @param readState Optional. For use in places where the state file has already been read.
-     * @returns
-     */
-    public async readNetworkState(readState: Buffer): Promise<NetworkParameters>;
-    public async readNetworkState(): Promise<NetworkParameters | undefined>;
-    public async readNetworkState(readState?: Buffer): Promise<NetworkParameters | undefined> {
-        try {
-            const state = readState ?? (await readFile(this.savePath));
-            let offset = 0;
-
-            const eui64 = state.readBigUInt64LE(offset);
-            offset += 8;
-            const panId = state.readUInt16LE(offset);
-            offset += 2;
-            const extendedPANId = state.readBigUInt64LE(offset);
-            offset += 8;
-            const channel = state.readUInt8(offset);
-            offset += 1;
-            const nwkUpdateId = state.readUInt8(offset);
-            offset += 1;
-            const txPower = state.readInt8(offset);
-            offset += 1;
-            const networkKey = state.subarray(offset, offset + ZigbeeConsts.SEC_KEYSIZE);
-            offset += ZigbeeConsts.SEC_KEYSIZE;
-            const networkKeyFrameCounter = state.readUInt32LE(offset);
-            offset += 4;
-            const networkKeySequenceNumber = state.readUInt8(offset);
-            offset += 1;
-            const tcKey = state.subarray(offset, offset + ZigbeeConsts.SEC_KEYSIZE);
-            offset += ZigbeeConsts.SEC_KEYSIZE;
-            const tcKeyFrameCounter = state.readUInt32LE(offset);
-            offset += 4;
-
-            logger.debug(() => `Current save network: eui64=${eui64} panId=${panId} channel=${channel}`, NS);
-
-            return {
-                eui64,
-                panId,
-                extendedPANId,
-                channel,
-                nwkUpdateId,
-                txPower,
-                networkKey,
-                networkKeyFrameCounter,
-                networkKeySequenceNumber,
-                tcKey,
-                tcKeyFrameCounter,
-            };
-        } catch {
-            /* empty */
-        }
     }
 
     /**
