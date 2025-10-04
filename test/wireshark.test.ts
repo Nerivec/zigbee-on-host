@@ -1,6 +1,6 @@
 import { createSocket } from "node:dgram";
 import { describe, it } from "vitest";
-import { createWiresharkZEPFrame, DEFAULT_WIRESHARK_IP, DEFAULT_ZEP_UDP_PORT } from "../src/dev/wireshark";
+import { createWiresharkZEPFrame, DEFAULT_WIRESHARK_IP, DEFAULT_ZEP_UDP_PORT } from "../src/dev/wireshark.js";
 
 /**
  * Util for quick triggering of "send frame to wireshark", not an actual test.

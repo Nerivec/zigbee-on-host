@@ -3,6 +3,10 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
     plugins: [],
     test: {
+        typecheck: {
+            enabled: true,
+        },
+        mockReset: true,
         onConsoleLog() {
             return false;
         },
@@ -20,10 +24,10 @@ export default defineConfig({
             reportOnFailure: false,
             thresholds: {
                 /** current dev status, should maintain above this */
-                statements: 70,
-                functions: 75,
-                branches: 75,
-                lines: 70,
+                statements: 85,
+                functions: 85,
+                branches: 80,
+                lines: 85,
             },
         },
     },
