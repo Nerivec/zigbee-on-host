@@ -467,7 +467,7 @@ docker compose -f docker-dev/compose.yaml down
 
 - **Repository:** https://github.com/Nerivec/zigbee-on-host
 - **npm package:** zigbee-on-host
-- **Version:** 0.1.13 (work in progress, expect breaking changes)
+- **Version:** 0.2.0 (work in progress, expect breaking changes)
 - **Author:** Nerivec
 
 ### Key Files
