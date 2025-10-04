@@ -212,6 +212,42 @@ export class NWKHandler {
      * Bails early if destination16 is broadcast.
      * Throws if both 16/64 are undefined or if destination is unknown (not in device table).
      * Throws if no route and device is not neighbor.
+     *
+     * SPEC COMPLIANCE NOTES (05-3474-23 #3.6.3):
+     * - ✅ Returns early for broadcast addresses (no routing needed)
+     * - ✅ Validates destination is known in device table
+     * - ✅ Returns undefined arrays for direct communication (neighbor devices)
+     * - ⚠️  ROUTE AGING: Implements custom aging mechanism
+     *       - CONFIG_NWK_ROUTE_EXPIRY_TIME: 300000ms (5 minutes)
+     *       - CONFIG_NWK_ROUTE_STALENESS_TIME: 120000ms (2 minutes)
+     *       - These values are implementation-specific, not from spec
+     * - ✅ Route failure tracking with blacklisting:
+     *       - CONFIG_NWK_ROUTE_MAX_FAILURES: 3 consecutive failures
+     *       - Marks routes as unusable after threshold ✅
+     * - ⚠️  MULTI-CRITERIA ROUTE SELECTION:
+     *       - Path cost (hop count) ✅
+     *       - Staleness penalty (route age) ✅
+     *       - Failure penalty (consecutive failures) ✅
+     *       - Recency bonus (recently used routes) ✅
+     *       - This is more sophisticated than spec requires
+     * - ✅ Checks MAC NO_ACK tracking for relay validation
+     *       - Filters out routes with unreliable relays ✅
+     * - ✅ Triggers many-to-one route request when no valid routes
+     *       - Uses setImmediate for non-blocking trigger ✅
+     * - ⚠️  SPEC DEVIATION: Route table per spec should be:
+     *       - Destination address
+     *       - Status (active, discovery underway, validation underway, inactive)
+     *       - Next hop address
+     *       - Source route subframe (if source routing)
+     *       Current implementation uses array of SourceRouteTableEntry per destination
+     *       This allows multiple routes per destination (more flexible)
+     * - ⚠️  ROUTE DISCOVERY: Triggers MTORR when needed
+     *       - Spec #3.6.3.5: Route discovery should be used
+     *       - Implementation uses many-to-one routing (concentrator) ✅
+     *       - This is appropriate for coordinator as concentrator
+     *
+     * IMPORTANT: This is a critical performance path - called for every outgoing frame
+     *
      * @param destination16
      * @param destination64
      * @returns
@@ -664,6 +700,36 @@ export class NWKHandler {
 
     /**
      * 05-3474-R #3.4.1
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Correctly decodes options, id, destination16, pathCost
+     * - ✅ Extracts manyToOne flag from options byte
+     * - ✅ Conditionally parses destination64 based on DEST_EXT flag
+     * - ✅ Only sends ROUTE_REPLY if destination is unicast (< BCAST_MIN)
+     * - ⚠️  SPEC BEHAVIOR: Coordinator always replies to route requests
+     *       - This is correct for concentrator behavior ✅
+     *       - Spec #3.6.3.5.2: concentrator SHALL issue ROUTE_REPLY
+     * - ✅ Uses correct parameters for sendRouteReply:
+     *       - requestDest1stHop16: first hop back to originator (macHeader.destination16)
+     *       - requestRadius: from nwkHeader (for TTL management)
+     *       - requestId: route request ID for correlation
+     *       - originator16/64: source of ROUTE_REQ
+     *       - responder16/64: this coordinator (destination of ROUTE_REQ)
+     * - ⚠️  MISSING: No handling of pathCost accumulation
+     *       - Spec requires incrementing pathCost at each hop
+     *       - Coordinator doesn't forward ROUTE_REQ so this is acceptable
+     * - ⚠️  MISSING: No route discovery table management
+     *       - Spec requires tracking recent ROUTE_REQs to avoid loops
+     *       - Since coordinator doesn't forward, this is less critical
+     * - ❌ POTENTIAL ISSUE: No validation of source route if present
+     *       - ROUTE_REQ may contain source route information
+     *       - Should validate/store this information
+     *
+     * @param data Command data
+     * @param offset Current offset in data
+     * @param macHeader MAC header
+     * @param nwkHeader NWK header
+     * @returns New offset after processing
      */
     public async processRouteReq(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
         const options = data.readUInt8(offset);
@@ -989,6 +1055,34 @@ export class NWKHandler {
 
     /**
      * 05-3474-R #3.4.5
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Correctly decodes relayCount and relay addresses
+     * - ✅ Stores source route in sourceRouteTable
+     * - ✅ Creates source route entry with relays and path cost (relayCount + 1)
+     * - ✅ Handles missing source16 by looking up via source64
+     * - ✅ Checks for duplicate routes before adding (hasSourceRoute)
+     * - ⚠️  SPEC BEHAVIOR: ROUTE_RECORD provides path from source to coordinator
+     *       - Relay list is in order from source toward coordinator ✅
+     *       - Path cost calculation (relayCount + 1) is correct ✅
+     * - ✅ Validates source16 is defined before adding to table
+     * - ⚠️  ROUTE RECORD vs ROUTE REPLY difference:
+     *       - ROUTE_RECORD: Unsolicited path advertisement (many-to-one routing)
+     *       - ROUTE_REPLY: Response to ROUTE_REQUEST
+     *       - Implementation handles both correctly
+     * - ⚠️  MISSING: No timestamp on route record
+     *       - Routes should have freshness indicator
+     *       - Fixed by using createSourceRouteEntry which adds lastUpdated ✅
+     * - ✅ Stores relay addresses in correct order for source routing
+     *
+     * IMPORTANT: Route records are sent by devices to establish reverse path to concentrator
+     * This is correct for coordinator acting as concentrator.
+     *
+     * @param data Command data
+     * @param offset Current offset in data
+     * @param macHeader MAC header
+     * @param nwkHeader NWK header
+     * @returns New offset after processing
      */
     public processRouteRecord(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const relayCount = data.readUInt8(offset);
@@ -1034,6 +1128,41 @@ export class NWKHandler {
     /**
      * 05-3474-R #3.4.6
      * Optional
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Correctly decodes capabilities byte
+     * - ✅ Determines rejoin type based on frameControl.security:
+     *       - security=false: Trust Center Rejoin (unsecured)
+     *       - security=true: NWK rejoin (secured with NWK key)
+     * - ⚠️  TRUST CENTER REJOIN HANDLING:
+     *       - Checks if device is known and authorized ✅
+     *       - Denies rejoin if device unknown or unauthorized ✅
+     *       - SPEC WARNING in comment about unsecured packets from neighbors
+     *         "Unsecured Packets at the network layer claiming to be from existing neighbors...
+     *          must not rewrite legitimate data in nwkNeighborTable"
+     *         This is a critical security requirement ✅
+     * - ⚠️  SPEC COMPLIANCE: apsTrustCenterAddress check mentioned in comment
+     *       - Should check if TC address is all-FF (distributed) or all-00 (pre-TRANSPORT_KEY)
+     *       - If so, should reject with PAN_ACCESS_DENIED
+     *       - NOT IMPLEMENTED ❌
+     * - ✅ Calls onAssociate with correct parameters:
+     *       - initialJoin=false (this is a rejoin) ✅
+     *       - neighbor determined by comparing MAC and NWK source ✅
+     *       - denyOverride based on security analysis ✅
+     * - ✅ Sends REJOIN_RESP with assigned address and status
+     * - ✅ Does not require VERIFY_KEY after rejoin per spec note
+     * - ✅ Triggers onDeviceRejoined callback on SUCCESS
+     *
+     * SECURITY CONCERNS:
+     * - Unsecured rejoin handling is critical for security
+     * - Must validate device authorization before accepting
+     * - Missing apsTrustCenterAddress validation is a security gap
+     *
+     * @param data Command data
+     * @param offset Current offset in data
+     * @param macHeader MAC header
+     * @param nwkHeader NWK header
+     * @returns New offset after processing
      */
     public async processRejoinReq(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
         const capabilities = data.readUInt8(offset);
@@ -1165,6 +1294,46 @@ export class NWKHandler {
 
     /**
      * 05-3474-R #3.4.8
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Correctly decodes options byte, link count, and link entries
+     * - ✅ Parses firstFrame and lastFrame flags for multi-frame support
+     * - ✅ Extracts linkCount from CMD_LINK_OPTION_COUNT_MASK
+     * - ✅ Each link entry has: address, incomingCost, outgoingCost
+     * - ✅ Marks device as neighbor if link to coordinator is reported
+     * - ⚠️  SOURCE ROUTE CREATION FROM LINK STATUS:
+     *       - Creates source route entry for each neighbor ✅
+     *       - Uses incomingCost as pathCost (link quality from neighbor's perspective) ✅
+     *       - For coordinator link: creates empty relay list (direct route) ✅
+     *       - For other links: creates route through that address ✅
+     * - ✅ Updates existing routes if already present (by matching relay list)
+     * - ✅ Resets failureCount on route update (fresh link status = healthy link)
+     * - ⚠️  SPEC QUESTION: Using link status to build source routes
+     *       - Spec #3.4.8 describes link status for neighbor table maintenance
+     *       - Using it to build source routes is an implementation optimization
+     *       - This may not be fully spec-compliant but is pragmatic
+     * - ❌ TODO MARKERS in comments:
+     *       - "TODO: NeighborTableEntry.age = 0 // max 0xff"
+     *       - "TODO: NeighborTableEntry.routerAge += 1 // max 0xffff"
+     *       - "TODO: NeighborTableEntry.routerConnectivity = formula"
+     *       - "TODO: NeighborTableEntry.routerNeighborSetDiversity = formula"
+     *       - "TODO: if NeighborTableEntry does not exist, create one..."
+     *       - These are all required per spec #3.6.1.5 for proper neighbor table management
+     * - ❌ MISSING: No actual neighbor table - only device table
+     *       - Spec requires separate neighbor table with different attributes
+     *       - Current implementation uses deviceTable with neighbor flag
+     *       - This is a significant spec deviation
+     * - ⚠️  COST CALCULATION: Uses incoming cost directly as path cost
+     *       - This may underestimate total path cost for multi-hop routes
+     *       - Should consider accumulated path cost through intermediaries
+     *
+     * CRITICAL: Neighbor table management is incomplete per spec
+     *
+     * @param data Command data
+     * @param offset Current offset in data
+     * @param macHeader MAC header
+     * @param nwkHeader NWK header
+     * @returns New offset after processing
      */
     public processLinkStatus(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         // Bit: 0 – 4        5            6           7
@@ -1524,6 +1693,37 @@ export class NWKHandler {
     /**
      * 05-3474-23 #3.4.14
      * Optional
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Correctly decodes assocType and capabilities
+     * - ⚠️  TODO: TLVs not decoded (may contain critical R23+ commissioning info)
+     * - ✅ Determines initial join vs rejoin from assocType:
+     *       - 0x00 = Initial Join ✅
+     *       - 0x01 = Rejoin ✅
+     * - ✅ Determines neighbor by comparing MAC and NWK source addresses
+     * - ✅ Calls onAssociate with appropriate parameters
+     * - ✅ Sends COMMISSIONING_RESPONSE with status and address
+     * - ✅ Sends TRANSPORT_KEY_NWK on SUCCESS for initial join ✅
+     * - ⚠️  SPEC QUESTION: Should also send TRANSPORT_KEY on rejoin if NWK key changed?
+     *       - Comment says "TODO also for rejoin in case of nwk key change?"
+     *       - Spec may require this in some scenarios ❓
+     * - ⚠️  MISSING: No validation of commissioning TLVs
+     *       - TLVs may contain security parameters
+     *       - Should validate and process these
+     * - ⚠️  SPEC NOTE: Comment about sending Remove Device CMD to deny join
+     *       - Alternative to normal rejection mechanism
+     *       - Not implemented here
+     *
+     * COMMISSIONING vs NORMAL JOIN:
+     * - Commissioning is R23+ feature for network commissioning
+     * - May have different security requirements than legacy join
+     * - TLV support is critical for full R23 compliance
+     *
+     * @param data Command data
+     * @param offset Current offset in data
+     * @param macHeader MAC header
+     * @param nwkHeader NWK header
+     * @returns New offset after processing
      */
     public async processCommissioningRequest(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
         // 0x00 Initial Join

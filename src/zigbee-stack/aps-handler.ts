@@ -751,6 +751,17 @@ export class APSHandler {
     /**
      * 05-3474-R #4.4.11.1
      *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Correctly uses CMD_KEY_TC_LINK type (0x01) per spec Table 4-17
+     * - ✅ Uses UNICAST delivery mode as required by spec
+     * - ✅ Applies both NWK security (true) and APS security (LOAD key) per spec #4.4.1.5
+     * - ✅ Includes destination64 and source64 (TC eui64) as mandated
+     * - ⚠️  TODO: TLVs not implemented (optional but recommended for R23+ features)
+     * - ⚠️  TODO: Tunneling support not implemented (optional per spec #4.6.3.7)
+     * - ❓ UNCERTAIN: Using LOAD keyId for APS encryption - spec says "link key" but LOAD is typically used for TC link key transport
+     * - ✅ Frame counter uses TC key counter (nextTCKeyFrameCounter) which is correct
+     * - ✅ MIC length 4 bytes as per security spec requirements
+     *
      * @param nwkDest16
      * @param key SHALL contain the link key that SHOULD be used for APS encryption
      * @param destination64 SHALL contain the address of the device which SHOULD use this link key
@@ -803,6 +814,21 @@ export class APSHandler {
 
     /**
      * 05-3474-R #4.4.11.1 #4.4.11.1.3.2
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Correctly uses CMD_KEY_STANDARD_NWK type (0x00) per spec Table 4-17
+     * - ✅ Includes seqNum, destination64, and source64 as required by spec
+     * - ✅ Uses UNICAST delivery mode as appropriate for joining device
+     * - ⚠️  DESIGN CHOICE: Uses NWK security=false, APS security=true with TRANSPORT keyId
+     *       - Spec #4.4.1.5 states "a device receiving an APS transport key command MAY choose whether or not APS encryption is required"
+     *       - Implementation chooses APS encryption for initial join security
+     *       - Alternative (commented out) uses NWK=true, APS=false which is also valid per spec
+     * - ⚠️  SPEC COMPLIANCE: disableACKRequest=true follows observed behavior in sniffs but spec #4.4.11 says:
+     *       "All commands except TUNNEL SHALL request acknowledgement" - this appears to violate spec
+     *       However, TRANSPORT_KEY during initial join may not receive ACK due to lack of NWK key
+     * - ✅ Frame counter uses TC key counter which is correct for TRANSPORT keyId
+     * - ✅ For distributed networks (no TC), source64 should be 0xFFFFFFFFFFFFFFFF per spec - code correctly uses eui64 (centralized TC)
+     * - ❌ SPEC ISSUE: Broadcast destination64 handling not implemented (should set to all-zero per spec)
      *
      * @param nwkDest16
      * @param key SHALL contain a network key
@@ -925,6 +951,34 @@ export class APSHandler {
 
     /**
      * 05-3474-R #4.4.11.2
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Correctly decodes all mandatory fields: device64, device16, status
+     * - ⚠️  TODO: TLVs not decoded (optional but recommended for R23+ features)
+     * - ✅ Handles 4 status codes as per spec:
+     *       0x00 = Standard Device Secured Rejoin
+     *       0x01 = Standard Device Unsecured Join
+     *       0x02 = Device Left
+     *       0x03 = Standard Device Trust Center Rejoin
+     * - ⚠️  IMPLEMENTATION: Status 0x01 (Unsecured Join) handling:
+     *       - Calls onAssociate with initial join=true ✅
+     *       - Sets neighbor=false ✅ (device joined through router)
+     *       - allowOverride=true ✅ (was allowed by parent)
+     *       - Creates source route through parent ✅
+     *       - Sends TUNNEL(TRANSPORT_KEY) to parent for relay ✅
+     * - ⚠️  SPEC CONCERN: Tunneling TRANSPORT_KEY for nested joins:
+     *       - Uses TUNNEL command per spec #4.6.3.7 ✅
+     *       - Encrypts tunneled APS frame with TRANSPORT keyId ✅
+     *       - However, should verify parent can relay before trusting join
+     * - ⚠️  Status 0x03 (TC Rejoin) handling appears correct but minimal
+     * - ⚠️  Status 0x02 (Device Left) handling uses onDisassociate - spec says "informative only, should not take action"
+     *       This may be non-compliant as it actively removes the device
+     * - ❌ MISSING: Status 0x00 (Secured Rejoin) is not handled at all
+     *
+     * SECURITY CONCERN:
+     * - Unsecured joins through routers rely heavily on parent router trust
+     * - No verification of parent's claim about device capabilities
+     * - Source route created immediately may be premature if join fails
      */
     public async processUpdateDevice(
         data: Buffer,
@@ -1337,6 +1391,26 @@ export class APSHandler {
 
     /**
      * 05-3474-R #4.4.11.7
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Decodes keyType, source64, and keyHash correctly
+     * - ✅ Filters out broadcast frames (macHeader.source16 !== BCAST_ADDR) as required
+     * - ✅ Verifies TC link key hash for keyType=CMD_KEY_TC_LINK (0x01)
+     * - ✅ Returns appropriate status codes:
+     *       - 0x00 (SUCCESS) when hash matches
+     *       - 0xad (SECURITY_FAILURE) when hash doesn't match
+     *       - 0xa3 (ILLEGAL_REQUEST) for APP_MASTER in TC
+     *       - 0xaa (NOT_SUPPORTED) for unknown key types
+     * - ⚠️  SPEC COMPLIANCE: Hash verification uses pre-computed tcVerifyKeyHash from context
+     *       - Spec B.1.4: hash should be keyed hash function with input string '0x03'
+     *       - Implementation appears correct (context.tcVerifyKeyHash is computed correctly)
+     * - ❌ MISSING: Spec states "not valid if operating in distributed network" but no check for distributed mode
+     * - ✅ Sends CONFIRM_KEY in response with appropriate status
+     * - ❓ UNCERTAIN: keyType=CMD_KEY_APP_MASTER (0x02) returns ILLEGAL_REQUEST for TC
+     *       - Spec is unclear if TC should reject this or if it's valid in some scenarios
+     * - ✅ Uses source64 parameter correctly in CONFIRM_KEY response
+     *
+     * NOTE: This command is critical for security - device proves it has the correct key
      */
     public async processVerifyKey(
         data: Buffer,
@@ -1433,6 +1507,26 @@ export class APSHandler {
 
     /**
      * 05-3474-R #4.4.11.8
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Sends CONFIRM_KEY with all required fields: status, keyType, destination64
+     * - ✅ Uses UNICAST delivery mode as required
+     * - ✅ Applies NWK security (true) as expected for TC communications
+     * - ⚠️  CRITICAL SPEC QUESTION: Uses LINK keyId for APS security
+     *       - Comment says "XXX: TRANSPORT?" indicating uncertainty
+     *       - Spec #4.4.11.8 doesn't explicitly state which keyId to use
+     *       - LINK (0x03) suggests using the link key being confirmed
+     *       - TRANSPORT (0x05) would use TC link key as transport
+     *       - THIS NEEDS VERIFICATION AGAINST SPEC AND PACKET CAPTURES
+     * - ✅ Uses nextTCKeyFrameCounter() which is correct for TC->device communications
+     * - ✅ Sets device.authorized = true after successful CONFIRM_KEY send
+     * - ✅ Triggers onDeviceAuthorized callback via setImmediate (non-blocking)
+     * - ⚠️  TIMING CONCERN: Sets authorized=true immediately after send, not after ACK
+     *       - May cause race condition if CONFIRM_KEY fails to deliver
+     *       - Should possibly wait for ACK or rely on retry mechanism
+     * - ✅ Only sets authorized for devices in deviceTable
+     *
+     * CRITICAL: This is the final step in device authorization - must be correct!
      *
      * @param nwkDest16
      * @param status 1-byte status code indicating the result of the operation. See Table 2.27
