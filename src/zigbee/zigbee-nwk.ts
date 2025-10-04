@@ -283,7 +283,13 @@ export type ZigbeeNWKHeader = {
  */
 export type ZigbeeNWKPayload = Buffer;
 
+/**
+ * Decode ZigBee NWK frame control field.
+ * HOT PATH: Called for every incoming ZigBee NWK frame.
+ */
+/* @__INLINE__ */
 export function decodeZigbeeNWKFrameControl(data: Buffer, offset: number): [ZigbeeNWKFrameControl, offset: number] {
+    // HOT PATH: Extract NWK FCF fields with bitwise operations
     const fcf = data.readUInt16LE(offset);
     offset += 2;
 

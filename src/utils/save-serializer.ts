@@ -8,7 +8,7 @@
  * - Length >= 128: two bytes with high bit set in first byte
  */
 
-import type { DeviceTableEntry, NetworkParameters, SourceRouteTableEntry } from "../drivers/ot-rcp-driver";
+import type { DeviceTableEntry, NetworkParameters, SourceRouteTableEntry } from "../zigbee-stack/stack-context.js";
 
 /**
  * Parsed device entry with final values ready to use.

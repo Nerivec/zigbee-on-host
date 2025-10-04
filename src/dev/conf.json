@@ -1,7 +1,7 @@
 {
     "adapter": {
         "path": "/dev/ttyACM0",
-        "baudRate": 460800,
+        "baudRate": 921600,
         "rtscts": false
     },
     "streamRaw": {

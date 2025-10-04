@@ -24,6 +24,12 @@ export type HdlcFrame = {
     fcs: number;
 };
 
+/**
+ * Check if byte needs HDLC escaping.
+ * HOT PATH: Called during frame encoding.
+ * Uses simple comparison for fast checking.
+ */
+/* @__INLINE__ */
 export function hdlcByteNeedsEscape(aByte: number): boolean {
     return (
         aByte === HdlcReservedByte.XON ||
@@ -52,10 +58,22 @@ const HDLC_FCS_TABLE = [
     0x3de3, 0x2c6a, 0x1ef1, 0x0f78,
 ];
 
+/**
+ * Update FCS (Frame Check Sequence) with new byte.
+ * HOT PATH: Called for every byte in frame during encoding/decoding.
+ * Uses lookup table for fast CRC calculation.
+ */
+/* @__INLINE__ */
 export function updateFcs(aFcs: number, aByte: number): number {
     return ((aFcs >> 8) ^ HDLC_FCS_TABLE[(aFcs ^ aByte) & 0xff]) & 0xffff;
 }
 
+/**
+ * Decode HDLC frame from buffer.
+ * HOT PATH: Called for every incoming frame from serial port.
+ * Optimized with minimal allocations and inline FCS checking.
+ */
+/* @__INLINE__ */
 export function decodeHdlcFrame(buffer: Buffer): HdlcFrame {
     // sanity check
     if (buffer.byteLength > HDLC_TX_CHUNK_SIZE) {

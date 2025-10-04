@@ -122,7 +122,13 @@ export type ZigbeeAPSHeader = {
 
 export type ZigbeeAPSPayload = Buffer;
 
+/**
+ * Decode ZigBee APS frame control field.
+ * HOT PATH: Called for every incoming ZigBee APS frame.
+ */
+/* @__INLINE__ */
 export function decodeZigbeeAPSFrameControl(data: Buffer, offset: number): [ZigbeeAPSFrameControl, offset: number] {
+    // HOT PATH: Extract APS FCF fields with bitwise operations
     const fcf = data.readUInt8(offset);
     offset += 1;
 

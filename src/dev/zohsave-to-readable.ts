@@ -7,6 +7,7 @@ async function printSave(dataPath: string): Promise<void> {
     const driver = new OTRCPDriver(
         // @ts-expect-error not needed here
         {},
+        {},
         {
             eui64: 0n,
             panId: 0,
@@ -24,7 +25,7 @@ async function printSave(dataPath: string): Promise<void> {
         dataPath,
     );
 
-    await driver.loadState();
+    await driver.context.loadState();
 
     // @ts-expect-error workaround
     BigInt.prototype.toJSON = function (): string {
@@ -34,7 +35,7 @@ async function printSave(dataPath: string): Promise<void> {
         return this.toString("hex");
     };
 
-    const netParamsJson = JSON.stringify(driver.netParams, undefined, 2);
+    const netParamsJson = JSON.stringify(driver.context.netParams, undefined, 2);
 
     console.log(netParamsJson);
 
@@ -42,7 +43,7 @@ async function printSave(dataPath: string): Promise<void> {
 
     const devices = [];
 
-    for (const [addr64, device] of driver.deviceTable) {
+    for (const [addr64, device] of driver.context.deviceTable) {
         devices.push({ addr64, ...device });
     }
 
@@ -54,7 +55,7 @@ async function printSave(dataPath: string): Promise<void> {
 
     const routes = [];
 
-    for (const [addr16, entries] of driver.sourceRouteTable) {
+    for (const [addr16, entries] of driver.context.sourceRouteTable) {
         routes.push({ addr16, entries });
     }
 

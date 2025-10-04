@@ -190,7 +190,13 @@ export type ZigbeeNWKGPHeader = {
 
 export type ZigbeeNWKGPPayload = Buffer;
 
+/**
+ * Decode ZigBee NWK GP frame control field.
+ * HOT PATH: Called for every incoming Green Power frame.
+ */
+/* @__INLINE__ */
 export function decodeZigbeeNWKGPFrameControl(data: Buffer, offset: number): [ZigbeeNWKGPFrameControl, offset: number] {
+    // HOT PATH: Extract NWKGP FCF fields with bitwise operations
     const fcf = data.readUInt8(offset);
     offset += 1;
 
