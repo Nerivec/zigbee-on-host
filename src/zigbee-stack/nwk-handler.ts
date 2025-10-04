@@ -66,18 +66,6 @@ const CONFIG_NWK_CONCENTRATOR_MIN_TIME = 10000;
  */
 export interface NWKHandlerCallbacks {
     onDeviceRejoined: StackCallbacks["onDeviceRejoined"];
-    /** Handle device association/rejoin */
-    onAssociate: (
-        source16: number | undefined,
-        source64: bigint | undefined,
-        initialJoin: boolean,
-        capabilities: MACCapabilities | undefined,
-        neighbor: boolean,
-        denyOverride?: boolean,
-        allowOverride?: boolean,
-    ) => Promise<[status: MACAssociationStatus | number, newAddress16: number]>;
-    /** Handle device disassociation/leave */
-    onDisassociate: (address16: number | undefined, address64: bigint | undefined) => Promise<void>;
     /** Send APS TRANSPORT_KEY for network key */
     onAPSSendTransportKeyNWK: (destination16: number, networkKey: Buffer, keySequenceNumber: number, destination64: bigint) => Promise<void>;
 }
@@ -1017,7 +1005,7 @@ export class NWKHandler {
         );
 
         if (!rejoin && !request) {
-            await this.#callbacks.onDisassociate(nwkHeader.source16, nwkHeader.source64);
+            await this.#context.disassociate(nwkHeader.source16, nwkHeader.source64);
         }
 
         return offset;
@@ -1145,7 +1133,7 @@ export class NWKHandler {
      *       - Should check if TC address is all-FF (distributed) or all-00 (pre-TRANSPORT_KEY)
      *       - If so, should reject with PAN_ACCESS_DENIED
      *       - NOT IMPLEMENTED ❌
-     * - ✅ Calls onAssociate with correct parameters:
+     * - ✅ Calls context associate with correct parameters:
      *       - initialJoin=false (this is a rejoin) ✅
      *       - neighbor determined by comparing MAC and NWK source ✅
      *       - denyOverride based on security analysis ✅
@@ -1206,7 +1194,7 @@ export class NWKHandler {
             }
         }
 
-        const [status, newAddress16] = await this.#callbacks.onAssociate(
+        const [status, newAddress16] = await this.#context.associate(
             nwkHeader.source16!,
             nwkHeader.source64,
             false /* rejoin */,
@@ -1701,7 +1689,7 @@ export class NWKHandler {
      *       - 0x00 = Initial Join ✅
      *       - 0x01 = Rejoin ✅
      * - ✅ Determines neighbor by comparing MAC and NWK source addresses
-     * - ✅ Calls onAssociate with appropriate parameters
+     * - ✅ Calls context associate with appropriate parameters
      * - ✅ Sends COMMISSIONING_RESPONSE with status and address
      * - ✅ Sends TRANSPORT_KEY_NWK on SUCCESS for initial join ✅
      * - ⚠️  SPEC QUESTION: Should also send TRANSPORT_KEY on rejoin if NWK key changed?
@@ -1746,7 +1734,7 @@ export class NWKHandler {
 
         // NOTE: send Remove Device CMD to TC deny the join (or let timeout): `sendRemoveDevice`
 
-        const [status, newAddress16] = await this.#callbacks.onAssociate(
+        const [status, newAddress16] = await this.#context.associate(
             nwkHeader.source16!,
             nwkHeader.source64,
             assocType === 0x00 /* initial join */,

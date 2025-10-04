@@ -6,11 +6,12 @@ import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKey
 import { ZigbeeNWKCommandId, type ZigbeeNWKHeader } from "../../src/zigbee/zigbee-nwk.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
 import { NWKHandler, type NWKHandlerCallbacks } from "../../src/zigbee-stack/nwk-handler.js";
-import { type NetworkParameters, StackContext } from "../../src/zigbee-stack/stack-context.js";
+import { type NetworkParameters, StackContext, type StackContextCallbacks } from "../../src/zigbee-stack/stack-context.js";
 
 describe("NWK Handler", () => {
     let saveDir: string;
     let nwkHandler: NWKHandler;
+    let mockStackContextCallbacks: StackContextCallbacks;
     let mockContext: StackContext;
     let mockMACCallbacks: MACHandlerCallbacks;
     let mockMACHandler: MACHandler;
@@ -43,18 +44,22 @@ describe("NWK Handler", () => {
         };
 
         saveDir = `temp_NWKHandler_${Math.floor(Math.random() * 1000000)}`;
-        mockContext = new StackContext(join(saveDir, "zoh.save"), netParams);
+
+        mockStackContextCallbacks = {
+            onDeviceLeft: vi.fn(),
+        };
+
+        mockContext = new StackContext(mockStackContextCallbacks, join(saveDir, "zoh.save"), netParams);
 
         // Spy on context methods to track calls while preserving functionality
         vi.spyOn(mockContext, "nextNWKKeyFrameCounter");
         vi.spyOn(mockContext, "nextTCKeyFrameCounter");
-
-        const onAssociate = vi.fn().mockResolvedValue([MACAssociationStatus.SUCCESS, 0x1234]);
+        vi.spyOn(mockContext, "associate").mockResolvedValue([MACAssociationStatus.SUCCESS, 0x1234]);
+        vi.spyOn(mockContext, "disassociate").mockResolvedValue(undefined);
 
         mockMACCallbacks = {
             onFrame: vi.fn(),
             onSendFrame: vi.fn().mockResolvedValue(undefined),
-            onAssociate,
             onAPSSendTransportKeyNWK: vi.fn().mockResolvedValue(undefined),
             onMarkRouteSuccess: vi.fn(),
             onMarkRouteFailure: vi.fn(),
@@ -69,8 +74,6 @@ describe("NWK Handler", () => {
 
         mockCallbacks = {
             onDeviceRejoined: vi.fn(),
-            onAssociate,
-            onDisassociate: vi.fn(async () => {}),
             onAPSSendTransportKeyNWK: vi.fn(async () => {}),
         };
 
@@ -408,7 +411,7 @@ describe("NWK Handler", () => {
             await nwkHandler.processCommand(payload, macHeader, nwkHeader);
 
             // Should have called disassociate callback
-            expect(mockCallbacks.onDisassociate).toHaveBeenCalledWith(0x1234, 0x00124b0012345678n);
+            expect(mockContext.disassociate).toHaveBeenCalledWith(0x1234, 0x00124b0012345678n);
         });
 
         it("should process route record", () => {
@@ -523,7 +526,7 @@ describe("NWK Handler", () => {
             await nwkHandler.processCommand(payload, macHeader, nwkHeader);
 
             // Should have called associate callback
-            expect(mockCallbacks.onAssociate).toHaveBeenCalledWith(
+            expect(mockContext.associate).toHaveBeenCalledWith(
                 0x1234,
                 0x00124b0012345678n,
                 false, // rejoin (not initial join)

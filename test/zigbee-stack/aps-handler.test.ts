@@ -8,12 +8,13 @@ import { type ZigbeeNWKHeader, ZigbeeNWKRouteDiscovery } from "../../src/zigbee/
 import { APSHandler, type APSHandlerCallbacks } from "../../src/zigbee-stack/aps-handler.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
 import { NWKHandler, type NWKHandlerCallbacks } from "../../src/zigbee-stack/nwk-handler.js";
-import { type NetworkParameters, StackContext } from "../../src/zigbee-stack/stack-context.js";
+import { type NetworkParameters, StackContext, type StackContextCallbacks } from "../../src/zigbee-stack/stack-context.js";
 import { createMACHeader } from "../utils.js";
 
 describe("APS Handler", () => {
     let saveDir: string;
     let apsHandler: APSHandler;
+    let mockStackContextCallbacks: StackContextCallbacks;
     let mockContext: StackContext;
     let mockMACCallbacks: MACHandlerCallbacks;
     let mockMACHandler: MACHandler;
@@ -48,20 +49,23 @@ describe("APS Handler", () => {
         };
 
         saveDir = `temp_APSHandler_${Math.floor(Math.random() * 1000000)}`;
-        mockContext = new StackContext(join(saveDir, "zoh.save"), netParams);
+
+        mockStackContextCallbacks = {
+            onDeviceLeft: vi.fn(),
+        };
+
+        mockContext = new StackContext(mockStackContextCallbacks, join(saveDir, "zoh.save"), netParams);
 
         // Spy on context methods to track calls while preserving functionality
         vi.spyOn(mockContext, "nextNWKKeyFrameCounter");
         vi.spyOn(mockContext, "nextTCKeyFrameCounter");
         vi.spyOn(mockContext, "computeDeviceLQA").mockReturnValue(150);
-
-        const onAssociate = vi.fn().mockResolvedValue([MACAssociationStatus.SUCCESS, 0x1234]);
-        const onDisassociate = vi.fn().mockResolvedValue(undefined);
+        vi.spyOn(mockContext, "associate").mockResolvedValue([MACAssociationStatus.SUCCESS, 0x1234]);
+        vi.spyOn(mockContext, "disassociate").mockResolvedValue(undefined);
 
         mockMACCallbacks = {
             onFrame: vi.fn(),
             onSendFrame: vi.fn().mockResolvedValue(undefined),
-            onAssociate,
             onAPSSendTransportKeyNWK: vi.fn().mockResolvedValue(undefined),
             onMarkRouteSuccess: vi.fn(),
             onMarkRouteFailure: vi.fn(),
@@ -75,8 +79,6 @@ describe("APS Handler", () => {
 
         mockNWKCallbacks = {
             onDeviceRejoined: vi.fn(),
-            onAssociate,
-            onDisassociate,
             onAPSSendTransportKeyNWK: vi.fn(async () => {}),
         };
 
@@ -87,8 +89,6 @@ describe("APS Handler", () => {
             onDeviceJoined: vi.fn(),
             onDeviceRejoined: vi.fn(),
             onDeviceAuthorized: vi.fn(),
-            onAssociate,
-            onDisassociate,
         };
 
         apsHandler = new APSHandler(mockContext, mockMACHandler, mockNWKHandler, mockCallbacks);

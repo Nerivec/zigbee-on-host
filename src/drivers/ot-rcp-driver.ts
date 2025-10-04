@@ -28,16 +28,7 @@ import {
 } from "../spinel/spinel.js";
 import { SpinelStatus } from "../spinel/statuses.js";
 import { logger } from "../utils/logger.js";
-import {
-    decodeMACFrameControl,
-    decodeMACHeader,
-    decodeMACPayload,
-    MACAssociationStatus,
-    type MACCapabilities,
-    MACFrameAddressMode,
-    MACFrameType,
-    ZigbeeMACConsts,
-} from "../zigbee/mac.js";
+import { decodeMACFrameControl, decodeMACHeader, decodeMACPayload, MACFrameAddressMode, MACFrameType, ZigbeeMACConsts } from "../zigbee/mac.js";
 import { convertMaskToChannels, ZigbeeConsts } from "../zigbee/zigbee.js";
 import { decodeZigbeeAPSFrameControl, decodeZigbeeAPSHeader, decodeZigbeeAPSPayload, ZigbeeAPSDeliveryMode } from "../zigbee/zigbee-aps.js";
 import {
@@ -53,16 +44,7 @@ import { APSHandler, type APSHandlerCallbacks } from "../zigbee-stack/aps-handle
 import { MACHandler, type MACHandlerCallbacks } from "../zigbee-stack/mac-handler.js";
 import { NWKGPHandler, type NWKGPHandlerCallbacks } from "../zigbee-stack/nwk-gp-handler.js";
 import { NWKHandler, type NWKHandlerCallbacks } from "../zigbee-stack/nwk-handler.js";
-import {
-    ApplicationKeyRequestPolicy,
-    InstallCodePolicy,
-    NetworkKeyUpdateMethod,
-    type NetworkParameters,
-    type StackCallbacks,
-    StackContext,
-    TrustCenterKeyRequestPolicy,
-    type TrustCenterPolicies,
-} from "../zigbee-stack/stack-context.js";
+import { type NetworkParameters, type StackCallbacks, StackContext, type StackContextCallbacks } from "../zigbee-stack/stack-context.js";
 import { OTRCPParser } from "./ot-rcp-parser.js";
 import { OTRCPWriter } from "./ot-rcp-writer.js";
 
@@ -124,11 +106,6 @@ export class OTRCPDriver {
 
     #pendingChangeChannel: NodeJS.Timeout | undefined;
 
-    //---- Trust Center (see 05-3474-R #4.7.1)
-
-    readonly #trustCenterPolicies: TrustCenterPolicies;
-    #allowJoinTimeout: NodeJS.Timeout | undefined;
-
     constructor(callbacks: StackCallbacks, streamRawConfig: StreamRawConfig, netParams: NetworkParameters, saveDir: string, emitMACFrames = false) {
         if (!existsSync(saveDir)) {
             mkdirSync(saveDir);
@@ -145,27 +122,15 @@ export class OTRCPDriver {
 
         this.#networkUp = false;
 
-        //---- Trust Center
-        this.#trustCenterPolicies = {
-            allowJoins: false,
-            installCode: InstallCodePolicy.NOT_REQUIRED,
-            allowRejoinsWithWellKnownKey: true,
-            allowTCKeyRequest: TrustCenterKeyRequestPolicy.ALLOWED,
-            networkKeyUpdatePeriod: 0, // disable
-            networkKeyUpdateMethod: NetworkKeyUpdateMethod.BROADCAST,
-            allowAppKeyRequest: ApplicationKeyRequestPolicy.DISALLOWED,
-            allowRemoteTCPolicyChange: false,
-            allowVirtualDevices: false,
+        const contextCallbacks: StackContextCallbacks = {
+            onDeviceLeft: this.#callbacks.onDeviceLeft,
         };
 
-        //---- Initialize StackContext and MACHandler
-        this.context = new StackContext(join(saveDir, "zoh.save"), netParams);
+        this.context = new StackContext(contextCallbacks, join(saveDir, "zoh.save"), netParams);
 
-        // Setup MAC handler callbacks
         const macCallbacks: MACHandlerCallbacks = {
             onFrame: this.#callbacks.onMACFrame,
             onSendFrame: this.sendStreamRaw.bind(this),
-            onAssociate: this.associate.bind(this),
             onAPSSendTransportKeyNWK: async (address16, key, keySeqNum, destination64) => {
                 await this.apsHandler.sendTransportKeyNWK(address16, key, keySeqNum, destination64);
             },
@@ -179,11 +144,8 @@ export class OTRCPDriver {
 
         this.macHandler = new MACHandler(this.context, macCallbacks, SpinelStatus.NO_ACK, emitMACFrames);
 
-        // Setup NWK handler callbacks
         const nwkCallbacks: NWKHandlerCallbacks = {
             onDeviceRejoined: this.#callbacks.onDeviceRejoined,
-            onAssociate: this.associate.bind(this),
-            onDisassociate: this.disassociate.bind(this),
             onAPSSendTransportKeyNWK: async (address16, key, keySeqNum, destination64) => {
                 await this.apsHandler.sendTransportKeyNWK(address16, key, keySeqNum, destination64);
             },
@@ -191,14 +153,11 @@ export class OTRCPDriver {
 
         this.nwkHandler = new NWKHandler(this.context, this.macHandler, nwkCallbacks);
 
-        // Setup APS handler callbacks
         const apsCallbacks: APSHandlerCallbacks = {
             onFrame: this.#callbacks.onFrame,
             onDeviceJoined: this.#callbacks.onDeviceJoined,
             onDeviceRejoined: this.#callbacks.onDeviceRejoined,
             onDeviceAuthorized: this.#callbacks.onDeviceAuthorized,
-            onAssociate: this.associate.bind(this),
-            onDisassociate: this.disassociate.bind(this),
         };
 
         this.apsHandler = new APSHandler(this.context, this.macHandler, this.nwkHandler, apsCallbacks);
@@ -779,7 +738,7 @@ export class OTRCPDriver {
         }
 
         await this.context.clear();
-        this.macHandler.pendingAssociations.clear();
+        this.context.pendingAssociations.clear();
 
         logger.info("======== Network reset ========", NS);
     }
@@ -804,230 +763,6 @@ export class OTRCPDriver {
         this.nwkHandler.stop();
         this.macHandler.stop();
         this.context.stop();
-    }
-
-    /**
-     * Revert allowing joins (keeps `allowRejoinsWithWellKnownKey=true`).
-     */
-    public disallowJoins(): void {
-        clearTimeout(this.#allowJoinTimeout);
-        this.#allowJoinTimeout = undefined;
-
-        this.#trustCenterPolicies.allowJoins = false;
-        this.#trustCenterPolicies.allowRejoinsWithWellKnownKey = true;
-        this.macHandler.associationPermit = false;
-
-        logger.info("Disallowed joins", NS);
-    }
-
-    /**
-     * @param duration The length of time in seconds during which the trust center will allow joins.
-     * The value 0x00 and 0xff indicate that permission is disabled or enabled, respectively, without a specified time limit.
-     * 0xff is clamped to 0xfe for security reasons
-     * @param macAssociationPermit If true, also allow association on coordinator itself. Ignored if duration 0.
-     */
-    public allowJoins(duration: number, macAssociationPermit: boolean): void {
-        if (duration > 0) {
-            clearTimeout(this.#allowJoinTimeout);
-
-            this.#trustCenterPolicies.allowJoins = true;
-            this.#trustCenterPolicies.allowRejoinsWithWellKnownKey = true;
-            this.macHandler.associationPermit = macAssociationPermit;
-
-            this.#allowJoinTimeout = setTimeout(this.disallowJoins.bind(this), Math.min(duration, 0xfe) * 1000);
-
-            logger.info(`Allowed joins for ${duration} seconds (self=${macAssociationPermit})`, NS);
-        } else {
-            this.disallowJoins();
-        }
-    }
-
-    /**
-     * @param source16
-     * @param source64 Assumed valid if assocType === 0x00
-     * @param initialJoin If false, rejoin.
-     * @param neighbor True if the device associating is a neighbor of the coordinator
-     * @param capabilities MAC capabilities
-     * @param denyOverride Treat as MACAssociationStatus.PAN_ACCESS_DENIED
-     * @param allowOverride Treat as MACAssociationStatus.SUCCESS
-     * @returns
-     */
-    public async associate(
-        source16: number | undefined,
-        source64: bigint | undefined,
-        initialJoin: boolean,
-        capabilities: MACCapabilities | undefined,
-        neighbor: boolean,
-        denyOverride?: boolean,
-        allowOverride?: boolean,
-    ): Promise<[status: MACAssociationStatus | number, newAddress16: number]> {
-        // 0xffff when not successful and should not be retried
-        let newAddress16 = source16;
-        let status: MACAssociationStatus | number = MACAssociationStatus.SUCCESS;
-        let unknownRejoin = false;
-
-        if (denyOverride) {
-            newAddress16 = 0xffff;
-            status = MACAssociationStatus.PAN_ACCESS_DENIED;
-        } else if (allowOverride) {
-            if (
-                (source16 === undefined || !this.context.address16ToAddress64.has(source16)) &&
-                (source64 === undefined || !this.context.deviceTable.has(source64))
-            ) {
-                // device unknown
-                unknownRejoin = true;
-            }
-        } else {
-            if (initialJoin) {
-                if (this.#trustCenterPolicies.allowJoins) {
-                    if (source16 === undefined || source16 === ZigbeeConsts.COORDINATOR_ADDRESS || source16 >= ZigbeeConsts.BCAST_MIN) {
-                        // MAC join (no `source16`)
-                        newAddress16 = this.context.assignNetworkAddress();
-
-                        if (newAddress16 === 0xffff) {
-                            status = MACAssociationStatus.PAN_FULL;
-                        }
-                    } else if (source64 !== undefined && this.context.deviceTable.get(source64) !== undefined) {
-                        // initial join should not conflict on 64, don't allow join if it does
-                        newAddress16 = 0xffff;
-                        status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
-                    } else {
-                        const existingAddress64 = this.context.address16ToAddress64.get(source16);
-
-                        if (existingAddress64 !== undefined && source64 !== existingAddress64) {
-                            // join with already taken source16
-                            newAddress16 = this.context.assignNetworkAddress();
-
-                            if (newAddress16 === 0xffff) {
-                                status = MACAssociationStatus.PAN_FULL;
-                            } else {
-                                // tell device to use the newly generated value
-                                status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
-                            }
-                        }
-                    }
-                } else {
-                    newAddress16 = 0xffff;
-                    status = MACAssociationStatus.PAN_ACCESS_DENIED;
-                }
-            } else {
-                // rejoin
-                if (source16 === undefined || source16 === ZigbeeConsts.COORDINATOR_ADDRESS || source16 >= ZigbeeConsts.BCAST_MIN) {
-                    // rejoin without 16, generate one (XXX: never happens?)
-                    newAddress16 = this.context.assignNetworkAddress();
-
-                    if (newAddress16 === 0xffff) {
-                        status = MACAssociationStatus.PAN_FULL;
-                    }
-                } else {
-                    const existingAddress64 = this.context.address16ToAddress64.get(source16);
-
-                    if (existingAddress64 === undefined) {
-                        // device unknown
-                        unknownRejoin = true;
-                    } else if (existingAddress64 !== source64) {
-                        // rejoin with already taken source16
-                        newAddress16 = this.context.assignNetworkAddress();
-
-                        if (newAddress16 === 0xffff) {
-                            status = MACAssociationStatus.PAN_FULL;
-                        } else {
-                            // tell device to use the newly generated value
-                            status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
-                        }
-                    }
-                }
-                // if rejoin, network address will be stored
-                // if (this.trustCenterPolicies.allowRejoinsWithWellKnownKey) {
-                // }
-            }
-        }
-
-        // something went wrong above
-        /* v8 ignore start */
-        if (newAddress16 === undefined) {
-            newAddress16 = 0xffff;
-            status = MACAssociationStatus.PAN_ACCESS_DENIED;
-        }
-        /* v8 ignore stop */
-
-        logger.debug(
-            () =>
-                `DEVICE_JOINING[src=${source16}:${source64} newAddr16=${newAddress16} initialJoin=${initialJoin} deviceType=${capabilities?.deviceType} powerSource=${capabilities?.powerSource} rxOnWhenIdle=${capabilities?.rxOnWhenIdle}] replying with status=${status}`,
-            NS,
-        );
-
-        if (status === MACAssociationStatus.SUCCESS) {
-            if (initialJoin || unknownRejoin) {
-                this.context.deviceTable.set(source64!, {
-                    address16: newAddress16,
-                    capabilities, // TODO: only valid if not triggered by `processUpdateDevice`
-                    // on initial join success, device is considered joined but unauthorized after MAC Assoc / NWK Commissioning response is sent
-                    authorized: false,
-                    neighbor,
-                    recentLQAs: [],
-                });
-                this.context.address16ToAddress64.set(newAddress16, source64!);
-
-                // `processUpdateDevice` has no `capabilities` info, device is joined through router, so, no indirect tx for coordinator
-                if (capabilities && !capabilities.rxOnWhenIdle) {
-                    this.context.indirectTransmissions.set(source64!, []);
-                }
-            } else {
-                // update records on rejoin in case anything has changed (like neighbor for routing)
-                this.context.address16ToAddress64.set(newAddress16, source64!);
-                const device = this.context.deviceTable.get(source64!)!;
-                device.address16 = newAddress16;
-                device.capabilities = capabilities;
-                device.neighbor = neighbor;
-            }
-
-            // force saving after device change
-            await this.context.savePeriodicState();
-        }
-
-        return [status, newAddress16];
-    }
-
-    public async disassociate(source16: number | undefined, source64: bigint | undefined): Promise<void> {
-        if (source64 === undefined && source16 !== undefined) {
-            source64 = this.context.address16ToAddress64.get(source16);
-        } else if (source16 === undefined && source64 !== undefined) {
-            source16 = this.context.deviceTable.get(source64)?.address16;
-        }
-
-        // sanity check
-        if (source16 !== undefined && source64 !== undefined) {
-            this.context.deviceTable.delete(source64);
-            this.context.address16ToAddress64.delete(source16);
-            this.context.indirectTransmissions.delete(source64);
-            this.context.sourceRouteTable.delete(source16);
-            this.macHandler.pendingAssociations.delete(source64); // should never amount to a delete
-            this.context.macNoACKs.delete(source16);
-
-            // XXX: should only be needed for `rxOnWhenIdle`, but for now always trigger (tricky bit, not always correct)
-            for (const [addr16, entries] of this.context.sourceRouteTable) {
-                // entries using this device as relay are no longer valid
-                const filteredEntries = entries.filter((entry) => !entry.relayAddresses.includes(source16));
-
-                if (filteredEntries.length === 0) {
-                    this.context.sourceRouteTable.delete(addr16);
-                } else if (filteredEntries.length !== entries.length) {
-                    this.context.sourceRouteTable.set(addr16, filteredEntries);
-                }
-            }
-
-            logger.debug(() => `DEVICE_LEFT[src=${source16}:${source64}]`, NS);
-
-            setImmediate(() => {
-                this.#callbacks.onDeviceLeft(source16, source64);
-            });
-
-            // force new MTORR
-            await this.nwkHandler.sendPeriodicManyToOneRouteRequest();
-            // force saving after device change
-            await this.context.savePeriodicState();
-        }
     }
 
     // TODO: interference detection (& optionally auto channel changing)
@@ -1102,9 +837,6 @@ export class OTRCPDriver {
 
     public async stop(): Promise<void> {
         logger.info("======== Driver stopping ========", NS);
-
-        this.disallowJoins();
-        this.nwkGPHandler.exitCommissioningMode();
 
         const networkWasUp = this.#networkUp;
         // pre-emptive

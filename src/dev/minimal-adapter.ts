@@ -262,7 +262,7 @@ export class MinimalAdapter {
 
                 if (options.allowJoins) {
                     // allow joins on start for 254 seconds
-                    this.driver.allowJoins(0xfe, true);
+                    this.driver.context.allowJoins(0xfe, true);
                     this.driver.nwkGPHandler.enterCommissioningMode(0xfe);
                 }
 

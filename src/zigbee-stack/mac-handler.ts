@@ -4,7 +4,6 @@ import {
     encodeMACFrame,
     encodeMACZigbeeBeacon,
     MACAssociationStatus,
-    type MACCapabilities,
     MACCommandId,
     MACFrameAddressMode,
     MACFrameType,
@@ -25,28 +24,12 @@ export interface MACHandlerCallbacks {
     onFrame: StackCallbacks["onMACFrame"];
     /** Called to send property to RCP via Spinel */
     onSendFrame: (payload: Buffer) => Promise<void>;
-    /** Called to handle association (orchestrates NWK/APS) */
-    onAssociate: (
-        address16: number | undefined,
-        address64: bigint,
-        initialJoin: boolean,
-        capabilities: MACCapabilities,
-        neighbor: boolean,
-    ) => Promise<[status: MACAssociationStatus, newAddress16: number]>;
     /** Called to send APS transport key after successful association */
     onAPSSendTransportKeyNWK: (address16: number, key: Buffer, keySeqNum: number, destination64: bigint) => Promise<void>;
     /** Called to mark route as successful */
     onMarkRouteSuccess: (destination16: number) => void;
     /** Called to mark route as failed */
     onMarkRouteFailure: (destination16: number) => void;
-}
-
-/**
- * Pending association context
- */
-interface AssociationContext {
-    sendResp: () => Promise<void>;
-    timestamp: number;
 }
 
 /**
@@ -63,9 +46,6 @@ export class MACHandler {
     readonly #context: StackContext;
     readonly #callbacks: MACHandlerCallbacks;
 
-    /** Associations pending DATA_RQ from device (mapping by IEEE address) */
-    readonly #pendingAssociations = new Map<bigint, AssociationContext>();
-
     /** Emit frames flag (for debugging) */
     #emitFrames: boolean;
     /** Code used in Error `cause` when sending throws because of MAC "no ACK" */
@@ -73,9 +53,6 @@ export class MACHandler {
 
     // Private counters (start at 0, first call returns 1)
     #seqNum = 0;
-
-    /** MAC association permit flag */
-    associationPermit = false;
 
     constructor(context: StackContext, callbacks: MACHandlerCallbacks, noACKCode: number, emitFrames = false) {
         this.#context = context;
@@ -89,13 +66,6 @@ export class MACHandler {
 
     get emitFrames(): boolean {
         return this.#emitFrames;
-    }
-
-    /**
-     * Get pending associations map (for state management)
-     */
-    get pendingAssociations(): Map<bigint, AssociationContext> {
-        return this.#pendingAssociations;
     }
 
     // #endregion
@@ -299,7 +269,7 @@ export class MACHandler {
      * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.3.1):
      * - ✅ Correctly extracts capabilities byte from payload
      * - ✅ Validates presence of source64 (mandatory per spec)
-     * - ✅ Calls onAssociate callback to handle higher-layer processing
+     * - ✅ Calls context associate to handle higher-layer processing
      * - ✅ Determines initial join vs rejoin by checking if device is known
      * - ✅ Stores pending association in map for DATA_REQ retrieval
      * - ✅ Pending association includes sendResp callback and timestamp
@@ -327,7 +297,7 @@ export class MACHandler {
         } else {
             const address16 = this.#context.getDevice(macHeader.source64)?.address16;
             const decodedCap = decodeMACCapabilities(capabilities);
-            const [status, newAddress16] = await this.#callbacks.onAssociate(
+            const [status, newAddress16] = await this.#context.associate(
                 address16,
                 macHeader.source64,
                 address16 === undefined /* initial join if unknown device, else rejoin */,
@@ -335,7 +305,7 @@ export class MACHandler {
                 true /* neighbor */,
             );
 
-            this.#pendingAssociations.set(macHeader.source64, {
+            this.#context.pendingAssociations.set(macHeader.source64, {
                 sendResp: async () => {
                     await this.sendAssocRsp(macHeader.source64!, newAddress16, status);
 
@@ -469,7 +439,7 @@ export class MACHandler {
                     finalCAPSlot: 0x0f,
                     batteryExtension: false,
                     panCoordinator: true,
-                    associationPermit: this.associationPermit,
+                    associationPermit: this.#context.associationPermit,
                 },
                 gtsInfo: { permit: false },
                 pendAddr: {},
@@ -535,7 +505,7 @@ export class MACHandler {
         }
 
         if (address64 !== undefined) {
-            const pendingAssoc = this.#pendingAssociations.get(address64);
+            const pendingAssoc = this.#context.pendingAssociations.get(address64);
 
             if (pendingAssoc) {
                 if (pendingAssoc.timestamp + ZigbeeConsts.MAC_INDIRECT_TRANSMISSION_TIMEOUT > Date.now()) {
@@ -543,7 +513,7 @@ export class MACHandler {
                 }
 
                 // always delete, ensures no stale
-                this.#pendingAssociations.delete(address64);
+                this.#context.pendingAssociations.delete(address64);
             } else {
                 const addrTXs = this.#context.indirectTransmissions.get(address64);
 
