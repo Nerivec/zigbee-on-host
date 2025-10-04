@@ -10,7 +10,7 @@ services:
         environment:
             # used by `dev:cli` commands
             ADAPTER_PATH: /dev/ttyACM0
-            ADAPTER_BAUDRATE: 460800
+            ADAPTER_BAUDRATE: 921600
             ADAPTER_RTSCTS: false
             # WIRESHARK_ZEP_PORT: 17754
             # WIRESHARK_ADDRESS: 127.0.0.1

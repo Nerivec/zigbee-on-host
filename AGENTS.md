@@ -11,11 +11,37 @@ ZigBee on Host is an open-source ZigBee stack designed to run on a host and comm
 - **License:** GPL-3.0-or-later
 - **Module system:** NodeNext (ES modules)
 - **Zero production dependencies** - lightweight core
+- **Protocol Layers:**
+  - **Spinel Protocol (`src/spinel/`):**
+    - `spinel.ts` - Core protocol (~400 lines)
+    - `hdlc.ts` - HDLC framing
+    - `properties.ts` - Spinel properties (2,800 lines)
+    - `commands.ts` - Spinel commands
+    - `statuses.ts` - Status codes
+ - **ZigBee Protocol Utilities (`src/zigbee/`):**
+    - `mac.ts` - IEEE 802.15.4 MAC layer utilities
+    - `zigbee-nwk.ts` - Network layer utilities
+    - `zigbee-aps.ts` - Application Support layer utilities
+    - `zigbee-nwkgp.ts` - Green Power utilities
+    - `zigbee.ts` - Main ZigBee utilities
+  - **ZigBee Stack Handlers (`src/zigbee-stack/`):**
+    - `stack-context.ts` - Shared state and context
+    - `mac-handler.ts` - MAC layer handler
+    - `nwk-handler.ts` - Network layer handler
+    - `nwk-gp-handler.ts` - Green Power handler
+    - `aps-handler.ts` - Application Support layer handler
+  - **Driver (`src/drivers/`):**
+    - `ot-rcp-driver.ts` - Main RCP driver (4,700 lines)
+    - `ot-rcp-parser.ts` - Frame parsing
+    - `ot-rcp-writer.ts` - Frame writing
+    - `descriptors.ts` - Device descriptors
+    - `wip.ts` - Work in progress features** with RCP communication
 
 **Key Components:**
 - `src/drivers/` - RCP communication drivers (main: `ot-rcp-driver.ts`)
+- `src/zigbee-stack/` - ZigBee protocol stack handlers (MAC, NWK, APS, Green Power, context)
 - `src/spinel/` - Spinel protocol implementation (HDLC framing, properties)
-- `src/zigbee/` - ZigBee protocol layers (MAC, NWK, APS, Green Power)
+- `src/zigbee/` - ZigBee protocol utilities (frame encoding/decoding)
 - `src/dev/` - Development tools (excluded from production builds)
 - `src/utils/` - Shared utilities (logging framework)
 
@@ -78,7 +104,7 @@ npm run dev:z2r ./path/to/data/               # Print readable zoh.save content
 
 **Environment variables:**
 - `ADAPTER_PATH` - Serial port path
-- `ADAPTER_BAUDRATE` - Baud rate (default: 460800)
+- `ADAPTER_BAUDRATE` - Baud rate (default: 921600)
 - `ADAPTER_RTSCTS` - Hardware flow control (true/false)
 
 ### State Management
@@ -100,10 +126,10 @@ npm run test:cov        # Run tests with coverage report (~2.5s)
 ```
 
 **Coverage requirements:**
-- Statements: 70%+
-- Functions: 75%+
-- Branches: 75%+
-- Lines: 70%+
+- Statements: 85%+
+- Functions: 85%+
+- Branches: 80%+
+- Lines: 85%+
 
 **Coverage details:**
 - Provider: v8
@@ -184,8 +210,9 @@ npm run check:ci        # Check without fixing
 ```
 src/
 ├── drivers/          # RCP communication
+├── zigbee-stack/     # ZigBee protocol stack handlers
 ├── spinel/           # Spinel protocol
-├── zigbee/           # ZigBee layers (MAC, NWK, APS, GP)
+├── zigbee/           # ZigBee protocol utilities
 ├── dev/              # Development tools (excluded from prod)
 └── utils/            # Shared utilities
 ```

@@ -61,7 +61,7 @@ You can also contribute by submitting sniffs/captures. [More information here](h
 
 #### Current Status
 
-- CI: ~70% coverage
+- CI: ~80-85% coverage
 - Stress-testing: pending
 - Firmware stability:
   - Silicon Labs: ongoing
@@ -90,7 +90,7 @@ serial:
   port: /dev/serial/by-id/my-device-id-here
   adapter: zoh
   # unused for TCP-based coordinator
-  baudrate: 460800
+  baudrate: 921600
   # as appropriate for your coordinator/firmware, unused for TCP-based coordinator
   rtscts: true
 ```
@@ -133,7 +133,7 @@ npm run dev:z2z ./path/to/data/
 ```
 
 > [!TIP]
-> This allows you to quickly take over a network created with `zstack` or `ember`. You then just need to change the `configuration.yaml` to `adapter: zoh` and `baudrate: 460800` (and `port` as appropriate).
+> This allows you to quickly take over a network created with `zstack` or `ember`. You then just need to change the `configuration.yaml` to `adapter: zoh` and `baudrate: 921600` (and `port` as appropriate).
 
 ##### Print and save the content of the 'zoh.save' in the given directory in human-readable format (as JSON, in same directory)
 
