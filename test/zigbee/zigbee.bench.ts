@@ -6,12 +6,17 @@ import {
     decodeMACZigbeeBeacon,
     encodeMACFrame,
     encodeMACFrameZigbee,
-} from "../src/zigbee/mac";
-import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeKeyType } from "../src/zigbee/zigbee";
-import { decodeZigbeeAPSFrameControl, decodeZigbeeAPSHeader, decodeZigbeeAPSPayload, encodeZigbeeAPSFrame } from "../src/zigbee/zigbee-aps";
-import { decodeZigbeeNWKFrameControl, decodeZigbeeNWKHeader, decodeZigbeeNWKPayload, encodeZigbeeNWKFrame } from "../src/zigbee/zigbee-nwk";
-import { decodeZigbeeNWKGPFrameControl, decodeZigbeeNWKGPHeader, decodeZigbeeNWKGPPayload, encodeZigbeeNWKGPFrame } from "../src/zigbee/zigbee-nwkgp";
-import { BENCH_OPTIONS } from "./bench-options";
+} from "../../src/zigbee/mac.js";
+import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
+import { decodeZigbeeAPSFrameControl, decodeZigbeeAPSHeader, decodeZigbeeAPSPayload, encodeZigbeeAPSFrame } from "../../src/zigbee/zigbee-aps.js";
+import { decodeZigbeeNWKFrameControl, decodeZigbeeNWKHeader, decodeZigbeeNWKPayload, encodeZigbeeNWKFrame } from "../../src/zigbee/zigbee-nwk.js";
+import {
+    decodeZigbeeNWKGPFrameControl,
+    decodeZigbeeNWKGPHeader,
+    decodeZigbeeNWKGPPayload,
+    encodeZigbeeNWKGPFrame,
+} from "../../src/zigbee/zigbee-nwkgp.js";
+import { BENCH_OPTIONS } from "../bench-options.js";
 import {
     NET2_ASSOC_REQ_FROM_DEVICE,
     NET2_ASSOC_RESP_FROM_COORD,
@@ -32,7 +37,7 @@ import {
     NETDEF_ZCL_FRAME_DEF_RSP_TO_COORD,
     NETDEF_ZGP_COMMISSIONING,
     NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0,
-} from "./data";
+} from "../data.js";
 
 describe("Zigbee", () => {
     registerDefaultHashedKeys(
