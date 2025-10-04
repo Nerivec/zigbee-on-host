@@ -2,7 +2,6 @@ import { logger } from "../utils/logger.js";
 import {
     decodeMACCapabilities,
     encodeMACFrameZigbee,
-    type MACCapabilities,
     MACFrameAddressMode,
     MACFrameType,
     MACFrameVersion,
@@ -36,18 +35,6 @@ export interface APSHandlerCallbacks {
     onDeviceJoined: StackCallbacks["onDeviceJoined"];
     onDeviceRejoined: StackCallbacks["onDeviceRejoined"];
     onDeviceAuthorized: StackCallbacks["onDeviceAuthorized"];
-    /** Handle device association */
-    onAssociate: (
-        source16: number | undefined,
-        source64: bigint | undefined,
-        initialJoin: boolean,
-        capabilities: MACCapabilities | undefined,
-        neighbor: boolean,
-        denyOverride?: boolean,
-        allowOverride?: boolean,
-    ) => Promise<[status: number, newAddress16: number]>;
-    /** Handle device disassociation */
-    onDisassociate: (address16: number | undefined, address64: bigint | undefined) => Promise<void>;
 }
 
 /**
@@ -961,7 +948,7 @@ export class APSHandler {
      *       0x02 = Device Left
      *       0x03 = Standard Device Trust Center Rejoin
      * - ⚠️  IMPLEMENTATION: Status 0x01 (Unsecured Join) handling:
-     *       - Calls onAssociate with initial join=true ✅
+     *       - Calls context associate with initial join=true ✅
      *       - Sets neighbor=false ✅ (device joined through router)
      *       - allowOverride=true ✅ (was allowed by parent)
      *       - Creates source route through parent ✅
@@ -1010,7 +997,7 @@ export class APSHandler {
         // 0x03 = Standard Device Trust Center Rejoin
         // 0x04 – 0x07 = Reserved
         if (status === 0x01) {
-            await this.#callbacks.onAssociate(
+            await this.#context.associate(
                 device16,
                 device64,
                 true, // initial join
@@ -1079,7 +1066,7 @@ export class APSHandler {
             await this.sendTunnel(nwkHeader.source16!, device64, tApsCmdFrame);
         } else if (status === 0x03) {
             // rejoin
-            await this.#callbacks.onAssociate(
+            await this.#context.associate(
                 device16,
                 device64,
                 false, // rejoin
@@ -1091,7 +1078,7 @@ export class APSHandler {
         } else if (status === 0x02) {
             // left
             // TODO: according to spec, this is "informative" only, should not take any action?
-            await this.#callbacks.onDisassociate(device16, device64);
+            await this.#context.disassociate(device16, device64);
         }
 
         return offset;

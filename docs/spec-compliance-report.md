@@ -91,8 +91,8 @@ This report provides a meticulous analysis of the zigbee-on-host implementation'
 1. **Status Code Handling**
    - 0x00 (Secured Rejoin): ❌ NOT HANDLED AT ALL
    - 0x01 (Unsecured Join): ✅ Fully implemented with nested routing
-   - 0x02 (Device Left): ⚠️ Triggers onDisassociate (spec says "informative only")
-   - 0x03 (TC Rejoin): ✅ Calls onAssociate correctly
+   - 0x02 (Device Left): ⚠️ Triggers context disassociate (spec says "informative only")
+   - 0x03 (TC Rejoin): ✅ Calls context associate correctly
 
 2. **Nested Device Join (Status 0x01)**
    - Creates source route through parent router ✅
@@ -105,11 +105,11 @@ This report provides a meticulous analysis of the zigbee-on-host implementation'
 1. **Device Left Handling (Status 0x02)**
    ```typescript
    else if (status === 0x02) {
-       await this.#callbacks.onDisassociate(device16, device64);
+       await this.#context.disassociate(device16, device64);
    }
    ```
    - **Spec:** "This notification is informative only; receiving it SHOULD NOT cause any action"
-   - **Implementation:** Actively removes device via onDisassociate
+   - **Implementation:** Actively removes device via context disassociate
    - **Risk:** May prematurely remove devices that haven't actually left
    - **Recommendation:** Consider making this informative only or adding confirmation
 
@@ -280,7 +280,7 @@ device.authorized = true;
    - Decodes capabilities into structured format ✅
 
 2. **Indirect Transmission**
-   - Stores response in `pendingAssociations` map ✅
+   - Stores response in `context.pendingAssociations` map ✅
    - Includes timestamp for timeout management ✅
    - Response sent via DATA_REQ mechanism ✅
 
@@ -293,10 +293,10 @@ device.authorized = true;
 
 1. **Association Permit Check**
    ```typescript
-   // NO CHECK FOR: if (!this.associationPermit) { reject(); }
+   // NO CHECK FOR: if (!context.associationPermit) { reject(); }
    ```
    - **Spec:** SHALL check if association is permitted
-   - **Missing:** No validation of `associationPermit` flag before processing
+   - **Missing:** No validation of `context.associationPermit` flag before processing
    - **Impact:** Accepts associations even when disabled
    - **Severity:** HIGH - violates fundamental MAC association rules
 
@@ -317,7 +317,7 @@ device.authorized = true;
    - beaconOrder=0x0f (non-beacon mode) ✅
    - superframeOrder=0x0f ✅
    - panCoordinator=true ✅
-   - Uses `associationPermit` flag ✅
+   - Uses `context.associationPermit` flag ✅
 
 3. **ZigBee Beacon Payload**
    - protocolId=0x00 (ZigBee) ✅

@@ -1,17 +1,19 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     ApplicationKeyRequestPolicy,
     InstallCodePolicy,
     NetworkKeyUpdateMethod,
     type NetworkParameters,
     StackContext,
+    type StackContextCallbacks,
     TrustCenterKeyRequestPolicy,
 } from "../../src/zigbee-stack/stack-context.js";
 
 describe("StackContext", () => {
     let saveDir: string;
+    let mockStackContextCallbacks: StackContextCallbacks;
     let context: StackContext;
     let netParams: NetworkParameters;
 
@@ -31,7 +33,12 @@ describe("StackContext", () => {
         };
 
         saveDir = `temp_StackContext_${Math.floor(Math.random() * 1000000)}`;
-        context = new StackContext(join(saveDir, "zoh.save"), netParams);
+
+        mockStackContextCallbacks = {
+            onDeviceLeft: vi.fn(),
+        };
+
+        context = new StackContext(mockStackContextCallbacks, join(saveDir, "zoh.save"), netParams);
     });
 
     afterEach(() => {

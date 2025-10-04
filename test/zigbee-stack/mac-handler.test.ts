@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MACAssociationStatus, MACCommandId, MACFrameAddressMode, MACFrameType, type MACHeader } from "../../src/zigbee/mac.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
-import { type NetworkParameters, StackContext } from "../../src/zigbee-stack/stack-context.js";
+import { type NetworkParameters, StackContext, type StackContextCallbacks } from "../../src/zigbee-stack/stack-context.js";
 import { createMACFrameControl } from "../utils.js";
 
 const NO_ACK_CODE = 99999;
@@ -11,6 +11,7 @@ const NO_ACK_CODE = 99999;
 describe("MACHandler", () => {
     let saveDir: string;
     let macHandler: MACHandler;
+    let mockStackContextCallbacks: StackContextCallbacks;
     let mockContext: StackContext;
     let mockCallbacks: MACHandlerCallbacks;
     let netParams: NetworkParameters;
@@ -31,12 +32,19 @@ describe("MACHandler", () => {
         };
 
         saveDir = `temp_MACHandler_${Math.floor(Math.random() * 1000000)}`;
-        mockContext = new StackContext(join(saveDir, "zoh.save"), netParams);
+
+        mockStackContextCallbacks = {
+            onDeviceLeft: vi.fn(),
+        };
+
+        mockContext = new StackContext(mockStackContextCallbacks, join(saveDir, "zoh.save"), netParams);
+
+        vi.spyOn(mockContext, "associate").mockResolvedValue([MACAssociationStatus.SUCCESS, 0x1234]);
+        vi.spyOn(mockContext, "disassociate").mockResolvedValue(undefined);
 
         mockCallbacks = {
             onFrame: vi.fn(),
             onSendFrame: vi.fn().mockResolvedValue(undefined),
-            onAssociate: vi.fn().mockResolvedValue([MACAssociationStatus.SUCCESS, 0x1234]),
             onAPSSendTransportKeyNWK: vi.fn().mockResolvedValue(undefined),
             onMarkRouteSuccess: vi.fn(),
             onMarkRouteFailure: vi.fn(),
@@ -55,7 +63,7 @@ describe("MACHandler", () => {
         });
 
         it("should initialize empty pending associations", () => {
-            expect(macHandler.pendingAssociations.size).toStrictEqual(0);
+            expect(mockContext.pendingAssociations.size).toStrictEqual(0);
         });
 
         it("should initialize empty MAC NO_ACK counts", () => {
@@ -246,7 +254,7 @@ describe("MACHandler", () => {
             const data = Buffer.from([0x8e]); // capabilities
             await macHandler.processCommand(data, macHeader);
 
-            expect(mockCallbacks.onAssociate).toHaveBeenCalledOnce();
+            expect(mockContext.associate).toHaveBeenCalledOnce();
         });
 
         it("should dispatch BEACON_REQ to handler", async () => {
@@ -310,8 +318,8 @@ describe("MACHandler", () => {
             const data = Buffer.from([0x8e]); // capabilities: rxOnWhenIdle=true, deviceType=FFD, powerSource=mains, securityCapability=true, allocateAddress=true
             await macHandler.processAssocReq(data, 0, macHeader);
 
-            expect(mockCallbacks.onAssociate).toHaveBeenCalledWith(undefined, 0x00124b0098765432n, true, expect.any(Object), true);
-            expect(macHandler.pendingAssociations.has(0x00124b0098765432n)).toStrictEqual(true);
+            expect(mockContext.associate).toHaveBeenCalledWith(undefined, 0x00124b0098765432n, true, expect.any(Object), true);
+            expect(mockContext.pendingAssociations.has(0x00124b0098765432n)).toStrictEqual(true);
         });
 
         it("should process association request from known device (rejoin)", async () => {
@@ -339,7 +347,7 @@ describe("MACHandler", () => {
             const data = Buffer.from([0x8e]);
             await macHandler.processAssocReq(data, 0, macHeader);
 
-            expect(mockCallbacks.onAssociate).toHaveBeenCalledWith(dest16, dest64, false, expect.any(Object), true);
+            expect(mockContext.associate).toHaveBeenCalledWith(dest16, dest64, false, expect.any(Object), true);
         });
 
         it("should handle association request without source64", async () => {
@@ -356,7 +364,7 @@ describe("MACHandler", () => {
             const data = Buffer.from([0x8e]);
             await macHandler.processAssocReq(data, 0, macHeader);
 
-            expect(mockCallbacks.onAssociate).not.toHaveBeenCalled();
+            expect(mockContext.associate).not.toHaveBeenCalled();
         });
     });
 
@@ -392,7 +400,7 @@ describe("MACHandler", () => {
         });
 
         it("should include association permit in beacon", async () => {
-            macHandler.associationPermit = true;
+            mockContext.associationPermit = true;
 
             const macHeader: MACHeader = {
                 frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
@@ -414,7 +422,7 @@ describe("MACHandler", () => {
             const dest64 = 0x00124b0098765432n;
             const sendResp = vi.fn().mockResolvedValue(undefined);
 
-            macHandler.pendingAssociations.set(dest64, {
+            mockContext.pendingAssociations.set(dest64, {
                 sendResp,
                 timestamp: Date.now(),
             });
@@ -432,14 +440,14 @@ describe("MACHandler", () => {
             await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
 
             expect(sendResp).toHaveBeenCalledOnce();
-            expect(macHandler.pendingAssociations.has(dest64)).toStrictEqual(false);
+            expect(mockContext.pendingAssociations.has(dest64)).toStrictEqual(false);
         });
 
         it("should delete expired pending association without sending", async () => {
             const dest64 = 0x00124b0098765432n;
             const sendResp = vi.fn().mockResolvedValue(undefined);
 
-            macHandler.pendingAssociations.set(dest64, {
+            mockContext.pendingAssociations.set(dest64, {
                 sendResp,
                 timestamp: Date.now() - 10000, // Expired
             });
@@ -457,7 +465,7 @@ describe("MACHandler", () => {
             await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
 
             expect(sendResp).not.toHaveBeenCalled();
-            expect(macHandler.pendingAssociations.has(dest64)).toStrictEqual(false);
+            expect(mockContext.pendingAssociations.has(dest64)).toStrictEqual(false);
         });
 
         it("should send indirect transmission frame", async () => {

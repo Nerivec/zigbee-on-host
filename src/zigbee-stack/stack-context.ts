@@ -14,9 +14,10 @@ import {
     writeTLVUInt16LE,
     writeTLVUInt32LE,
 } from "../utils/save-serializer.js";
-import { decodeMACCapabilities, encodeMACCapabilities, type MACCapabilities, type MACHeader } from "../zigbee/mac.js";
+import { decodeMACCapabilities, encodeMACCapabilities, MACAssociationStatus, type MACCapabilities, type MACHeader } from "../zigbee/mac.js";
 import { makeKeyedHash, makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../zigbee/zigbee.js";
 import type { ZigbeeAPSHeader, ZigbeeAPSPayload } from "../zigbee/zigbee-aps.js";
+import { ZigbeeNWKConsts } from "../zigbee/zigbee-nwk.js";
 import type { ZigbeeNWKGPHeader } from "../zigbee/zigbee-nwkgp.js";
 
 const NS = "stack-context";
@@ -39,6 +40,14 @@ export interface StackCallbacks {
     onDeviceRejoined: (source16: number, source64: bigint, capabilities: MACCapabilities) => void;
     onDeviceLeft: (source16: number, source64: bigint) => void;
     onDeviceAuthorized: (source16: number, source64: bigint) => void;
+}
+
+/**
+ * Callbacks from stack context to parent layer
+ */
+export interface StackContextCallbacks {
+    /** Handle post-disassociate */
+    onDeviceLeft: StackCallbacks["onDeviceLeft"];
 }
 
 /**
@@ -280,6 +289,14 @@ export type ConfigurationAttributes = {
 };
 
 /**
+ * Pending association context
+ */
+interface AssociationContext {
+    sendResp: () => Promise<void>;
+    timestamp: number;
+}
+
+/**
  * Indirect transmission context
  */
 interface IndirectTxContext {
@@ -303,6 +320,7 @@ const CONFIG_SAVE_FRAME_COUNTER_JUMP_OFFSET = 1024;
  * - RSSI/LQI ranges
  */
 export class StackContext {
+    readonly #callbacks: StackContextCallbacks;
     /** Master table of all known devices on the network (mapped by IEEE address) */
     readonly deviceTable = new Map<bigint, DeviceTableEntry>();
     /** Address lookup: 16-bit to 64-bit (synced with deviceTable) */
@@ -315,7 +333,7 @@ export class StackContext {
         installCode: InstallCodePolicy.NOT_REQUIRED,
         allowRejoinsWithWellKnownKey: true,
         allowTCKeyRequest: TrustCenterKeyRequestPolicy.ALLOWED,
-        networkKeyUpdatePeriod: 0,
+        networkKeyUpdatePeriod: 0, // disable
         networkKeyUpdateMethod: NetworkKeyUpdateMethod.BROADCAST,
         allowAppKeyRequest: ApplicationKeyRequestPolicy.DISALLOWED,
         allowRemoteTCPolicyChange: false,
@@ -331,9 +349,10 @@ export class StackContext {
     };
     /** Count of MAC NO_ACK reported for each device (mapping by network address) */
     readonly macNoACKs = new Map<number, number>();
-
+    /** Associations pending DATA_RQ from device (mapping by IEEE address) */
+    readonly pendingAssociations = new Map<bigint, AssociationContext>();
     /** Indirect transmission for devices with rxOnWhenIdle=false (mapping by IEEE address) */
-    readonly #indirectTransmissions = new Map<bigint, IndirectTxContext[]>();
+    readonly indirectTransmissions = new Map<bigint, IndirectTxContext[]>();
 
     #savePath: string;
     #saveStateTimeout: NodeJS.Timeout | undefined;
@@ -344,6 +363,12 @@ export class StackContext {
     netParams: NetworkParameters;
     /** Pre-computed hash of default TC link key for VERIFY_KEY */
     tcVerifyKeyHash: Buffer = Buffer.alloc(0);
+    /** MAC association permit flag */
+    associationPermit = false;
+
+    //---- Trust Center (see 05-3474-R #4.7.1)
+
+    #allowJoinTimeout: NodeJS.Timeout | undefined;
 
     /** Minimum observed RSSI */
     rssiMin = -100;
@@ -354,7 +379,9 @@ export class StackContext {
     /** Maximum observed LQI */
     lqiMax = 250;
 
-    constructor(savePath: string, netParams: NetworkParameters) {
+    constructor(callbacks: StackContextCallbacks, savePath: string, netParams: NetworkParameters) {
+        this.#callbacks = callbacks;
+
         this.#savePath = savePath;
         this.netParams = netParams;
     }
@@ -363,13 +390,6 @@ export class StackContext {
 
     get loaded(): boolean {
         return this.#loaded;
-    }
-
-    /**
-     * Get indirect transmissions map (for state management)
-     */
-    get indirectTransmissions(): Map<bigint, IndirectTxContext[]> {
-        return this.#indirectTransmissions;
     }
 
     // #endregion
@@ -384,6 +404,8 @@ export class StackContext {
     stop() {
         clearTimeout(this.#saveStateTimeout);
         this.#saveStateTimeout = undefined;
+
+        this.disallowJoins();
     }
 
     /** Remove the save file and clear tables (just in case) */
@@ -394,7 +416,7 @@ export class StackContext {
         this.deviceTable.clear();
         this.address16ToAddress64.clear();
         this.sourceRouteTable.clear();
-        this.#indirectTransmissions.clear();
+        this.indirectTransmissions.clear();
     }
 
     /**
@@ -725,7 +747,7 @@ export class StackContext {
                 this.address16ToAddress64.set(address16, address64);
 
                 if (decodedCap && !decodedCap.rxOnWhenIdle) {
-                    this.#indirectTransmissions.set(address64, []);
+                    this.indirectTransmissions.set(address64, []);
                 }
 
                 if (sourceRouteEntries.length > 0) {
@@ -775,5 +797,226 @@ export class StackContext {
     public async savePeriodicState(): Promise<void> {
         await this.saveState();
         this.#saveStateTimeout?.refresh();
+    }
+
+    /**
+     * Revert allowing joins (keeps `allowRejoinsWithWellKnownKey=true`).
+     */
+    public disallowJoins(): void {
+        clearTimeout(this.#allowJoinTimeout);
+        this.#allowJoinTimeout = undefined;
+
+        this.trustCenterPolicies.allowJoins = false;
+        this.trustCenterPolicies.allowRejoinsWithWellKnownKey = true;
+        this.associationPermit = false;
+
+        logger.info("Disallowed joins", NS);
+    }
+
+    /**
+     * @param duration The length of time in seconds during which the trust center will allow joins.
+     * The value 0x00 and 0xff indicate that permission is disabled or enabled, respectively, without a specified time limit.
+     * 0xff is clamped to 0xfe for security reasons
+     * @param macAssociationPermit If true, also allow association on coordinator itself. Ignored if duration 0.
+     */
+    public allowJoins(duration: number, macAssociationPermit: boolean): void {
+        if (duration > 0) {
+            clearTimeout(this.#allowJoinTimeout);
+
+            this.trustCenterPolicies.allowJoins = true;
+            this.trustCenterPolicies.allowRejoinsWithWellKnownKey = true;
+            this.associationPermit = macAssociationPermit;
+
+            this.#allowJoinTimeout = setTimeout(this.disallowJoins.bind(this), Math.min(duration, 0xfe) * 1000);
+
+            logger.info(`Allowed joins for ${duration} seconds (self=${macAssociationPermit})`, NS);
+        } else {
+            this.disallowJoins();
+        }
+    }
+
+    /**
+     * @param source16
+     * @param source64 Assumed valid if assocType === 0x00
+     * @param initialJoin If false, rejoin.
+     * @param neighbor True if the device associating is a neighbor of the coordinator
+     * @param capabilities MAC capabilities
+     * @param denyOverride Treat as MACAssociationStatus.PAN_ACCESS_DENIED
+     * @param allowOverride Treat as MACAssociationStatus.SUCCESS
+     * @returns
+     */
+    public async associate(
+        source16: number | undefined,
+        source64: bigint | undefined,
+        initialJoin: boolean,
+        capabilities: MACCapabilities | undefined,
+        neighbor: boolean,
+        denyOverride?: boolean,
+        allowOverride?: boolean,
+    ): Promise<[status: MACAssociationStatus | number, newAddress16: number]> {
+        // 0xffff when not successful and should not be retried
+        let newAddress16 = source16;
+        let status: MACAssociationStatus | number = MACAssociationStatus.SUCCESS;
+        let unknownRejoin = false;
+
+        if (denyOverride) {
+            newAddress16 = 0xffff;
+            status = MACAssociationStatus.PAN_ACCESS_DENIED;
+        } else if (allowOverride) {
+            if ((source16 === undefined || !this.address16ToAddress64.has(source16)) && (source64 === undefined || !this.deviceTable.has(source64))) {
+                // device unknown
+                unknownRejoin = true;
+            }
+        } else {
+            if (initialJoin) {
+                if (this.trustCenterPolicies.allowJoins) {
+                    if (source16 === undefined || source16 === ZigbeeConsts.COORDINATOR_ADDRESS || source16 >= ZigbeeConsts.BCAST_MIN) {
+                        // MAC join (no `source16`)
+                        newAddress16 = this.assignNetworkAddress();
+
+                        if (newAddress16 === 0xffff) {
+                            status = MACAssociationStatus.PAN_FULL;
+                        }
+                    } else if (source64 !== undefined && this.deviceTable.get(source64) !== undefined) {
+                        // initial join should not conflict on 64, don't allow join if it does
+                        newAddress16 = 0xffff;
+                        status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                    } else {
+                        const existingAddress64 = this.address16ToAddress64.get(source16);
+
+                        if (existingAddress64 !== undefined && source64 !== existingAddress64) {
+                            // join with already taken source16
+                            newAddress16 = this.assignNetworkAddress();
+
+                            if (newAddress16 === 0xffff) {
+                                status = MACAssociationStatus.PAN_FULL;
+                            } else {
+                                // tell device to use the newly generated value
+                                status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                            }
+                        }
+                    }
+                } else {
+                    newAddress16 = 0xffff;
+                    status = MACAssociationStatus.PAN_ACCESS_DENIED;
+                }
+            } else {
+                // rejoin
+                if (source16 === undefined || source16 === ZigbeeConsts.COORDINATOR_ADDRESS || source16 >= ZigbeeConsts.BCAST_MIN) {
+                    // rejoin without 16, generate one (XXX: never happens?)
+                    newAddress16 = this.assignNetworkAddress();
+
+                    if (newAddress16 === 0xffff) {
+                        status = MACAssociationStatus.PAN_FULL;
+                    }
+                } else {
+                    const existingAddress64 = this.address16ToAddress64.get(source16);
+
+                    if (existingAddress64 === undefined) {
+                        // device unknown
+                        unknownRejoin = true;
+                    } else if (existingAddress64 !== source64) {
+                        // rejoin with already taken source16
+                        newAddress16 = this.assignNetworkAddress();
+
+                        if (newAddress16 === 0xffff) {
+                            status = MACAssociationStatus.PAN_FULL;
+                        } else {
+                            // tell device to use the newly generated value
+                            status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                        }
+                    }
+                }
+                // if rejoin, network address will be stored
+                // if (this.trustCenterPolicies.allowRejoinsWithWellKnownKey) {
+                // }
+            }
+        }
+
+        // something went wrong above
+        /* v8 ignore start */
+        if (newAddress16 === undefined) {
+            newAddress16 = 0xffff;
+            status = MACAssociationStatus.PAN_ACCESS_DENIED;
+        }
+        /* v8 ignore stop */
+
+        logger.debug(
+            () =>
+                `DEVICE_JOINING[src=${source16}:${source64} newAddr16=${newAddress16} initialJoin=${initialJoin} deviceType=${capabilities?.deviceType} powerSource=${capabilities?.powerSource} rxOnWhenIdle=${capabilities?.rxOnWhenIdle}] replying with status=${status}`,
+            NS,
+        );
+
+        if (status === MACAssociationStatus.SUCCESS) {
+            if (initialJoin || unknownRejoin) {
+                this.deviceTable.set(source64!, {
+                    address16: newAddress16,
+                    capabilities, // TODO: only valid if not triggered by `processUpdateDevice`
+                    // on initial join success, device is considered joined but unauthorized after MAC Assoc / NWK Commissioning response is sent
+                    authorized: false,
+                    neighbor,
+                    recentLQAs: [],
+                });
+                this.address16ToAddress64.set(newAddress16, source64!);
+
+                // `processUpdateDevice` has no `capabilities` info, device is joined through router, so, no indirect tx for coordinator
+                if (capabilities && !capabilities.rxOnWhenIdle) {
+                    this.indirectTransmissions.set(source64!, []);
+                }
+            } else {
+                // update records on rejoin in case anything has changed (like neighbor for routing)
+                this.address16ToAddress64.set(newAddress16, source64!);
+                const device = this.deviceTable.get(source64!)!;
+                device.address16 = newAddress16;
+                device.capabilities = capabilities;
+                device.neighbor = neighbor;
+            }
+
+            // force saving after device change
+            await this.savePeriodicState();
+        }
+
+        return [status, newAddress16];
+    }
+
+    public async disassociate(source16: number | undefined, source64: bigint | undefined): Promise<void> {
+        if (source64 === undefined && source16 !== undefined) {
+            source64 = this.address16ToAddress64.get(source16);
+        } else if (source16 === undefined && source64 !== undefined) {
+            source16 = this.deviceTable.get(source64)?.address16;
+        }
+
+        // sanity check
+        if (source16 !== undefined && source64 !== undefined) {
+            this.deviceTable.delete(source64);
+            this.address16ToAddress64.delete(source16);
+            this.indirectTransmissions.delete(source64);
+            this.sourceRouteTable.delete(source16);
+            this.pendingAssociations.delete(source64); // should never amount to a delete
+            this.macNoACKs.delete(source16);
+
+            // XXX: should only be needed for `rxOnWhenIdle`, but for now always trigger (tricky bit, not always correct)
+            for (const [addr16, entries] of this.sourceRouteTable) {
+                // entries using this device as relay are no longer valid
+                const filteredEntries = entries.filter((entry) => !entry.relayAddresses.includes(source16));
+
+                if (filteredEntries.length === 0) {
+                    this.sourceRouteTable.delete(addr16);
+                } else if (filteredEntries.length !== entries.length) {
+                    this.sourceRouteTable.set(addr16, filteredEntries);
+                }
+            }
+
+            logger.debug(() => `DEVICE_LEFT[src=${source16}:${source64}]`, NS);
+
+            setImmediate(() => {
+                this.#callbacks.onDeviceLeft(source16, source64);
+            });
+
+            // force new MTORR
+            // await this.nwkHandler.sendPeriodicManyToOneRouteRequest();
+            // force saving after device change
+            await this.savePeriodicState();
+        }
     }
 }

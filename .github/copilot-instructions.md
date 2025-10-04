@@ -614,43 +614,12 @@ throw new Error(`Invalid frame type: 0x${frameType.toString(16).padStart(2, "0")
 
 Handlers use callback interfaces to communicate with the driver instead of emitting events. This provides better type safety and clearer dependencies.
 
-### Handler Callbacks (Internal Communication)
-
-Handlers communicate with the driver through callback interfaces:
-
-```typescript
-// Example: MACHandlerCallbacks
-interface MACHandlerCallbacks {
-    /** Process MAC frame at upper layers */
-    onFrame: (payload: Buffer, rssi?: number) => Promise<void>;
-    /** Send Spinel property to RCP */
-    onSendFrame: (payload: Buffer) => Promise<void>;
-    /** Handle device association */
-    onAssociate: (address16: number | undefined, address64: bigint, initialJoin: boolean, capabilities: MACCapabilities, neighbor: boolean) => Promise<[status: MACAssociationStatus, newAddress16: number]>;
-    /** Send APS TRANSPORT_KEY for network key */
-    onAPSSendTransportKeyNWK: (address16: number, key: Buffer, keySeqNum: number, destination64: bigint) => Promise<void>;
-    /** Mark route as successful */
-    onMarkRouteSuccess: (destination16: number) => void;
-    /** Mark route as failed */
-    onMarkRouteFailure: (destination16: number) => void;
-}
-
-// Usage in MACHandler constructor
-constructor(context: StackContext, callbacks: MACHandlerCallbacks, streamRawConfig: StreamRawConfig) {
-    this.#context = context;
-    this.#callbacks = callbacks;
-    // ...
-}
-
-// Calling back to driver
-await this.#callbacks.onAssociate(address16, address64, initialJoin, capabilities, neighbor);
-```
-
 **Handler callback interfaces:**
 - `MACHandlerCallbacks` - MAC layer to driver
 - `NWKHandlerCallbacks` - NWK layer to driver
 - `NWKGPHandlerCallbacks` - Green Power to driver
 - `APSHandlerCallbacks` - APS layer to driver
+- `StackContextCallbacks` - Stack context to driver
 
 ### Driver Callbacks (External Communication)
 

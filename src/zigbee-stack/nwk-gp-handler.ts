@@ -29,7 +29,9 @@ export class NWKGPHandler {
 
     async start() {}
 
-    stop() {}
+    stop() {
+        this.exitCommissioningMode();
+    }
 
     /**
      * Put the coordinator in Green Power commissioning mode.

@@ -42,6 +42,7 @@ import {
     NetworkKeyUpdateMethod,
     type NetworkParameters,
     StackContext,
+    type StackContextCallbacks,
     TrustCenterKeyRequestPolicy,
 } from "../../src/zigbee-stack/stack-context.js";
 
@@ -51,6 +52,7 @@ describe("ZigBee Specification Compliance Tests", () => {
     let netParams: NetworkParameters;
 
     // Mock callbacks and emitter
+    let mockStackContextCallbacks: StackContextCallbacks;
     let macHandlerCallbacks: MACHandlerCallbacks;
     let nwkHandlerCallbacks: NWKHandlerCallbacks;
     let apsHandlerCallbacks: APSHandlerCallbacks;
@@ -75,13 +77,17 @@ describe("ZigBee Specification Compliance Tests", () => {
         };
 
         saveDir = `temp_MGMT_${Math.floor(Math.random() * 1000000)}`;
-        context = new StackContext(join(saveDir, "zoh.save"), netParams);
+
+        mockStackContextCallbacks = {
+            onDeviceLeft: async () => undefined,
+        };
+
+        context = new StackContext(mockStackContextCallbacks, join(saveDir, "zoh.save"), netParams);
         sentFrames.length = 0;
 
         macHandlerCallbacks = {
             onFrame: async () => undefined,
             onSendFrame: async () => undefined,
-            onAssociate: async () => [MACAssociationStatus.SUCCESS, 0x0001],
             onAPSSendTransportKeyNWK: async () => undefined,
             onMarkRouteSuccess: () => undefined,
             onMarkRouteFailure: () => undefined,
@@ -89,8 +95,6 @@ describe("ZigBee Specification Compliance Tests", () => {
 
         nwkHandlerCallbacks = {
             onDeviceRejoined: async () => undefined,
-            onAssociate: async () => [MACAssociationStatus.SUCCESS, 0x0001],
-            onDisassociate: async () => undefined,
             onAPSSendTransportKeyNWK: async () => undefined,
         };
 
@@ -99,8 +103,6 @@ describe("ZigBee Specification Compliance Tests", () => {
             onDeviceJoined: async () => undefined,
             onDeviceRejoined: async () => undefined,
             onDeviceAuthorized: async () => undefined,
-            onAssociate: async () => [0x00, 0x0001],
-            onDisassociate: async () => undefined,
         };
     });
 

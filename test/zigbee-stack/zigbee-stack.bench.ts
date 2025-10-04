@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { bench, describe } from "vitest";
-import { decodeMACFrameControl, decodeMACHeader, decodeMACPayload, MACAssociationStatus } from "../../src/zigbee/mac.js";
+import { decodeMACFrameControl, decodeMACHeader, decodeMACPayload } from "../../src/zigbee/mac.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import { decodeZigbeeAPSFrameControl, decodeZigbeeAPSHeader, decodeZigbeeAPSPayload, ZigbeeAPSDeliveryMode } from "../../src/zigbee/zigbee-aps.js";
 import { decodeZigbeeNWKFrameControl, decodeZigbeeNWKHeader, decodeZigbeeNWKPayload, ZigbeeNWKRouteDiscovery } from "../../src/zigbee/zigbee-nwk.js";
@@ -9,7 +9,7 @@ import { APSHandler, type APSHandlerCallbacks } from "../../src/zigbee-stack/aps
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
 import { NWKGPHandler, type NWKGPHandlerCallbacks } from "../../src/zigbee-stack/nwk-gp-handler.js";
 import { NWKHandler, type NWKHandlerCallbacks } from "../../src/zigbee-stack/nwk-handler.js";
-import { type NetworkParameters, StackContext } from "../../src/zigbee-stack/stack-context.js";
+import { type NetworkParameters, StackContext, type StackContextCallbacks } from "../../src/zigbee-stack/stack-context.js";
 import { BENCH_OPTIONS } from "../bench-options.js";
 import {
     NET2_ASSOC_REQ_FROM_DEVICE,
@@ -57,12 +57,16 @@ const setup = () => {
     };
 
     saveDir = `temp_ZigBeeStackBench_${Math.floor(Math.random() * 1000000)}`;
-    context = new StackContext(join(saveDir, "zoh.save"), netParams);
+
+    const stackContextCallbacks: StackContextCallbacks = {
+        onDeviceLeft: () => {},
+    };
+
+    context = new StackContext(stackContextCallbacks, join(saveDir, "zoh.save"), netParams);
 
     const macCallbacks: MACHandlerCallbacks = {
         onFrame: () => {},
         onSendFrame: () => Promise.resolve(),
-        onAssociate: () => Promise.resolve([MACAssociationStatus.SUCCESS, 0x1234]),
         onAPSSendTransportKeyNWK: () => Promise.resolve(),
         onMarkRouteSuccess: () => {},
         onMarkRouteFailure: () => {},
@@ -72,8 +76,6 @@ const setup = () => {
 
     const nwkCallbacks: NWKHandlerCallbacks = {
         onDeviceRejoined: () => {},
-        onAssociate: () => Promise.resolve([MACAssociationStatus.SUCCESS, 0x1234]),
-        onDisassociate: () => Promise.resolve(),
         onAPSSendTransportKeyNWK: () => Promise.resolve(),
     };
 
@@ -84,8 +86,6 @@ const setup = () => {
         onDeviceJoined: () => {},
         onDeviceRejoined: () => {},
         onDeviceAuthorized: () => {},
-        onAssociate: () => Promise.resolve([MACAssociationStatus.SUCCESS, 0x1234]),
-        onDisassociate: () => Promise.resolve(),
     };
 
     apsHandler = new APSHandler(context, macHandler, nwkHandler, apsCallbacks);
@@ -148,7 +148,7 @@ describe("ZigBee Stack Handlers", () => {
                 const [macHeader, macHOutOffset] = decodeMACHeader(NET2_ASSOC_REQ_FROM_DEVICE, macFCFOutOffset, macFCF);
                 const macPayload = decodeMACPayload(NET2_ASSOC_REQ_FROM_DEVICE, macHOutOffset, macFCF, macHeader);
 
-                macHandler.associationPermit = true;
+                context.associationPermit = true;
                 await macHandler.processCommand(macPayload, macHeader);
             },
             {
@@ -173,7 +173,7 @@ describe("ZigBee Stack Handlers", () => {
 
                 // Setup pending association (simulating prior ASSOC_REQ)
                 const deviceEUI64 = macHeader.source64!;
-                macHandler.pendingAssociations.set(deviceEUI64, {
+                context.pendingAssociations.set(deviceEUI64, {
                     sendResp: async () => {},
                     timestamp: Date.now(),
                 });
@@ -189,7 +189,7 @@ describe("ZigBee Stack Handlers", () => {
                 await macHandler.processCommand(macPayload, macHeader);
 
                 // Cleanup for next run
-                macHandler.pendingAssociations.delete(deviceEUI64);
+                context.pendingAssociations.delete(deviceEUI64);
                 context.indirectTransmissions.delete(deviceEUI64);
             },
             {

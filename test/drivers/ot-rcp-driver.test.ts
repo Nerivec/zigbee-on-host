@@ -683,7 +683,7 @@ describe("OT RCP Driver", () => {
             expect(driver.context.address16ToAddress64.size).toStrictEqual(0);
             expect(driver.context.sourceRouteTable.size).toStrictEqual(0);
             expect(driver.context.indirectTransmissions.size).toStrictEqual(0);
-            expect(driver.macHandler.pendingAssociations.size).toStrictEqual(0);
+            expect(driver.context.pendingAssociations.size).toStrictEqual(0);
         });
 
         it("throw when trying to reset network after state already loaded", async () => {
@@ -770,9 +770,9 @@ describe("OT RCP Driver", () => {
         });
 
         it("handles allow joins timer", async () => {
-            const disallowJoinsSpy = vi.spyOn(driver, "disallowJoins");
+            const disallowJoinsSpy = vi.spyOn(driver.context, "disallowJoins");
 
-            driver.allowJoins(5, true);
+            driver.context.allowJoins(5, true);
 
             expect(disallowJoinsSpy).toHaveBeenCalledTimes(0);
 
@@ -782,16 +782,16 @@ describe("OT RCP Driver", () => {
 
             disallowJoinsSpy.mockClear();
 
-            driver.allowJoins(5, true);
-            driver.allowJoins(0, false);
+            driver.context.allowJoins(5, true);
+            driver.context.allowJoins(0, false);
             await vi.advanceTimersByTimeAsync(6000);
 
             expect(disallowJoinsSpy).toHaveBeenCalledTimes(1); // cleared timer
 
             disallowJoinsSpy.mockClear();
 
-            driver.allowJoins(5, true);
-            driver.disallowJoins();
+            driver.context.allowJoins(5, true);
+            driver.context.disallowJoins();
             await vi.advanceTimersByTimeAsync(6000);
 
             expect(disallowJoinsSpy).toHaveBeenCalledTimes(1); // cleared timer
@@ -832,15 +832,15 @@ describe("OT RCP Driver", () => {
             // joins not allowed
             let network16 = driver.context.assignNetworkAddress();
             let network64 = randomBigInt();
-            let [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+            let [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
             expect(newAddr16).toStrictEqual(0xffff);
 
-            driver.allowJoins(0xfe, true);
+            driver.context.allowJoins(0xfe, true);
 
             // neighbor device, joins allowed
-            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -848,12 +848,12 @@ describe("OT RCP Driver", () => {
             expect(driver.context.address16ToAddress64.get(network16)).toBeDefined();
             expect(driver.context.indirectTransmissions.get(network64)).toBeUndefined();
             expect(driver.context.sourceRouteTable.get(network16)).toBeUndefined();
-            expect(driver.macHandler.pendingAssociations.get(network64)).toBeUndefined();
+            expect(driver.context.pendingAssociations.get(network64)).toBeUndefined();
 
             // neighbor device, forced denied
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true, true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true, true);
 
             expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
             expect(newAddr16).toStrictEqual(0xffff);
@@ -861,7 +861,7 @@ describe("OT RCP Driver", () => {
             // neighbor device, forced allowed
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true, false, true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true, false, true);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -869,7 +869,7 @@ describe("OT RCP Driver", () => {
             // device, joins allowed
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), false);
+            [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), false);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -877,12 +877,12 @@ describe("OT RCP Driver", () => {
             expect(driver.context.address16ToAddress64.get(network16)).toBeDefined();
             expect(driver.context.indirectTransmissions.get(network64)).toBeDefined();
             expect(driver.context.sourceRouteTable.get(network16)).toBeUndefined();
-            expect(driver.macHandler.pendingAssociations.get(network64)).toBeUndefined();
+            expect(driver.context.pendingAssociations.get(network64)).toBeUndefined();
 
             // device, forced denied
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), false, true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), false, true);
 
             expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
             expect(newAddr16).toStrictEqual(0xffff);
@@ -890,7 +890,7 @@ describe("OT RCP Driver", () => {
             // device, forced allowed
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), false, false, true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), false, false, true);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -898,7 +898,7 @@ describe("OT RCP Driver", () => {
             // conflict, already present
             network16 = driver.context.deviceTable.values().next().value!.address16;
             network64 = driver.context.address16ToAddress64.get(network16)!;
-            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
             expect(newAddr16).toStrictEqual(0xffff);
@@ -906,7 +906,7 @@ describe("OT RCP Driver", () => {
             // conflict, on network16
             network16 = driver.context.deviceTable.values().next().value!.address16;
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
             expect(newAddr16).not.toStrictEqual(network16);
@@ -915,21 +915,21 @@ describe("OT RCP Driver", () => {
             // conflict, on network16/network64
             network16 = driver.context.deviceTable.values().next().value!.address16;
             network64 = driver.context.address16ToAddress64.get(network16)!;
-            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
             expect(newAddr16).toStrictEqual(0xffff);
 
             // by network64 only
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(undefined, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
+            [status, newAddr16] = await driver.context.associate(undefined, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).not.toStrictEqual(0xffff);
 
             // by network16 only
             network16 = driver.context.deviceTable.values().next().value!.address16;
-            [status, newAddr16] = await driver.associate(network16, undefined, true, structuredClone(COMMON_FFD_MAC_CAP), false);
+            [status, newAddr16] = await driver.context.associate(network16, undefined, true, structuredClone(COMMON_FFD_MAC_CAP), false);
 
             expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
             expect(newAddr16).not.toStrictEqual(network16);
@@ -938,7 +938,7 @@ describe("OT RCP Driver", () => {
             // mocked PAN full by network16 only
             network64 = randomBigInt();
             assignNetworkAddressSpy.mockReturnValueOnce(0xffff);
-            [status, newAddr16] = await driver.associate(undefined, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
+            [status, newAddr16] = await driver.context.associate(undefined, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(MACAssociationStatus.PAN_FULL);
             expect(newAddr16).toStrictEqual(0xffff);
@@ -946,12 +946,12 @@ describe("OT RCP Driver", () => {
             // mocked PAN full by network64 only
             network16 = driver.context.deviceTable.values().next().value!.address16;
             assignNetworkAddressSpy.mockReturnValueOnce(0xffff);
-            [status, newAddr16] = await driver.associate(network16, undefined, true, structuredClone(COMMON_FFD_MAC_CAP), false);
+            [status, newAddr16] = await driver.context.associate(network16, undefined, true, structuredClone(COMMON_FFD_MAC_CAP), false);
 
             expect(status).toStrictEqual(MACAssociationStatus.PAN_FULL);
             expect(newAddr16).toStrictEqual(0xffff);
 
-            driver.disallowJoins(); // doesn't matter, but check with disabled just to confirm
+            driver.context.disallowJoins(); // doesn't matter, but check with disabled just to confirm
 
             //-- REJOIN
             expect(driver.context.deviceTable.size).toBeGreaterThan(0);
@@ -960,7 +960,7 @@ describe("OT RCP Driver", () => {
             // unknown neighbor device
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_FFD_MAC_CAP), true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, false, structuredClone(COMMON_FFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -968,7 +968,7 @@ describe("OT RCP Driver", () => {
             // unknown neighbor device, forced denied
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true, true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true, true);
 
             expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
             expect(newAddr16).toStrictEqual(0xffff);
@@ -976,7 +976,7 @@ describe("OT RCP Driver", () => {
             // unknown neighbor device, forced allowed
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true, false, true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true, false, true);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -984,7 +984,7 @@ describe("OT RCP Driver", () => {
             // unknown device
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false);
+            [status, newAddr16] = await driver.context.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -992,7 +992,7 @@ describe("OT RCP Driver", () => {
             // unknown neighbor device, forced denied
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false, true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false, true);
 
             expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
             expect(newAddr16).toStrictEqual(0xffff);
@@ -1000,7 +1000,15 @@ describe("OT RCP Driver", () => {
             // unknown neighbor device, forced allowed
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false, false, true);
+            [status, newAddr16] = await driver.context.associate(
+                network16,
+                network64,
+                false,
+                structuredClone(COMMON_RFD_MAC_CAP),
+                false,
+                false,
+                true,
+            );
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -1008,7 +1016,7 @@ describe("OT RCP Driver", () => {
             // existing neighbor device
             network16 = driver.context.deviceTable.values().next().value!.address16;
             network64 = driver.context.address16ToAddress64.get(network16)!;
-            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_FFD_MAC_CAP), true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, false, structuredClone(COMMON_FFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -1016,7 +1024,7 @@ describe("OT RCP Driver", () => {
             // existing neighbor device, forced denied
             network16 = driver.context.deviceTable.values().next().value!.address16;
             network64 = driver.context.address16ToAddress64.get(network16)!;
-            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true, true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true, true);
 
             expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
             expect(newAddr16).toStrictEqual(0xffff);
@@ -1024,7 +1032,7 @@ describe("OT RCP Driver", () => {
             // existing neighbor device, forced allowed
             network16 = driver.context.deviceTable.values().next().value!.address16;
             network64 = driver.context.address16ToAddress64.get(network16)!;
-            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true, false, true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true, false, true);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -1032,7 +1040,7 @@ describe("OT RCP Driver", () => {
             // existing device
             network16 = driver.context.deviceTable.values().next().value!.address16;
             network64 = driver.context.address16ToAddress64.get(network16)!;
-            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false);
+            [status, newAddr16] = await driver.context.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -1040,7 +1048,7 @@ describe("OT RCP Driver", () => {
             // existing device, forced denied
             network16 = driver.context.deviceTable.values().next().value!.address16;
             network64 = driver.context.address16ToAddress64.get(network16)!;
-            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false, true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false, true);
 
             expect(status).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
             expect(newAddr16).toStrictEqual(0xffff);
@@ -1048,7 +1056,15 @@ describe("OT RCP Driver", () => {
             // existing device, forced allowed
             network16 = driver.context.deviceTable.values().next().value!.address16;
             network64 = driver.context.address16ToAddress64.get(network16)!;
-            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), false, false, true);
+            [status, newAddr16] = await driver.context.associate(
+                network16,
+                network64,
+                false,
+                structuredClone(COMMON_RFD_MAC_CAP),
+                false,
+                false,
+                true,
+            );
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -1056,7 +1072,7 @@ describe("OT RCP Driver", () => {
             // existing, conflicting, on network16
             network16 = driver.context.deviceTable.values().next().value!.address16;
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
             expect(newAddr16).not.toStrictEqual(network16);
@@ -1064,14 +1080,14 @@ describe("OT RCP Driver", () => {
 
             // existing, by network64 only
             network64 = driver.context.address16ToAddress64.get(network16)!;
-            [status, newAddr16] = await driver.associate(undefined, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true);
+            [status, newAddr16] = await driver.context.associate(undefined, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).not.toStrictEqual(0xffff);
 
             // existing, by network16 only
             network16 = driver.context.deviceTable.values().next().value!.address16;
-            [status, newAddr16] = await driver.associate(network16, undefined, false, structuredClone(COMMON_RFD_MAC_CAP), true);
+            [status, newAddr16] = await driver.context.associate(network16, undefined, false, structuredClone(COMMON_RFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
             expect(newAddr16).not.toStrictEqual(network16);
@@ -1080,7 +1096,7 @@ describe("OT RCP Driver", () => {
             // existing device, by network64 only, mocked PAN full
             network64 = randomBigInt();
             assignNetworkAddressSpy.mockReturnValueOnce(0xffff);
-            [status, newAddr16] = await driver.associate(undefined, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true);
+            [status, newAddr16] = await driver.context.associate(undefined, network64, false, structuredClone(COMMON_RFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(MACAssociationStatus.PAN_FULL);
             expect(newAddr16).toStrictEqual(0xffff);
@@ -1088,7 +1104,7 @@ describe("OT RCP Driver", () => {
             // existing device, by network16 only, mocked PAN full
             network16 = driver.context.deviceTable.values().next().value!.address16;
             assignNetworkAddressSpy.mockReturnValueOnce(0xffff);
-            [status, newAddr16] = await driver.associate(network16, undefined, false, structuredClone(COMMON_FFD_MAC_CAP), false);
+            [status, newAddr16] = await driver.context.associate(network16, undefined, false, structuredClone(COMMON_FFD_MAC_CAP), false);
 
             expect(status).toStrictEqual(MACAssociationStatus.PAN_FULL);
             expect(newAddr16).toStrictEqual(0xffff);
@@ -1097,12 +1113,12 @@ describe("OT RCP Driver", () => {
         it("disassociates", async () => {
             // no-op, not relevant for this test
             vi.spyOn(driver.nwkHandler, "sendPeriodicManyToOneRouteRequest").mockImplementation(async () => {});
-            driver.allowJoins(0xfe, true);
+            driver.context.allowJoins(0xfe, true);
 
             // neighbor FFD
             let network16 = driver.context.assignNetworkAddress();
             let network64 = randomBigInt();
-            let [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+            let [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -1110,20 +1126,20 @@ describe("OT RCP Driver", () => {
             expect(driver.context.address16ToAddress64.get(network16)).toBeDefined();
             expect(driver.context.indirectTransmissions.get(network64)).toBeUndefined();
             expect(driver.context.sourceRouteTable.get(network16)).toBeUndefined();
-            expect(driver.macHandler.pendingAssociations.get(network64)).toBeUndefined();
+            expect(driver.context.pendingAssociations.get(network64)).toBeUndefined();
 
-            await driver.disassociate(network16, undefined);
+            await driver.context.disassociate(network16, undefined);
 
             expect(driver.context.deviceTable.get(network64)).toBeUndefined();
             expect(driver.context.address16ToAddress64.get(network16)).toBeUndefined();
             expect(driver.context.indirectTransmissions.get(network64)).toBeUndefined();
             expect(driver.context.sourceRouteTable.get(network16)).toBeUndefined();
-            expect(driver.macHandler.pendingAssociations.get(network64)).toBeUndefined();
+            expect(driver.context.pendingAssociations.get(network64)).toBeUndefined();
 
             // FFD
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), false);
+            [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), false);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -1131,20 +1147,20 @@ describe("OT RCP Driver", () => {
             expect(driver.context.address16ToAddress64.get(network16)).toBeDefined();
             expect(driver.context.indirectTransmissions.get(network64)).toBeUndefined();
             expect(driver.context.sourceRouteTable.get(network16)).toBeUndefined();
-            expect(driver.macHandler.pendingAssociations.get(network64)).toBeUndefined();
+            expect(driver.context.pendingAssociations.get(network64)).toBeUndefined();
 
-            await driver.disassociate(undefined, network64);
+            await driver.context.disassociate(undefined, network64);
 
             expect(driver.context.deviceTable.get(network64)).toBeUndefined();
             expect(driver.context.address16ToAddress64.get(network16)).toBeUndefined();
             expect(driver.context.indirectTransmissions.get(network64)).toBeUndefined();
             expect(driver.context.sourceRouteTable.get(network16)).toBeUndefined();
-            expect(driver.macHandler.pendingAssociations.get(network64)).toBeUndefined();
+            expect(driver.context.pendingAssociations.get(network64)).toBeUndefined();
 
             // neighbor RFD
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
+            [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -1152,20 +1168,20 @@ describe("OT RCP Driver", () => {
             expect(driver.context.address16ToAddress64.get(network16)).toBeDefined();
             expect(driver.context.indirectTransmissions.get(network64)).toBeDefined();
             expect(driver.context.sourceRouteTable.get(network16)).toBeUndefined();
-            expect(driver.macHandler.pendingAssociations.get(network64)).toBeUndefined();
+            expect(driver.context.pendingAssociations.get(network64)).toBeUndefined();
 
-            await driver.disassociate(network16, undefined);
+            await driver.context.disassociate(network16, undefined);
 
             expect(driver.context.deviceTable.get(network64)).toBeUndefined();
             expect(driver.context.address16ToAddress64.get(network16)).toBeUndefined();
             expect(driver.context.indirectTransmissions.get(network64)).toBeUndefined();
             expect(driver.context.sourceRouteTable.get(network16)).toBeUndefined();
-            expect(driver.macHandler.pendingAssociations.get(network64)).toBeUndefined();
+            expect(driver.context.pendingAssociations.get(network64)).toBeUndefined();
 
             // RFD
             network16 = driver.context.assignNetworkAddress();
             network64 = randomBigInt();
-            [status, newAddr16] = await driver.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), false);
+            [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), false);
 
             expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(newAddr16).toStrictEqual(network16);
@@ -1173,15 +1189,15 @@ describe("OT RCP Driver", () => {
             expect(driver.context.address16ToAddress64.get(network16)).toBeDefined();
             expect(driver.context.indirectTransmissions.get(network64)).toBeDefined();
             expect(driver.context.sourceRouteTable.get(network16)).toBeUndefined();
-            expect(driver.macHandler.pendingAssociations.get(network64)).toBeUndefined();
+            expect(driver.context.pendingAssociations.get(network64)).toBeUndefined();
 
-            await driver.disassociate(undefined, network64);
+            await driver.context.disassociate(undefined, network64);
 
             expect(driver.context.deviceTable.get(network64)).toBeUndefined();
             expect(driver.context.address16ToAddress64.get(network16)).toBeUndefined();
             expect(driver.context.indirectTransmissions.get(network64)).toBeUndefined();
             expect(driver.context.sourceRouteTable.get(network16)).toBeUndefined();
-            expect(driver.macHandler.pendingAssociations.get(network64)).toBeUndefined();
+            expect(driver.context.pendingAssociations.get(network64)).toBeUndefined();
         });
     });
 
@@ -1707,7 +1723,7 @@ describe("OT RCP Driver", () => {
             // - NET2_TRANSPORT_KEY_TC_FROM_COORD
             // - NET2_VERIFY_KEY_TC_FROM_DEVICE
             // - NET2_CONFIRM_KEY_TC_SUCCESS
-            driver.allowJoins(0xfe, true);
+            driver.context.allowJoins(0xfe, true);
 
             // creates a bottleneck with vitest & promises, noop it
             const savePeriodicStateSpy = vi.spyOn(driver.context, "savePeriodicState").mockResolvedValue();
@@ -1980,8 +1996,8 @@ describe("OT RCP Driver", () => {
             const nwkDest16 = 0x2143;
             const nwkDest64 = 8458932590n;
 
-            driver.allowJoins(5, true);
-            await driver.associate(nwkDest16, nwkDest64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+            driver.context.allowJoins(5, true);
+            await driver.context.associate(nwkDest16, nwkDest64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
 
             waitForTIDSpy.mockRejectedValueOnce(new Error("Failed with status=NO_ACK"));
             await expect(
@@ -2089,8 +2105,8 @@ describe("OT RCP Driver", () => {
             const nwkDest64 = 4321n;
             const clusterId = 0;
 
-            driver.allowJoins(0x5, true);
-            await driver.associate(nwkDest16, nwkDest64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+            driver.context.allowJoins(0x5, true);
+            await driver.context.associate(nwkDest16, nwkDest64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
 
             const p = driver.sendZDO(payload, nwkDest16, nwkDest64, clusterId);
             driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK), "utf8", () => {});
@@ -2313,8 +2329,8 @@ describe("OT RCP Driver", () => {
             const destEndpoint = 30;
             const sourceEndpoint = 1;
 
-            driver.allowJoins(0x5, true);
-            await driver.associate(nwkDest16, nwkDest64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
+            driver.context.allowJoins(0x5, true);
+            await driver.context.associate(nwkDest16, nwkDest64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
 
             const p = driver.sendUnicast(payload, profileId, clusterId, nwkDest16, nwkDest64, destEndpoint, sourceEndpoint);
             driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK), "utf8", () => {});
@@ -2915,13 +2931,13 @@ describe("OT RCP Driver", () => {
             expect(driver.context.sourceRouteTable.get(0x4b8e)!.length).toStrictEqual(1);
 
             //-- triggers cleanup
-            await driver.disassociate(0xcb47, undefined);
+            await driver.context.disassociate(0xcb47, undefined);
 
             expect(driver.context.sourceRouteTable.get(0x4b8e)).toBeUndefined();
             await vi.advanceTimersByTimeAsync(11000); // past concentrator min time
             expect(driver.nwkHandler.findBestSourceRoute(0x4b8e, undefined)).toStrictEqual([undefined, undefined, undefined]);
             await vi.advanceTimersByTimeAsync(10); // flush
-            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1 + 1 /* disassociate */);
+            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1);
             expect(sendRouteReqSpy).toHaveBeenCalledTimes(1);
 
             //-- too many NO_ACK
@@ -2936,7 +2952,7 @@ describe("OT RCP Driver", () => {
             // Routes with bad relays are filtered, best remaining route is returned
             expect(driver.nwkHandler.findBestSourceRoute(0x6887, undefined)).toStrictEqual([2, [0x6, 0x7, 0x8], 4]);
             await vi.advanceTimersByTimeAsync(10); // flush
-            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1 + 1 /* disassociate */);
+            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1);
             expect(sendRouteReqSpy).toHaveBeenCalledTimes(1); // too soon
             const remaining = driver.context.sourceRouteTable.get(0x6887)!;
             expect(remaining).toHaveLength(1);
@@ -2950,7 +2966,7 @@ describe("OT RCP Driver", () => {
             expect(driver.nwkHandler.findBestSourceRoute(0x6887, undefined)).toStrictEqual([undefined, undefined, undefined]);
             await vi.advanceTimersByTimeAsync(10); // flush
             // MTORR called once more when no valid routes remain for non-neighbor
-            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(2 + 1 /* disassociate */);
+            expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(2);
             expect(sendRouteReqSpy).toHaveBeenCalledTimes(2);
             expect(driver.context.sourceRouteTable.get(0x6887)).toBeUndefined();
 
@@ -3235,7 +3251,7 @@ describe("OT RCP Driver", () => {
 
             //-- mock LEAVE
             vi.spyOn(driver.nwkHandler, "sendPeriodicManyToOneRouteRequest").mockImplementationOnce(async () => {}); // no-op for disassociate
-            await driver.disassociate(0x91d2, 8118874123826907736n);
+            await driver.context.disassociate(0x91d2, 8118874123826907736n);
 
             expect(driver.context.sourceRouteTable.size).toStrictEqual(5);
 
@@ -3407,7 +3423,7 @@ describe("OT RCP Driver", () => {
             expect(lqiTable).toStrictEqual(expectedLQITable.subarray(0, 5 + 3 * 22));
 
             vi.spyOn(driver.nwkHandler, "sendPeriodicManyToOneRouteRequest").mockImplementationOnce(async () => {}); // no-op for disassociate
-            await driver.disassociate(0xcb47, 5149013569626593n);
+            await driver.context.disassociate(0xcb47, 5149013569626593n);
             expect(driver.context.deviceTable.size).toStrictEqual(5);
 
             lqiTable = driver.apsHandler.getLQITableResponse(0);

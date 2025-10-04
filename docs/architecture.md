@@ -76,7 +76,8 @@ ZigBee on Host is a host-based ZigBee stack implementation that communicates wit
 │ • Sequence Counters (MAC, NWK, APS, ZDO)                          │
 │ • Configuration (coordinator descriptors, policies)               │
 │ • Helper Methods (computeLQA, computeDeviceLQA)                   │
-│ • State Persistence: saveState(), loadState()                     │
+│ • State Persistence (saveState, loadState)                        │
+│ • Trust Center: (-dis-allowJoins, -dis-associate)                 │
 └───────────────────────────────────────────────────────────────────┘
                      │
                      │ Transport Layer
@@ -138,8 +139,6 @@ src/
 // Network Management
 public async formNetwork(): Promise<void>
 public async resetNetwork(): Promise<void>
-public allowJoins(duration: number, macAssociationPermit: boolean): void
-public disallowJoins(): void
 
 // Data Transmission
 public async sendZDO(payload: Buffer, nwkDest16: number, nwkDest64: bigint | undefined, clusterId: number): Promise<[number, number]>
@@ -186,7 +185,6 @@ interface StackCallbacks {
 ```typescript
 public async sendFrame(seqNum: number, payload: Buffer, dest16: number | undefined, dest64: bigint | undefined): Promise<boolean | undefined>
 public async sendFrameDirect(seqNum: number, payload: Buffer, dest16: number | undefined, dest64: bigint | undefined): Promise<boolean>
-public getIndirectTransmissions(): Map<bigint, Buffer[]>
 ```
 
 **MAC Commands Handled:**
@@ -202,8 +200,6 @@ interface MACHandlerCallbacks {
     onMACFrame: (payload: Buffer, rssi?: number) => Promise<void>;
     /** Send Spinel property to RCP */
     onSendFrame: (payload: Buffer) => Promise<void>;
-    /** Handle device association (orchestrates NWK/APS) */
-    onAssociate: (address16: number | undefined, address64: bigint, initialJoin: boolean, capabilities: MACCapabilities, neighbor: boolean) => Promise<[status: MACAssociationStatus, newAddress16: number]>;
     /** Send APS TRANSPORT_KEY for network key */
     onAPSSendTransportKeyNWK: (address16: number, key: Buffer, keySeqNum: number, destination64: bigint) => Promise<void>;
     /** Mark route as successful */
@@ -254,10 +250,6 @@ public async sendPeriodicManyToOneRouteRequest(): Promise<void>
 interface NWKHandlerCallbacks {
     /** Handle device rejoin */
     onDeviceRejoined: (source16: number, source64: bigint, capabilities: MACCapabilities) => void;
-    /** Handle device association/rejoin */
-    onAssociate: (source16: number | undefined, source64: bigint | undefined, initialJoin: boolean, capabilities: MACCapabilities | undefined, neighbor: boolean, denyOverride?: boolean, allowOverride?: boolean) => Promise<[status: MACAssociationStatus | number, newAddress16: number]>;
-    /** Handle device disassociation/leave */
-    onDisassociate: (address16: number | undefined, address64: bigint | undefined) => Promise<void>;
     /** Send APS TRANSPORT_KEY for network key */
     onAPSSendTransportKeyNWK: (destination16: number, networkKey: Buffer, keySequenceNumber: number, destination64: bigint) => Promise<void>;
 }
@@ -323,10 +315,6 @@ interface APSHandlerCallbacks {
     onDeviceRejoined: (source16: number, source64: bigint, capabilities: MACCapabilities) => void;
     /** Handle device authorization */
     onDeviceAuthorized: (source16: number, source64: bigint) => void;
-    /** Handle device association */
-    onAssociate: (source16: number | undefined, source64: bigint | undefined, initialJoin: boolean, capabilities: MACCapabilities | undefined, neighbor: boolean, denyOverride?: boolean, allowOverride?: boolean) => Promise<[status: number, newAddress16: number]>;
-    /** Handle device disassociation */
-    onDisassociate: (address16: number | undefined, address64: bigint | undefined) => Promise<void>;
 }
 ```
 
@@ -342,9 +330,12 @@ interface APSHandlerCallbacks {
 - Key frame counters
 - Trust center policies (join policies, key policies)
 - Coordinator configuration attributes
+- Pending associations (awaiting DATA_RQ from device)
+- Indirect transmissions (for devices with rxOnWhenIdle=false)
 
 **Key Methods:**
 ```typescript
+// State management
 public nextNWKKeyFrameCounter(): number
 public nextTCKeyFrameCounter(): number
 public computeLQA(signalStrength: number, signalQuality?: number): number
@@ -354,6 +345,20 @@ public getAddress64(address16: number): bigint | undefined
 public getAddress16(address64: bigint): number | undefined
 public async saveState(): Promise<void>
 public async loadState(): Promise<void>
+
+// Trust Center operations
+public allowJoins(duration: number, macAssociationPermit: boolean): void
+public disallowJoins(): void
+public async associate(source16: number | undefined, source64: bigint | undefined, initialJoin: boolean, capabilities: MACCapabilities | undefined, neighbor: boolean, denyOverride?: boolean, allowOverride?: boolean): Promise<[status: MACAssociationStatus | number, newAddress16: number]>
+public async disassociate(source16: number | undefined, source64: bigint | undefined): Promise<void>
+```
+
+**Callbacks to Driver (StackContextCallbacks):**
+```typescript
+interface StackContextCallbacks {
+    /** Handle post-disassociate */
+    onDeviceLeft: (source16: number, source64: bigint) => void;
+}
 ```
 
 ## Data Flow
