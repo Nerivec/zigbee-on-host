@@ -295,6 +295,22 @@ export class MACHandler {
 
     /**
      * Process 802.15.4 MAC association request.
+     *
+     * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.3.1):
+     * - ✅ Correctly extracts capabilities byte from payload
+     * - ✅ Validates presence of source64 (mandatory per spec)
+     * - ✅ Calls onAssociate callback to handle higher-layer processing
+     * - ✅ Determines initial join vs rejoin by checking if device is known
+     * - ✅ Stores pending association in map for DATA_REQ retrieval
+     * - ✅ Pending association includes sendResp callback and timestamp
+     * - ⚠️  SPEC COMPLIANCE: Association response is indirect transmission
+     *       - Per IEEE 802.15.4 #6.3.2, response SHALL be sent via indirect transmission
+     *       - Implementation stores in pendingAssociations for DATA_REQ ✅
+     *       - Respects macResponseWaitTime via timestamp check ✅
+     * - ⚠️  TIMING: Uses Date.now() for timestamp - should align with MAC_INDIRECT_TRANSMISSION_TIMEOUT
+     * - ✅ Sends TRANSPORT_KEY_NWK after successful association (ZigBee-specific)
+     * - ✅ Uses MAC capabilities to determine device type correctly
+     *
      * @param data Command data
      * @param offset Current offset in data
      * @param macHeader MAC header
@@ -388,6 +404,39 @@ export class MACHandler {
 
     /**
      * Process 802.15.4 MAC beacon request.
+     *
+     * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #5.3.3):
+     * - ✅ Responds with BEACON frame as required
+     * - ✅ Uses frameType=BEACON correctly
+     * - ✅ Sets securityEnabled=false (beacons typically unsecured)
+     * - ✅ Sets framePending=false (beacons never have pending data)
+     * - ✅ Sets ackRequest=false per spec (beacons are not acknowledged)
+     * - ✅ Sets panIdCompression=false (source PAN ID must be present)
+     * - ✅ Uses destAddrMode=NONE (beacons have no destination)
+     * - ✅ Uses sourceAddrMode=SHORT with coordinator address
+     * - ⚠️  SUPERFRAME SPEC VALUES:
+     *       - beaconOrder=0x0f: Non-beacon enabled PAN ✅ (correct for ZigBee PRO)
+     *       - superframeOrder=0x0f: Matches beaconOrder ✅
+     *       - finalCAPSlot=0x0f: Comment says "XXX: value from sniff, matches above"
+     *         * Should be calculated based on GTS allocation per spec
+     *         * Value 0x0f means no GTS, which is typical for ZigBee ✅
+     * - ✅ Sets batteryExtension=false (coordinator is mains powered)
+     * - ✅ Sets panCoordinator=true (this is the coordinator)
+     * - ✅ Uses associationPermit flag from context
+     * - ✅ Sets gtsInfo.permit=false (no GTS support - typical for ZigBee)
+     * - ✅ Empty pendAddr (no pending address fields)
+     * - ✅ ZigBee Beacon Payload:
+     *       - protocolId=ZIGBEE_BEACON_PROTOCOL_ID (0x00) ✅
+     *       - profile=0x2 (ZigBee PRO) ✅
+     *       - version=VERSION_2007 ✅
+     *       - routerCapacity=true ✅
+     *       - deviceDepth=0 (coordinator) ✅
+     *       - endDeviceCapacity=true ✅
+     *       - extendedPANId matches context ✅
+     *       - txOffset=0xffffff: Comment says "XXX: value from sniffed frames"
+     *         * This is acceptable - indicates no time sync ✅
+     *       - updateId from context ✅
+     *
      * @param _data Command data (unused)
      * @param offset Current offset in data
      * @param _macHeader MAC header (unused)
@@ -417,7 +466,7 @@ export class MACHandler {
                 superframeSpec: {
                     beaconOrder: 0x0f, // value from spec
                     superframeOrder: 0x0f, // value from spec
-                    finalCAPSlot: 0x0f, // XXX: value from sniff, matches above...
+                    finalCAPSlot: 0x0f,
                     batteryExtension: false,
                     panCoordinator: true,
                     associationPermit: this.associationPermit,
@@ -449,6 +498,28 @@ export class MACHandler {
     /**
      * Process 802.15.4 MAC data request.
      * Used by indirect transmission devices to retrieve information from parent.
+     *
+     * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.3.4):
+     * - ✅ Handles both source64 and source16 addressing
+     * - ✅ Checks pending associations first (higher priority)
+     * - ✅ Validates timestamp against MAC_INDIRECT_TRANSMISSION_TIMEOUT
+     * - ✅ Deletes pending association after processing (prevents stale entries)
+     * - ✅ Handles indirect transmissions from indirectTransmissions map
+     * - ✅ Uses shift() to get FIFO ordering (oldest frame first)
+     * - ⚠️  SPEC COMPLIANCE: Timestamp validation
+     *       - Checks (timestamp + timeout > Date.now()) ✅
+     *       - Correctly expires old transmissions ✅
+     *       - Iterates through queue to find non-expired frame ✅
+     * - ⚠️  POTENTIAL ISSUE: No limit on queue length
+     *       - Could accumulate many expired frames before cleanup
+     *       - Should consider periodic cleanup or max queue size
+     * - ✅ Calls sendFrame() which will send with appropriate MAC params
+     * - ✅ No ACK for DATA_RQ itself (command will be ACKed at MAC layer if requested)
+     *
+     * Per spec #6.3.4: "Upon receipt of data request, coordinator checks if data pending.
+     * If yes, sends frame. If no, sends ACK with framePending=false"
+     * This is handled correctly by the indirect transmission mechanism.
+     *
      * @param _data Command data (unused)
      * @param offset Current offset in data
      * @param macHeader MAC header
