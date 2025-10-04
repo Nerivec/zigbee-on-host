@@ -1,0 +1,779 @@
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { encodeCoordinatorDescriptors } from "../drivers/descriptors.js";
+import { logger } from "../utils/logger.js";
+import {
+    estimateTLVStateSize,
+    readTLVs,
+    SAVE_FORMAT_VERSION,
+    serializeDeviceEntry,
+    TLVTag,
+    writeTLV,
+    writeTLVBigUInt64LE,
+    writeTLVInt8,
+    writeTLVUInt8,
+    writeTLVUInt16LE,
+    writeTLVUInt32LE,
+} from "../utils/save-serializer.js";
+import { decodeMACCapabilities, encodeMACCapabilities, type MACCapabilities, type MACHeader } from "../zigbee/mac.js";
+import { makeKeyedHash, makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../zigbee/zigbee.js";
+import type { ZigbeeAPSHeader, ZigbeeAPSPayload } from "../zigbee/zigbee-aps.js";
+import type { ZigbeeNWKGPHeader } from "../zigbee/zigbee-nwkgp.js";
+
+const NS = "stack-context";
+
+export interface StackCallbacks {
+    onFatalError: (message: string) => void;
+
+    /** Only triggered if MAC `emitFrames===true` */
+    onMACFrame: (payload: Buffer, rssi?: number) => void;
+    onFrame: (
+        sender16: number | undefined,
+        sender64: bigint | undefined,
+        apsHeader: ZigbeeAPSHeader,
+        apsPayload: ZigbeeAPSPayload,
+        lqa: number,
+    ) => void;
+    onGPFrame: (cmdId: number, payload: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, lqa: number) => void;
+
+    onDeviceJoined: (source16: number, source64: bigint, capabilities: MACCapabilities) => void;
+    onDeviceRejoined: (source16: number, source64: bigint, capabilities: MACCapabilities) => void;
+    onDeviceLeft: (source16: number, source64: bigint) => void;
+    onDeviceAuthorized: (source16: number, source64: bigint) => void;
+}
+
+/**
+ * Network parameters for the ZigBee network.
+ */
+export type NetworkParameters = {
+    eui64: bigint;
+    panId: number;
+    extendedPanId: bigint;
+    channel: number;
+    nwkUpdateId: number;
+    txPower: number;
+    // TODO: implement ~30-day automatic key rotation?
+    networkKey: Buffer;
+    // TODO: wrap-to-zero mechanism / APS SWITCH_KEY
+    networkKeyFrameCounter: number;
+    networkKeySequenceNumber: number;
+    tcKey: Buffer;
+    tcKeyFrameCounter: number;
+};
+
+export enum InstallCodePolicy {
+    /** Do not support Install Codes */
+    NOT_SUPPORTED = 0x00,
+    /** Support but do not require use of Install Codes or preset passphrases */
+    NOT_REQUIRED = 0x01,
+    /** Require the use of Install Codes by joining devices or preset Passphrases */
+    REQUIRED = 0x02,
+}
+
+export enum TrustCenterKeyRequestPolicy {
+    DISALLOWED = 0x00,
+    /** Any device MAY request */
+    ALLOWED = 0x01,
+    /** Only devices in the apsDeviceKeyPairSet with a KeyAttribute value of PROVISIONAL_KEY MAY request. */
+    ONLY_PROVISIONAL = 0x02,
+}
+
+export enum ApplicationKeyRequestPolicy {
+    DISALLOWED = 0x00,
+    /** Any device MAY request an application link key with any device (except the Trust Center) */
+    ALLOWED = 0x01,
+    /** Only those devices listed in applicationKeyRequestList MAY request and receive application link keys. */
+    ONLY_APPROVED = 0x02,
+}
+
+export enum NetworkKeyUpdateMethod {
+    /** Broadcast using only network encryption */
+    BROADCAST = 0x00,
+    /** Unicast using network encryption and APS encryption with a device’s link key. */
+    UNICAST = 0x01,
+}
+
+/**
+ * see 05-3474-23 #4.7.3
+ */
+export type TrustCenterPolicies = {
+    /**
+     * This boolean indicates whether the Trust Center is currently allowing devices to join the network.
+     * A value of TRUE means that the Trust Center is allowing devices that have never been sent the network key or a trust center link key, to join the network.
+     */
+    allowJoins: boolean;
+    /** This enumeration indicates if the Trust Center requires install codes to be used with joining devices. */
+    installCode: InstallCodePolicy;
+    /**
+     * This value indicates if the trust center allows rejoins using well known or default keys.
+     * A setting of FALSE means rejoins are only allowed with trust center link keys where the KeyAttributes of the apsDeviceKeyPairSet entry indicates VERIFIED_KEY.
+     */
+    allowRejoinsWithWellKnownKey: boolean;
+    /** This value controls whether devices are allowed to request a Trust Center Link Key after they have joined the network. */
+    allowTCKeyRequest: TrustCenterKeyRequestPolicy;
+    /** This policy indicates whether a node on the network that transmits a ZDO Mgmt_Permit_Join with a significance set to 1 is allowed to effect the local Trust Center’s policies. */
+    allowRemoteTCPolicyChange: boolean;
+    /** This value determines how the Trust Center SHALL handle attempts to request an application link key with a partner node. */
+    allowAppKeyRequest: ApplicationKeyRequestPolicy;
+    /**
+     * This is a list of IEEE pairs of devices, which are allowed to establish application link keys between one another.
+     * The first IEEE address is the initiator, the second is the responder.
+     * If the responder address is set to 0xFFFFFFFFFFFFFFFF, then the initiator is allowed to request an application link key with any device.
+     * If the responder’s address is not 0xFFFFFFFFFFFFFFFF, then it MAY also initiate an application link key request.
+     * This list is only valid if allowAppKeyRequest is set to 0x02.
+     */
+    appKeyRequestList?: [responder64: bigint, initiator64: bigint][];
+    /**
+     * TODO: should do at least once a year to prevent deadlock at 0xffffffff
+     *       alt: update when counter reaches 0x40000000
+     * The period, in minutes, of how often the network key is updated by the Trust Center.
+     * A period of 0 means the Trust Center will not periodically update the network key (it MAY still update key at other times).
+     * uint32_t
+     */
+    networkKeyUpdatePeriod: number;
+    /** This value describes the method the Trust Center uses to update the network key. */
+    networkKeyUpdateMethod: NetworkKeyUpdateMethod;
+    /**
+     * This Boolean indicates whether the Trust Center is currently allowing Zigbee Direct Virtual Devices (ZVDs) to join the network.
+     * A value of TRUE means that the Trust Center is allowing such devices.
+     */
+    allowVirtualDevices: boolean;
+};
+
+/**
+ * List of all devices currently on the network.
+ */
+export type DeviceTableEntry = {
+    // address64: bigint; // mapped
+    address16: number;
+    /** Indicates whether the device keeps its receiver on when idle */
+    capabilities: MACCapabilities | undefined;
+    /** Indicates whether the device verified its key */
+    authorized: boolean;
+    /** Indicates whether the device is a neighbor */
+    neighbor: boolean;
+    /**
+     * List of recently observed LQAs.
+     * Note: this is runtime-only
+     */
+    recentLQAs: number[];
+};
+
+export type SourceRouteTableEntry = {
+    /** Relay addresses (empty if direct route) */
+    relayAddresses: number[];
+    /** Cost of the path (based on hop count and link quality) */
+    pathCost: number;
+    /** Timestamp when this route was last updated (used for route aging) */
+    lastUpdated: number;
+    /** Count of consecutive failures using this route */
+    failureCount: number;
+    /** Timestamp when this route was last used successfully (undefined if never used) */
+    lastUsed?: number;
+};
+
+/**
+ * 05-3474-23 #2.5.5
+ */
+export type ConfigurationAttributes = {
+    /**
+     * NOTE: Pre-encoded as "sendable" ZDO response (see descriptors.ts for more details):
+     */
+    address: Buffer;
+    /**
+     * 05-3474-23 #2.3.2.3
+     * The :Config_Node_Descriptor is either created when the application is first loaded or initialized with a commissioning tool prior to when the device begins operations in the network.
+     * It is used for service discovery to describe node features to external inquiring devices.
+     *
+     * NOTE: Pre-encoded as "sendable" ZDO response (see descriptors.ts for more details):
+     * - Byte 1: sequence number
+     * - Byte 2: status
+     * - Byte 3-4: 0x0000 (coordinator nwk addr)
+     */
+    nodeDescriptor: Buffer;
+    /**
+     * 05-3474-23 #2.3.2.4
+     * The :Config_Power_Descriptor is either created when the application is first loaded or initialized with a commissioning tool prior to when the device begins operations in the network.
+     * It is used for service discovery to describe node power features to external inquiring devices.
+     *
+     * NOTE: Pre-encoded as "sendable" ZDO response (see descriptors.ts for more details):
+     * - Byte 1: sequence number
+     * - Byte 2: status
+     * - Byte 3-4: 0x0000 (coordinator nwk addr)
+     */
+    powerDescriptor: Buffer;
+    /**
+     * 05-3474-23 #2.3.2.5
+     * The :Config_Simple_Descriptors are created when the application is first loaded and are treated as “read-only.”
+     * The Simple Descriptor are used for service discovery to describe interfacing features to external inquiring devices.
+     *
+     * NOTE: Pre-encoded as "sendable" ZDO response (see descriptors.ts for more details):
+     * - Byte 1: sequence number
+     * - Byte 2: status
+     * - Byte 3-4: 0x0000 (coordinator nwk addr)
+     */
+    simpleDescriptors: Buffer;
+    /**
+     * NOTE: Pre-encoded as "sendable" ZDO response (see descriptors.ts for more details):
+     */
+    activeEndpoints: Buffer;
+    /**
+     * The :Config_NWK_Scan_Attempts is employed within ZDO to call the NLME-NETWORK-AND-PARENTDISCOVERY.request primitive the indicated number of times (for routers and end devices).
+     * Integer value representing the number of scan attempts to make before the NWK layer decides which Zigbee coordinator or router to associate with (see section 2.5.4.5.1).
+     * This attribute has default value of 5 and valid values between 1 and 255.
+     */
+    // nwkScanAttempts: number;
+    /**
+     * The Config_NWK_Time_btwn_Scans is employed within ZDO to provide a time duration between the NLMENETWORK-AND-PARENT-DISCOVERY.request attempts.
+     * Integer value representing the time duration (in OctetDurations) between each NWK discovery attempt described by :Config_NWK_Scan_Attempts (see section).
+     * This attribute has a default value of 0xc35 OctetDurations (100 milliseconds on 2.4GHz) and valid values between 1 and 0x1f3fe1 OctetDurations (65535 milliseconds on 2.4GHz).
+     */
+    // nwkTimeBetweenScans: number;
+    /**
+     * The :Config_Max_Bind is a maximum number of supported Binding Table entries for this device.
+     */
+    // maxBind: number; // optional
+    /**
+     * The default value for :Config_Permit_Join_Duration is 0x00, however, this value can be established differently according to the needs of the profile.
+     * Permit Join Duration value set by the NLME-PERMIT-JOINING. request primitive (see Chapter 3).
+     */
+    // permitJoinDuration: number; // optional
+    /**
+     * This attribute is used only on the Trust Center and is used to set the level of security on the network.
+     * Security level of the network (see Chapter 3).
+     */
+    // nwkSecurityLevel: number; // optional
+    /**
+     * This attribute is used only on the Trust Center and is used to determine if network layer security SHALL be applied to all frames in the network.
+     * If all network frames SHOULD be secured (see Chapter 3).
+     */
+    // nwkSecureAllFrames: number; // optional
+    /**
+     * 05-3474-23 Table 2-134
+     * The value for this configuration attribute is established in the Stack Profile.
+     */
+    // nwkBroadcastDeliveryTime: number; // optional
+    /**
+     * 05-3474-23 Table 2-134
+     * The value for this configuration attribute is established in the Stack Profile.
+     * This attribute is mandatory for the Zigbee coordinator and Zigbee routers and not used for Zigbee End Devices.
+     */
+    // nwkTransactionPersistenceTime: number; // optional
+    // nwkIndirectPollRate: number; // ZED-only
+    /**
+     * The value for this configuration attribute is established by the stack profile in use on the device.
+     * Note that for some stack profiles, the maximum associations MAY have a dimension which provides for separate maximums for router associations and end device associations.
+     * Sets the maximum allowed associations, either of routers, end devices, or both, to a parent router or coordinator.
+     */
+    // maxAssoc: number; // optional
+    /**
+     * 05-3474-23 #3.2.2.16
+     * :Config_NWK_Join_Direct_Addrs permits the Zigbee Coordinator or Router to be pre-configured with a list of addresses to be direct joined.
+     * Consists of the following fields:
+     * - DeviceAddress - 64-bit IEEE address for the device to be direct joined.
+     * - CapabilityInformation - Operating capabilities of the device to be direct joined.
+     * - Link Key - If security is enabled, link key for use in the key-pair descriptor for this new device (see Table 4-36).
+     */
+    // nwkJoinDirectAddrs: {device64: bigint; capabilities: number; linkKey: Buffer}[]; // optional
+    // parentLinkRetryThreshold: number; // ZED-only
+    // rejoinInterval: number; // ZED-only
+    // maxRejoinInterval: number; // ZED-only
+};
+
+/**
+ * Indirect transmission context
+ */
+interface IndirectTxContext {
+    sendFrame: () => Promise<boolean>;
+    timestamp: number;
+}
+
+/** The time between state saving to disk. (msec) */
+const CONFIG_SAVE_STATE_TIME = 60000;
+/** Offset added to frame counter properties on save */
+const CONFIG_SAVE_FRAME_COUNTER_JUMP_OFFSET = 1024;
+
+/**
+ * Centralized shared state and counters for the ZigBee stack.
+ *
+ * This context holds all shared state between protocol layers including:
+ * - Network parameters
+ * - Device and routing tables
+ * - Frame counters (MAC, NWK, APS, ZDO)
+ * - Trust Center policies
+ * - RSSI/LQI ranges
+ */
+export class StackContext {
+    /** Master table of all known devices on the network (mapped by IEEE address) */
+    readonly deviceTable = new Map<bigint, DeviceTableEntry>();
+    /** Address lookup: 16-bit to 64-bit (synced with deviceTable) */
+    readonly address16ToAddress64 = new Map<number, bigint>();
+    /** Source routing table (mapped by 16-bit address) */
+    readonly sourceRouteTable = new Map<number, SourceRouteTableEntry[]>();
+    /** Trust Center policies */
+    readonly trustCenterPolicies: TrustCenterPolicies = {
+        allowJoins: false,
+        installCode: InstallCodePolicy.NOT_REQUIRED,
+        allowRejoinsWithWellKnownKey: true,
+        allowTCKeyRequest: TrustCenterKeyRequestPolicy.ALLOWED,
+        networkKeyUpdatePeriod: 0,
+        networkKeyUpdateMethod: NetworkKeyUpdateMethod.BROADCAST,
+        allowAppKeyRequest: ApplicationKeyRequestPolicy.DISALLOWED,
+        allowRemoteTCPolicyChange: false,
+        allowVirtualDevices: false,
+    };
+    /** Configuration attributes */
+    readonly configAttributes: ConfigurationAttributes = {
+        address: Buffer.alloc(0),
+        nodeDescriptor: Buffer.alloc(0),
+        powerDescriptor: Buffer.alloc(0),
+        simpleDescriptors: Buffer.alloc(0),
+        activeEndpoints: Buffer.alloc(0),
+    };
+    /** Count of MAC NO_ACK reported for each device (mapping by network address) */
+    readonly macNoACKs = new Map<number, number>();
+
+    /** Indirect transmission for devices with rxOnWhenIdle=false (mapping by IEEE address) */
+    readonly #indirectTransmissions = new Map<bigint, IndirectTxContext[]>();
+
+    #savePath: string;
+    #saveStateTimeout: NodeJS.Timeout | undefined;
+
+    #loaded = false;
+
+    /** Network parameters */
+    netParams: NetworkParameters;
+    /** Pre-computed hash of default TC link key for VERIFY_KEY */
+    tcVerifyKeyHash: Buffer = Buffer.alloc(0);
+
+    /** Minimum observed RSSI */
+    rssiMin = -100;
+    /** Maximum observed RSSI */
+    rssiMax = -25;
+    /** Minimum observed LQI */
+    lqiMin = 15;
+    /** Maximum observed LQI */
+    lqiMax = 250;
+
+    constructor(savePath: string, netParams: NetworkParameters) {
+        this.#savePath = savePath;
+        this.netParams = netParams;
+    }
+
+    // #region Getters/Setters
+
+    get loaded(): boolean {
+        return this.#loaded;
+    }
+
+    /**
+     * Get indirect transmissions map (for state management)
+     */
+    get indirectTransmissions(): Map<bigint, IndirectTxContext[]> {
+        return this.#indirectTransmissions;
+    }
+
+    // #endregion
+
+    async start() {
+        // TODO: periodic/delayed actions
+        this.#saveStateTimeout = setTimeout(this.savePeriodicState.bind(this), CONFIG_SAVE_STATE_TIME);
+
+        await this.savePeriodicState();
+    }
+
+    stop() {
+        clearTimeout(this.#saveStateTimeout);
+        this.#saveStateTimeout = undefined;
+    }
+
+    /** Remove the save file and clear tables (just in case) */
+    async clear() {
+        // remove `zoh.save`
+        await rm(this.#savePath, { force: true });
+
+        this.deviceTable.clear();
+        this.address16ToAddress64.clear();
+        this.sourceRouteTable.clear();
+        this.#indirectTransmissions.clear();
+    }
+
+    /**
+     * Get next Trust Center key frame counter.
+     * HOT PATH: Optimized counter increment
+     * @returns Incremented TC key frame counter (wraps at 0xffffffff)
+     */
+    /* @__INLINE__ */
+    public nextTCKeyFrameCounter(): number {
+        this.netParams.tcKeyFrameCounter = ((this.netParams.tcKeyFrameCounter + 1) & 0xffffffff) >>> 0;
+
+        return this.netParams.tcKeyFrameCounter;
+    }
+
+    /**
+     * Get next network key frame counter.
+     * HOT PATH: Optimized counter increment
+     * @returns Incremented network key frame counter (wraps at 0xffffffff)
+     */
+    /* @__INLINE__ */
+    public nextNWKKeyFrameCounter(): number {
+        this.netParams.networkKeyFrameCounter = ((this.netParams.networkKeyFrameCounter + 1) & 0xffffffff) >>> 0;
+
+        return this.netParams.networkKeyFrameCounter;
+    }
+
+    /**
+     * Get device by IEEE (64-bit) or network (16-bit) address.
+     * @param address IEEE address (bigint) or network address (number)
+     * @returns Device table entry or undefined if not found
+     */
+    public getDevice(address: bigint | number): DeviceTableEntry | undefined {
+        if (typeof address === "bigint") {
+            return this.deviceTable.get(address);
+        }
+
+        const address64 = this.address16ToAddress64.get(address);
+
+        if (address64 === undefined) {
+            return undefined;
+        }
+
+        return this.deviceTable.get(address64);
+    }
+
+    /**
+     * Get IEEE (64-bit) address from network (16-bit) address.
+     * @param address16 Network address
+     * @returns IEEE address or undefined if not found
+     */
+    public getAddress64(address16: number): bigint | undefined {
+        return this.address16ToAddress64.get(address16);
+    }
+
+    /**
+     * Get network (16-bit) address from IEEE (64-bit) address.
+     * @param address64 IEEE address
+     * @returns Network address or undefined if not found
+     */
+    public getAddress16(address64: bigint): number | undefined {
+        const device = this.deviceTable.get(address64);
+
+        return device?.address16;
+    }
+
+    /**
+     * 05-3474-23 #3.6.1.10
+     */
+    public assignNetworkAddress(): number {
+        let newNetworkAddress = 0xffff;
+        let unique = false;
+
+        do {
+            // maximum exclusive, minimum inclusive
+            newNetworkAddress = Math.floor(Math.random() * (ZigbeeConsts.BCAST_MIN - 0x0001) + 0x0001);
+            unique = this.address16ToAddress64.get(newNetworkAddress) === undefined;
+        } while (!unique);
+
+        return newNetworkAddress;
+    }
+
+    /**
+     * Apply logistic curve on standard mapping to LQI range [0..255]
+     *
+     * - Silabs EFR32: the RSSI range of [-100..-36] is mapped to an LQI range [0..255]
+     * - TI zstack: `LQI = (MAC_SPEC_ED_MAX * (RSSIdbm - ED_RF_POWER_MIN_DBM)) / (ED_RF_POWER_MAX_DBM - ED_RF_POWER_MIN_DBM);`
+     *     where `MAC_SPEC_ED_MAX = 255`, `ED_RF_POWER_MIN_DBM = -87`, `ED_RF_POWER_MAX_DBM = -10`
+     * - Nordic: RSSI accuracy valid range -90 to -20 dBm
+     */
+    public mapRSSIToLQI(rssi: number): number {
+        if (rssi < this.rssiMin) {
+            return 0;
+        }
+
+        if (rssi > this.rssiMax) {
+            return 255;
+        }
+
+        return Math.floor(255 / (1 + Math.exp(-0.13 * (rssi - (this.rssiMin + 0.45 * (this.rssiMax - this.rssiMin))))));
+    }
+
+    /**
+     * LQA_raw (c, r) = 255 * (c - c_min) / (c_max - c_min) * (r - r_min) / (r_max - r_min)
+     * - c_min is the lowest signal quality ever reported, i.e. for a packet that can barely be received
+     * - c_max is the highest signal quality ever reported, i.e. for a packet received under ideal conditions
+     * - r_min is the lowest signal strength ever reported, i.e. for a packet close to receiver sensitivity
+     * - r_max is the highest signal strength ever reported, i.e. for a packet received from a strong, close-by transmitter
+     * HOT PATH: Called for every incoming frame to compute link quality assessment.
+     * @param signalStrength RSSI value
+     * @param signalQuality LQI value (optional, computed from RSSI if not provided)
+     * @returns Computed LQA value (0-255)
+     */
+    /* @__INLINE__ */
+    public computeLQA(signalStrength: number, signalQuality?: number): number {
+        // HOT PATH: Map RSSI to LQI if not provided
+        if (signalQuality === undefined) {
+            signalQuality = this.mapRSSIToLQI(signalStrength);
+        }
+
+        // HOT PATH: Clamp signal strength to valid range
+        if (signalStrength < this.rssiMin) {
+            signalStrength = this.rssiMin;
+        }
+
+        if (signalStrength > this.rssiMax) {
+            signalStrength = this.rssiMax;
+        }
+
+        // HOT PATH: Clamp signal quality to valid range
+        if (signalQuality < this.lqiMin) {
+            signalQuality = this.lqiMin;
+        }
+
+        if (signalQuality > this.lqiMax) {
+            signalQuality = this.lqiMax;
+        }
+
+        // HOT PATH: Compute LQA with optimized formula (single Math.floor call)
+        return Math.floor(
+            (((255 * (signalQuality - this.lqiMin)) / (this.lqiMax - this.lqiMin)) * (signalStrength - this.rssiMin)) / (this.rssiMax - this.rssiMin),
+        );
+    }
+
+    /**
+     * Compute the median LQA for a device from `recentLQAs` or using `signalStrength` directly if device unknown.
+     * If given, stores the computed LQA from given parameters in the `recentLQAs` list of the device before computing median.
+     * @param address16 Used to retrieve `address64` if not given (must be valid if 64 is not)
+     * @param address64 The address 64 of the device
+     * @param signalStrength RSSI. Optional (only use existing entries if not given)
+     * @param signalQuality LQI. Optional (only use existing entries if not given)
+     * @param maxRecent The number of `recentLQAs` to keep for the device (only used if signal params given). Default: 10
+     * @returns The computed LQA
+     * - Always 0 if device not found AND no `signalStrength` given.
+     * - Always 0 if the device does not have any recent LQAs AND no `signalStrength` given
+     */
+    public computeDeviceLQA(
+        address16: number | undefined,
+        address64: bigint | undefined,
+        signalStrength?: number,
+        signalQuality?: number,
+        maxRecent = 10,
+    ): number {
+        if (address64 === undefined && address16 !== undefined) {
+            address64 = this.address16ToAddress64.get(address16);
+        }
+
+        // sanity check
+        if (address64 !== undefined) {
+            const device = this.deviceTable.get(address64);
+
+            if (!device) {
+                return 0;
+            }
+
+            if (signalStrength !== undefined) {
+                const lqa = this.computeLQA(signalStrength, signalQuality);
+
+                if (device.recentLQAs.length > maxRecent) {
+                    // remove oldest LQA if necessary
+                    device.recentLQAs.shift();
+                }
+
+                device.recentLQAs.push(lqa);
+            }
+
+            if (device.recentLQAs.length === 0) {
+                return 0;
+            }
+
+            if (device.recentLQAs.length === 1) {
+                return device.recentLQAs[0];
+            }
+
+            const sortedLQAs = device.recentLQAs.slice(/* copy */).sort((a, b) => a - b);
+            const midIndex = Math.floor(sortedLQAs.length / 2);
+            const median = Math.floor(sortedLQAs.length % 2 === 1 ? sortedLQAs[midIndex] : (sortedLQAs[midIndex - 1] + sortedLQAs[midIndex]) / 2);
+
+            return median;
+        }
+
+        return signalStrength !== undefined ? this.computeLQA(signalStrength, signalQuality) : 0;
+    }
+
+    /**
+     * Decrement radius value for NWK frame forwarding.
+     * HOT PATH: Optimized computation
+     * @param radius Current radius value
+     * @returns Decremented radius (minimum 1)
+     */
+    /* @__INLINE__ */
+    public decrementRadius(radius: number): number {
+        const newRadius = radius - 1;
+
+        return newRadius < 1 ? 1 : newRadius;
+    }
+
+    /**
+     * Save state to file system in TLV format.
+     * Format version 1:
+     * - VERSION tag
+     * - Network parameter tags (EUI64, PAN_ID, etc.)
+     * - DEVICE_ENTRY tags (each containing nested TLV device data)
+     * - END_MARKER
+     */
+    public async saveState(): Promise<void> {
+        // estimate buffer size (generous upper bound)
+        const estimatedSize = estimateTLVStateSize(this.deviceTable.size);
+        const state = Buffer.allocUnsafe(estimatedSize);
+        let offset = 0;
+
+        // write version first
+        offset = writeTLVUInt8(state, offset, TLVTag.VERSION, SAVE_FORMAT_VERSION);
+        // network parameters (can be added/removed without breaking old readers)
+        offset = writeTLVBigUInt64LE(state, offset, TLVTag.EUI64, this.netParams.eui64);
+        offset = writeTLVUInt16LE(state, offset, TLVTag.PAN_ID, this.netParams.panId);
+        offset = writeTLVBigUInt64LE(state, offset, TLVTag.EXTENDED_PAN_ID, this.netParams.extendedPanId);
+        offset = writeTLVUInt8(state, offset, TLVTag.CHANNEL, this.netParams.channel);
+        offset = writeTLVUInt8(state, offset, TLVTag.NWK_UPDATE_ID, this.netParams.nwkUpdateId);
+        offset = writeTLVInt8(state, offset, TLVTag.TX_POWER, this.netParams.txPower);
+        offset = writeTLV(state, offset, TLVTag.NETWORK_KEY, this.netParams.networkKey);
+        offset = writeTLVUInt32LE(
+            state,
+            offset,
+            TLVTag.NETWORK_KEY_FRAME_COUNTER,
+            this.netParams.networkKeyFrameCounter + CONFIG_SAVE_FRAME_COUNTER_JUMP_OFFSET,
+        );
+        offset = writeTLVUInt8(state, offset, TLVTag.NETWORK_KEY_SEQUENCE_NUMBER, this.netParams.networkKeySequenceNumber);
+        offset = writeTLV(state, offset, TLVTag.TC_KEY, this.netParams.tcKey);
+        offset = writeTLVUInt32LE(
+            state,
+            offset,
+            TLVTag.TC_KEY_FRAME_COUNTER,
+            this.netParams.tcKeyFrameCounter + CONFIG_SAVE_FRAME_COUNTER_JUMP_OFFSET,
+        );
+
+        // device table (count is implicit in number of DEVICE_ENTRY tags)
+        for (const [device64, device] of this.deviceTable) {
+            const sourceRouteEntries = this.sourceRouteTable.get(device.address16);
+            const deviceEntry = serializeDeviceEntry(
+                device64,
+                device.address16,
+                device.capabilities ? encodeMACCapabilities(device.capabilities) : 0x00,
+                device.authorized,
+                device.neighbor,
+                sourceRouteEntries,
+            );
+            offset = writeTLV(state, offset, TLVTag.DEVICE_ENTRY, deviceEntry);
+        }
+
+        // write end marker (aids debugging and validates complete write)
+        state.writeUInt8(TLVTag.END_MARKER, offset++);
+
+        // write only the used portion
+        await writeFile(this.#savePath, state.subarray(0, offset));
+    }
+
+    /**
+     * Load state from file system if exists, else save "initial" state.
+     * Afterwards, various keys are pre-hashed and descriptors pre-encoded.
+     */
+    public async loadState(): Promise<void> {
+        // pre-emptive
+        this.#loaded = true;
+
+        try {
+            const stateBuffer = await readFile(this.#savePath);
+
+            logger.debug(() => `Loaded state from ${this.#savePath} (${stateBuffer.byteLength} bytes)`, NS);
+
+            // Parse state once into typed structure with all values already converted to final types
+            const state = readTLVs(stateBuffer);
+
+            // Check version (already parsed to number)
+            const version = state.version ?? 1;
+
+            if (version > SAVE_FORMAT_VERSION) {
+                logger.warning(`Unknown save format version ${version}, attempting to load`, NS);
+            }
+
+            // Network parameters already parsed to final types - update context
+            this.netParams.eui64 = state.eui64;
+            this.netParams.panId = state.panId;
+            this.netParams.extendedPanId = state.extendedPanId;
+            this.netParams.channel = state.channel;
+            this.netParams.nwkUpdateId = state.nwkUpdateId;
+            this.netParams.txPower = state.txPower;
+            this.netParams.networkKey = state.networkKey;
+            this.netParams.networkKeyFrameCounter = state.networkKeyFrameCounter;
+            this.netParams.networkKeySequenceNumber = state.networkKeySequenceNumber;
+            this.netParams.tcKey = state.tcKey;
+            this.netParams.tcKeyFrameCounter = state.tcKeyFrameCounter;
+
+            // Device entries already parsed with all nested source routes
+            logger.debug(() => `Current save devices: ${state.deviceEntries.length}`, NS);
+
+            for (const device of state.deviceEntries) {
+                // Device values already parsed - just destructure
+                const { address64, address16, capabilities, authorized, neighbor, sourceRouteEntries } = device;
+                const decodedCap = capabilities !== 0 ? decodeMACCapabilities(capabilities) : undefined;
+
+                this.deviceTable.set(address64, {
+                    address16,
+                    capabilities: decodedCap,
+                    authorized,
+                    neighbor,
+                    recentLQAs: [],
+                });
+                this.address16ToAddress64.set(address16, address64);
+
+                if (decodedCap && !decodedCap.rxOnWhenIdle) {
+                    this.#indirectTransmissions.set(address64, []);
+                }
+
+                if (sourceRouteEntries.length > 0) {
+                    const routes = sourceRouteEntries.map((entry) => ({
+                        relayAddresses: entry.relayAddresses,
+                        pathCost: entry.pathCost,
+                        lastUpdated: entry.lastUpdated,
+                        failureCount: 0,
+                        lastUsed: undefined,
+                    }));
+
+                    this.sourceRouteTable.set(address16, routes);
+                }
+            }
+        } catch {
+            // `this.#savePath` does not exist, using constructor-given network params, do initial save
+            await this.saveState();
+        }
+
+        // pre-compute hashes for default keys for faster processing
+        registerDefaultHashedKeys(
+            makeKeyedHashByType(ZigbeeKeyType.LINK, this.netParams.tcKey),
+            makeKeyedHashByType(ZigbeeKeyType.NWK, this.netParams.networkKey),
+            makeKeyedHashByType(ZigbeeKeyType.TRANSPORT, this.netParams.tcKey),
+            makeKeyedHashByType(ZigbeeKeyType.LOAD, this.netParams.tcKey),
+        );
+
+        this.tcVerifyKeyHash = makeKeyedHash(this.netParams.tcKey, 0x03 /* input byte per spec for VERIFY_KEY */);
+
+        const [address, nodeDescriptor, powerDescriptor, simpleDescriptors, activeEndpoints] = encodeCoordinatorDescriptors(this.netParams.eui64);
+
+        this.configAttributes.address = address;
+        this.configAttributes.nodeDescriptor = nodeDescriptor;
+        this.configAttributes.powerDescriptor = powerDescriptor;
+        this.configAttributes.simpleDescriptors = simpleDescriptors;
+        this.configAttributes.activeEndpoints = activeEndpoints;
+    }
+
+    /**
+     * Set the manufacturer code in the pre-encoded node descriptor
+     * @param code
+     */
+    public setManufacturerCode(code: number): void {
+        this.configAttributes.nodeDescriptor.writeUInt16LE(code, 7 /* static offset */);
+    }
+
+    public async savePeriodicState(): Promise<void> {
+        await this.saveState();
+        this.#saveStateTimeout?.refresh();
+    }
+}

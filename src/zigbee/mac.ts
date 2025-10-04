@@ -366,7 +366,13 @@ export function getMICLength(securityLevel: number): number {
     return (0x2 << (securityLevel & 0x3)) & ~0x3;
 }
 
+/**
+ * Decode MAC frame control field.
+ * HOT PATH: Called for every incoming MAC frame.
+ */
+/* @__INLINE__ */
 export function decodeMACFrameControl(data: Buffer, offset: number): [MACFrameControl, offset: number] {
+    // HOT PATH: Read FCF and extract fields with bitwise operations
     const fcf = data.readUInt16LE(offset);
     offset += 2;
     const frameType = fcf & ZigbeeMACConsts.FCF_TYPE_MASK;
@@ -741,6 +747,11 @@ export function encodeMACCapabilities(capabilities: MACCapabilities): number {
     );
 }
 
+/**
+ * Decode MAC header from frame.
+ * HOT PATH: Called for every incoming MAC frame.
+ */
+/* @__INLINE__ */
 export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACFrameControl): [MACHeader, offset: number] {
     let sequenceNumber: number | undefined;
     let destinationPANId: number | undefined;
