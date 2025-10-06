@@ -9,6 +9,6 @@ Some quick guidelines to keep the codebase maintainable:
   - Bail as early as possible (no unnecessary parsing, holding waiters, etc.)
   - Ability to no-op expensive "optional" features
   - And the usuals...
-- Keep MAC/ZigBee property naming mostly in line with Wireshark for easier debugging
-- Keep in line with the ZigBee 3.0 specification, but allow optimization due to the host-driven nature and removal of unnecessary features that won't impact compatibility
+- Keep MAC/Zigbee property naming mostly in line with Wireshark for easier debugging
+- Keep in line with the Zigbee 3.0 specification, but allow optimization due to the host-driven nature and removal of unnecessary features that won't impact compatibility
 - Focus on "Centralized Trust Center" implementation (at least at first)

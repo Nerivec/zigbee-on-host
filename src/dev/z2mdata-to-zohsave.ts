@@ -171,6 +171,7 @@ async function convert(dataPath: string): Promise<void> {
     let driver = new OTRCPDriver(
         // @ts-expect-error not needed here
         {},
+        {},
         {
             eui64,
             panId,
@@ -192,7 +193,7 @@ async function convert(dataPath: string): Promise<void> {
     for (const device of devices) {
         const backupDevice = findDeviceInBackup(backup, device.ieeeAddr);
 
-        driver.deviceTable.set(BigInt(device.ieeeAddr), {
+        driver.context.deviceTable.set(BigInt(device.ieeeAddr), {
             address16: device.nwkAddr,
             // this could be... wrong, devices not always use this properly
             capabilities: {
@@ -213,10 +214,11 @@ async function convert(dataPath: string): Promise<void> {
 
     // for (const group of groups) {}
 
-    await driver.saveState();
+    await driver.context.saveState();
 
     driver = new OTRCPDriver(
         // @ts-expect-error not needed here
+        {},
         {},
         {
             eui64: 0n,
@@ -235,18 +237,18 @@ async function convert(dataPath: string): Promise<void> {
         dataPath,
     );
 
-    await driver.loadState();
+    await driver.context.loadState();
 
-    assert(driver.netParams.eui64 === eui64);
-    assert(driver.netParams.panId === panId);
-    assert(driver.netParams.extendedPanId === extendedPanId);
-    assert(driver.netParams.nwkUpdateId === nwkUpdateId);
-    assert(driver.netParams.networkKey.equals(networkKey));
-    assert(driver.netParams.networkKeyFrameCounter === networkKeyFrameCounter + 1024);
-    assert(driver.netParams.networkKeySequenceNumber === networkKeySequenceNumber);
+    assert(driver.context.netParams.eui64 === eui64);
+    assert(driver.context.netParams.panId === panId);
+    assert(driver.context.netParams.extendedPanId === extendedPanId);
+    assert(driver.context.netParams.nwkUpdateId === nwkUpdateId);
+    assert(driver.context.netParams.networkKey.equals(networkKey));
+    assert(driver.context.netParams.networkKeyFrameCounter === networkKeyFrameCounter + 1024);
+    assert(driver.context.netParams.networkKeySequenceNumber === networkKeySequenceNumber);
 
     for (const device of devices) {
-        assert(driver.deviceTable.get(BigInt(device.ieeeAddr)));
+        assert(driver.context.deviceTable.get(BigInt(device.ieeeAddr)));
     }
 }
 

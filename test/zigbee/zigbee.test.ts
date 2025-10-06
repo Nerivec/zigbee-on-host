@@ -12,29 +12,29 @@ import {
     type MACCapabilities,
     type MACHeader,
     type MACZigbeeBeacon,
-} from "../src/zigbee/mac.js";
-import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeKeyType } from "../src/zigbee/zigbee.js";
+} from "../../src/zigbee/mac.js";
+import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import {
     decodeZigbeeAPSFrameControl,
     decodeZigbeeAPSHeader,
     decodeZigbeeAPSPayload,
     encodeZigbeeAPSFrame,
     type ZigbeeAPSHeader,
-} from "../src/zigbee/zigbee-aps.js";
+} from "../../src/zigbee/zigbee-aps.js";
 import {
     decodeZigbeeNWKFrameControl,
     decodeZigbeeNWKHeader,
     decodeZigbeeNWKPayload,
     encodeZigbeeNWKFrame,
     type ZigbeeNWKHeader,
-} from "../src/zigbee/zigbee-nwk.js";
+} from "../../src/zigbee/zigbee-nwk.js";
 import {
     decodeZigbeeNWKGPFrameControl,
     decodeZigbeeNWKGPHeader,
     decodeZigbeeNWKGPPayload,
     encodeZigbeeNWKGPFrame,
     type ZigbeeNWKGPHeader,
-} from "../src/zigbee/zigbee-nwkgp.js";
+} from "../../src/zigbee/zigbee-nwkgp.js";
 import {
     NET2_ASSOC_REQ_FROM_DEVICE,
     NET2_ASSOC_RESP_FROM_COORD,
@@ -57,7 +57,7 @@ import {
     NETDEF_ZCL_FRAME_DEF_RSP_TO_COORD,
     NETDEF_ZGP_COMMISSIONING,
     NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0,
-} from "./data.js";
+} from "../data.js";
 
 describe("Zigbee", () => {
     beforeAll(() => {
