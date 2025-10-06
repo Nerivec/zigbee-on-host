@@ -1,9 +1,10 @@
 # ZigBee Stack Specification Compliance Report
 
-**Date:** October 4, 2025  
+**Date:** October 6, 2025  
 **Project:** zigbee-on-host v0.2.0  
 **Specification Reference:** 05-3474-23 (ZigBee Specification), IEEE 802.15.4-2015  
-**Review Scope:** All ZigBee stack handlers (APS, MAC, NWK, NWK-GP, Stack Context)
+**Review Scope:** All ZigBee stack handlers (APS, MAC, NWK, NWK-GP, Stack Context)  
+**Update:** Reflects post-refactoring architecture (association/TC logic moved to StackContext)
 
 ---
 
@@ -15,6 +16,9 @@ This report provides a meticulous analysis of the zigbee-on-host implementation'
 2. **Neighbor table management** (significant deviation from spec)
 3. **R23 features** (TLVs, enhanced commissioning - minimal support)
 4. **Application link keys** (infrastructure present but incomplete)
+5. **Key rotation mechanisms** (SWITCH_KEY not implemented)
+
+**Architectural Note:** Recent refactoring centralized association/disassociation logic, Trust Center policies, and device management in StackContext for better encapsulation. This improves code organization and separation of concerns.
 
 **Overall Assessment:** ✅ **Production-ready for ZigBee 3.0 PRO centralized networks** with understanding of limitations.
 
@@ -265,6 +269,126 @@ device.authorized = true;
 3. **Pagination Edge Cases**
    - Comment: "TODO: handle reportKids & index, this payload is only for 0, 0"
    - Only implements startIndex=0 properly for some requests
+
+### 1.7 Switch Key Command (0x05-3474-23 #4.4.11.3)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Frame Processing**
+   - Decodes sequence number correctly ✅
+   - Validates frame structure ✅
+   - Logs switch key reception ✅
+
+2. **Switch Key Sending**
+   - Includes sequence number ✅
+   - Applies NWK security only (not APS) ✅
+   - Broadcast or unicast delivery ✅
+
+#### ❌ NOT IMPLEMENTED:
+
+1. **Key Switching Logic**
+   - Receives command but doesn't switch keys
+   - No mechanism to activate new network key
+   - processSwitch Key only logs, no action taken
+
+2. **Frame Counter Reset**
+   - Should reset NWK key frame counter after switch
+   - Not implemented
+
+3. **TLV Support**
+   - Not implemented (R23 feature)
+
+**Impact:** Network key rotation not functional - CRITICAL for long-term deployments
+
+### 1.8 Remove Device Command (0x05-3474-23 #4.4.11.6)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Frame Processing**
+   - Decodes target IEEE address (childInfo) ✅
+   - Validates source is Trust Center ✅
+   - Logs remove device command ✅
+
+2. **Remove Device Sending**
+   - Includes target IEEE address ✅
+   - Applies NWK + APS LOAD encryption ✅
+   - Unicast to parent router ✅
+
+#### ❌ INCOMPLETE:
+
+1. **Actual Device Removal**
+   - processRemoveDevice() only logs
+   - Should initiate leave sequence to target device
+   - Should notify parent to remove child
+
+2. **Parent Router Role**
+   - No handling for receiving REMOVE_DEVICE as parent
+   - Should send LEAVE to child device
+   - Should send UPDATE_DEVICE (status 0x02) back to TC
+
+3. **TLV Support**
+   - Not implemented (R23 feature)
+
+### 1.9 Tunnel Command (0x05-3474-23 #4.4.11.5)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Tunnel Processing**
+   - Correctly decodes destination address ✅
+   - Extracts tunneled APS command frame ✅
+   - Validates structure ✅
+
+2. **Tunnel Sending**
+   - Includes destination64 ✅
+   - Encapsulates APS command frame ✅
+   - Applies APS TRANSPORT encryption ✅
+   - NO ACK request (per spec exception) ✅
+
+3. **Use in Nested Joins**
+   - Used for TRANSPORT_KEY delivery through routers ✅
+   - processUpdateDevice builds TUNNEL correctly ✅
+
+#### ⚠️ INCOMPLETE:
+
+1. **Tunnel Forwarding**
+   - processTunnel() only logs
+   - Should extract and forward tunneled command to destination
+   - Current implementation doesn't relay tunneled frames
+
+2. **Security Context**
+   - No validation that tunneled command is properly secured
+   - Should verify destination can decrypt
+
+3. **TLV Support**
+   - Not implemented (R23 feature)
+
+**Impact:** Nested device joins work (TC sends TUNNEL), but coordinator can't relay tunneled frames from routers
+
+### 1.10 Relay Message Downstream/Upstream Commands (R23 - NOT IN 05-3474-23 base spec)
+
+#### ⚠️ R23 FEATURE - MINIMAL IMPLEMENTATION:
+
+1. **Downstream Processing (0x0a)**
+   - processRelayMessageDownstream() exists ✅
+   - Logs command but takes no action ⚠️
+   - Structure: hops, appData, tlvs
+
+2. **Upstream Processing (0x0b)**
+   - processRelayMessageUpstream() exists ✅
+   - Logs command but takes no action ⚠️
+   - Structure: appData, tlvs
+
+#### ❌ NOT IMPLEMENTED:
+
+1. **Relay Functionality**
+   - No message relaying between devices
+   - No TLV processing
+
+2. **Use Cases**
+   - ZVD (Zigbee Virtual Devices) not supported
+   - Zigbee Direct not supported
+
+**Note:** These are R23 advanced features, non-critical for ZigBee 3.0 PRO networks
 
 ---
 
@@ -542,6 +666,132 @@ device.authorized = true;
    - TODO comment present
    - Not implemented
 
+### 3.6 Network Status Command (05-3474-23 #3.4.3)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Status Code Processing**
+   - Correctly decodes status code ✅
+   - Logs network status issues ✅
+   - Handles destination16 parameter ✅
+
+2. **Status Sending**
+   - Sends to appropriate destination (broadcast or unicast) ✅
+   - Includes error codes (NO_ROUTE_AVAILABLE, etc.) ✅
+   - No security applied (per spec) ✅
+
+#### ⚠️ INCOMPLETE:
+
+1. **Route Repair Triggering**
+   - Receives status but minimal action taken
+   - Should trigger route discovery on NO_ROUTE_AVAILABLE
+   - Marked as WIP in AGENTS.md
+
+### 3.7 Leave Command (05-3474-23 #3.4.4)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Leave Request Processing**
+   - Decodes options (request, rejoin, removeChildren) ✅
+   - Calls context.disassociate() for device removal ✅
+   - Handles leave without rejoin correctly ✅
+
+2. **Leave Command Sending**
+   - Sets rejoin flag appropriately ✅
+   - Unicast delivery ✅
+   - Applies NWK security ✅
+
+#### ⚠️ MISSING:
+
+1. **Leave Indication (self-leave)**
+   - No handling for coordinator's own leave
+   - removeChildren not implemented
+
+2. **TLV Support**
+   - Not implemented (R23 feature)
+
+### 3.8 Network Report/Update Commands (05-3474-23 #3.4.10, #3.4.11)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Report Processing (0x08)**
+   - Decodes options, EPID, updateID, panID ✅
+   - Logs report information ✅
+
+2. **Update Processing (0x09)**
+   - Decodes options, EPID, updateID, panID ✅
+   - Logs update information ✅
+
+#### ❌ NOT IMPLEMENTED:
+
+1. **Channel Updates**
+   - No action taken on network update
+   - Should update channel if updateID is newer
+   - Coordinator doesn't propagate updates
+
+2. **Network Report Sending**
+   - No sendNetworkReport() function
+   - Required for PAN ID conflict resolution
+
+3. **TLV Support**
+   - Not implemented (R23 feature)
+
+### 3.9 End Device Timeout Request/Response (05-3474-23 #3.4.12, #3.4.13)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Timeout Request Processing**
+   - Decodes requested timeout ✅
+   - Validates device exists ✅
+   - Returns appropriate status ✅
+
+2. **Timeout Response Sending**
+   - Includes status and timeout value ✅
+   - Unicast to requester ✅
+   - Applies NWK security ✅
+
+3. **Timeout Response Processing**
+   - Decodes status and timeout ✅
+   - Logs timeout information ✅
+
+#### ⚠️ INCOMPLETE:
+
+1. **Timeout Negotiation**
+   - Accepts requested timeout without validation
+   - Should apply policy/limits per spec
+   - No timeout table management
+
+2. **Keep-Alive Mechanism**
+   - No active polling of end devices
+   - No timeout expiration handling
+
+3. **TLV Support**
+   - Not implemented (R23 feature)
+
+### 3.10 Link Power Delta Command (05-3474-23 #3.4.15)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Frame Processing**
+   - Decodes transmit power delta ✅
+   - Logs power delta information ✅
+   - Extracts nested TLVs (if present) ✅
+
+#### ❌ NOT IMPLEMENTED:
+
+1. **Power Adjustment**
+   - No action taken on power delta
+   - Should adjust transmit power accordingly
+   - No feedback mechanism
+
+2. **Link Power Delta Sending**
+   - No sendLinkPowerDelta() function
+   - Should send when detecting power issues
+
+3. **R23 TLV Processing**
+   - TLVs extracted but not processed
+   - No support for R23 power management features
+
 ---
 
 ## 4. NWK-GP Handler (Green Power)
@@ -655,6 +905,8 @@ device.authorized = true;
 2. **Policy Enforcement**
    - Checked in REQUEST_KEY processing ✅
    - Appropriate denials ✅
+   - allowJoins/disallowJoins with timeout ✅
+   - associationPermit flag management ✅
 
 #### ❌ PARTIALLY IMPLEMENTED:
 
@@ -675,7 +927,98 @@ device.authorized = true;
    - allowVirtualDevices flag exists
    - No actual Zigbee Direct / ZVD support
 
-### 5.4 LQA (Link Quality Assessment)
+### 5.4 Association/Disassociation Logic (Centralized in Stack Context)
+
+**Note:** As of the structural refactoring, association and disassociation logic moved from OTRCPDriver to StackContext for better encapsulation.
+
+#### ✅ COMPLIANT Areas:
+
+1. **Association Logic (context.associate)**
+   - Handles both initial join and rejoin ✅
+   - Validates allowJoins policy for initial join ✅
+   - Assigns network addresses correctly ✅
+   - Detects address conflicts ✅
+   - Returns appropriate status codes:
+     - MACAssociationStatus.SUCCESS (0x00) ✅
+     - MACAssociationStatus.PAN_FULL (0x01) ✅
+     - MACAssociationStatus.PAN_ACCESS_DENIED (0x02) ✅
+     - ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT (0x01) ✅
+
+2. **Device Table Management**
+   - Creates device entry with capabilities ✅
+   - Tracks neighbor flag correctly ✅
+   - Initializes authorized=false for initial join ✅
+   - Sets up indirect transmission queue for rxOnWhenIdle=false ✅
+   - Updates existing device on rejoin ✅
+
+3. **Address Assignment**
+   - Sequential address allocation ✅
+   - Detects exhaustion (returns 0xffff) ✅
+   - Handles conflicts gracefully ✅
+
+4. **Disassociation Logic (context.disassociate)**
+   - Removes from device table ✅
+   - Removes from address mappings ✅
+   - Cleans up indirect transmissions ✅
+   - Removes from source route table ✅
+   - Cleans up pending associations ✅
+   - Clears MAC NO_ACK counters ✅
+   - Removes routes using device as relay ✅
+   - Triggers onDeviceLeft callback ✅
+   - Forces state save ✅
+
+5. **State Persistence**
+   - Saves after association ✅
+   - Saves after disassociation ✅
+   - Periodic save mechanism ✅
+
+#### ⚠️ POTENTIAL ISSUES:
+
+1. **Rejoin Security Validation**
+   ```typescript
+   if (existingAddress64 === undefined) {
+       // device unknown
+       unknownRejoin = true;
+   }
+   ```
+   - Unknown rejoins succeed if allowOverride=true
+   - Should verify security material before allowing
+   - Potential security risk
+
+2. **No Network Key Change Detection on Rejoin**
+   - Doesn't check if network key sequence changed
+   - Should send new key if updated
+   - Related to missing SWITCH_KEY implementation
+
+3. **Capabilities Trust**
+   - Accepts capabilities without validation on rejoin
+   - Could be manipulated by malicious device
+   - Affects indirect transmission setup
+
+4. **Address Reuse Logic**
+   - Sequential assignment may reuse recently freed addresses
+   - No aging mechanism before reuse
+   - Minor spec compliance issue
+
+#### ❌ MISSING:
+
+1. **Install Code Enforcement**
+   - Policy checked but not enforced
+   - installCode policy exists but:
+     ```typescript
+     // TODO: implement install code validation
+     ```
+   - REQUIRED policy not actually required
+
+2. **Device Announcement Tracking**
+   - No correlation with device announcements
+   - Should verify device sends announcement after join
+
+3. **Parent Verification**
+   - For nested joins, parent claim not verified
+   - Should confirm parent can route to device
+
+### 5.5 LQA (Link Quality Assessment)
 
 #### ✅ COMPLIANT Areas:
 
@@ -693,7 +1036,7 @@ device.authorized = true;
    - Median calculation ✅
    - Configurable max recent (default 10) ✅
 
-### 5.5 State Persistence
+### 5.6 State Persistence
 
 #### ✅ COMPLIANT Areas:
 
@@ -1060,6 +1403,7 @@ The project acknowledges its WIP status (v0.2.0, "expect breaking changes"), and
 
 ---
 
-**Report Generated:** October 4, 2025  
+**Report Generated:** October 6, 2025  
 **Reviewer:** AI Analysis (GitHub Copilot)  
+**Last Updated:** Post-structural refactoring (association logic moved to StackContext)  
 **Status:** COMPREHENSIVE SPECIFICATION COMPLIANCE AUDIT COMPLETE

@@ -822,6 +822,12 @@ export class StackContext {
 
     /**
      * Revert allowing joins (keeps `allowRejoinsWithWellKnownKey=true`).
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Clears timer correctly
+     * - ✅ Updates Trust Center allowJoins policy
+     * - ✅ Maintains allowRejoinsWithWellKnownKey for rejoins
+     * - ✅ Sets associationPermit flag for MAC layer
      */
     public disallowJoins(): void {
         clearTimeout(this.#allowJoinTimeout);
@@ -839,6 +845,13 @@ export class StackContext {
      * The value 0x00 and 0xff indicate that permission is disabled or enabled, respectively, without a specified time limit.
      * 0xff is clamped to 0xfe for security reasons
      * @param macAssociationPermit If true, also allow association on coordinator itself. Ignored if duration 0.
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Implements timed join window per spec
+     * - ✅ Updates Trust Center policies
+     * - ✅ Sets MAC associationPermit flag
+     * - ✅ Clamps 0xff to 0xfe for security
+     * - ✅ Auto-disallows after timeout
      */
     public allowJoins(duration: number, macAssociationPermit: boolean): void {
         if (duration > 0) {
@@ -857,6 +870,21 @@ export class StackContext {
     }
 
     /**
+     * Handle device association (initial join or rejoin)
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Validates allowJoins policy for initial join
+     * - ✅ Assigns network addresses correctly
+     * - ✅ Detects and handles address conflicts
+     * - ✅ Creates device table entries with capabilities
+     * - ✅ Sets up indirect transmission for rxOnWhenIdle=false
+     * - ✅ Returns appropriate status codes per IEEE 802.15.4
+     * - ✅ Triggers state save after association
+     * - ⚠️ Unknown rejoins succeed if allowOverride=true (potential security risk)
+     * - ❌ NOT IMPLEMENTED: Install code enforcement (policy checked but not enforced)
+     * - ❌ NOT IMPLEMENTED: Network key change detection on rejoin
+     * - ❌ NOT IMPLEMENTED: Device announcement tracking
+     *
      * @param source16
      * @param source64 Assumed valid if assocType === 0x00
      * @param initialJoin If false, rejoin.
@@ -1000,6 +1028,23 @@ export class StackContext {
         return [status, newAddress16];
     }
 
+    /**
+     * Handle device disassociation (leave)
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Removes from device table
+     * - ✅ Removes from address mappings (16↔64)
+     * - ✅ Cleans up indirect transmissions
+     * - ✅ Removes from source route table
+     * - ✅ Cleans up pending associations
+     * - ✅ Clears MAC NO_ACK counters
+     * - ✅ Removes routes using device as relay
+     * - ✅ Triggers onDeviceLeft callback
+     * - ✅ Forces state save
+     * - ✅ Handles both address16 and address64 resolution
+     *
+     * THOROUGH CLEANUP: All device-related state properly removed
+     */
     public async disassociate(source16: number | undefined, source64: bigint | undefined): Promise<void> {
         if (source64 === undefined && source16 !== undefined) {
             source64 = this.address16ToAddress64.get(source16);
