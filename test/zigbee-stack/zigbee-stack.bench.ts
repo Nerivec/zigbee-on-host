@@ -56,7 +56,7 @@ const setup = () => {
         tcKeyFrameCounter: 0,
     };
 
-    saveDir = `temp_ZigBeeStackBench_${Math.floor(Math.random() * 1000000)}`;
+    saveDir = `temp_ZigbeeStackBench_${Math.floor(Math.random() * 1000000)}`;
 
     const stackContextCallbacks: StackContextCallbacks = {
         onDeviceLeft: () => {},
@@ -101,7 +101,7 @@ const teardown = () => {
     rmSync(saveDir, { force: true, recursive: true });
 };
 
-describe("ZigBee Stack Handlers", () => {
+describe("Zigbee Stack Handlers", () => {
     describe("MACHandler", () => {
         bench(
             "sendFrameDirect - direct transmission without device lookup",

@@ -71,9 +71,9 @@ export interface NWKHandlerCallbacks {
 }
 
 /**
- * NWK Handler - ZigBee Network Layer Operations
+ * NWK Handler - Zigbee Network Layer Operations
  *
- * Handles all ZigBee NWK (Network) layer operations including:
+ * Handles all Zigbee NWK (Network) layer operations including:
  * - NWK command transmission and processing
  * - Route discovery and management
  * - Source routing
@@ -396,7 +396,7 @@ export class NWKHandler {
 
     /**
      * Mark a route as failed and handle route repair if needed.
-     * Consolidates failure tracking and MTORR triggering per ZigBee spec.
+     * Consolidates failure tracking and MTORR triggering per Zigbee spec.
      *
      * @param destination16 Network address of the destination
      * @param triggerRepair If true, will purge routes using this destination as relay and trigger MTORR

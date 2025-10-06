@@ -1,16 +1,16 @@
-# ZigBee Stack Specification Compliance Report
+# Zigbee Stack Specification Compliance Report
 
 **Date:** October 6, 2025  
 **Project:** zigbee-on-host v0.2.0  
-**Specification Reference:** 05-3474-23 (ZigBee Specification), IEEE 802.15.4-2015  
-**Review Scope:** All ZigBee stack handlers (APS, MAC, NWK, NWK-GP, Stack Context)  
+**Specification Reference:** 05-3474-23 (Zigbee Specification), IEEE 802.15.4-2015  
+**Review Scope:** All Zigbee stack handlers (APS, MAC, NWK, NWK-GP, Stack Context)  
 **Update:** Reflects post-refactoring architecture (association/TC logic moved to StackContext)
 
 ---
 
 ## Executive Summary
 
-This report provides a meticulous analysis of the zigbee-on-host implementation's adherence to the ZigBee specification (05-3474-23) and IEEE 802.15.4 MAC layer specification. The implementation demonstrates **strong foundational compliance** with critical protocol operations, but has notable gaps in:
+This report provides a meticulous analysis of the zigbee-on-host implementation's adherence to the Zigbee specification (05-3474-23) and IEEE 802.15.4 MAC layer specification. The implementation demonstrates **strong foundational compliance** with critical protocol operations, but has notable gaps in:
 
 1. **Trust Center policies and security features** (partially implemented)
 2. **Neighbor table management** (significant deviation from spec)
@@ -20,7 +20,7 @@ This report provides a meticulous analysis of the zigbee-on-host implementation'
 
 **Architectural Note:** Recent refactoring centralized association/disassociation logic, Trust Center policies, and device management in StackContext for better encapsulation. This improves code organization and separation of concerns.
 
-**Overall Assessment:** ✅ **Production-ready for ZigBee 3.0 PRO centralized networks** with understanding of limitations.
+**Overall Assessment:** ✅ **Production-ready for Zigbee 3.0 PRO centralized networks** with understanding of limitations.
 
 ---
 
@@ -388,7 +388,7 @@ device.authorized = true;
    - ZVD (Zigbee Virtual Devices) not supported
    - Zigbee Direct not supported
 
-**Note:** These are R23 advanced features, non-critical for ZigBee 3.0 PRO networks
+**Note:** These are R23 advanced features, non-critical for Zigbee 3.0 PRO networks
 
 ---
 
@@ -443,9 +443,9 @@ device.authorized = true;
    - panCoordinator=true ✅
    - Uses `context.associationPermit` flag ✅
 
-3. **ZigBee Beacon Payload**
-   - protocolId=0x00 (ZigBee) ✅
-   - profile=0x02 (ZigBee PRO) ✅
+3. **Zigbee Beacon Payload**
+   - protocolId=0x00 (Zigbee) ✅
+   - profile=0x02 (Zigbee PRO) ✅
    - version=VERSION_2007 ✅
    - Capacity flags set correctly ✅
    - Extended PAN ID from context ✅
@@ -457,7 +457,7 @@ device.authorized = true;
    - Set to 0xffffff
    - Comment: "XXX: value from sniffed frames"
    - **Meaning:** No time synchronization
-   - **Acceptable** for non-beacon mode ZigBee networks ✅
+   - **Acceptable** for non-beacon mode Zigbee networks ✅
 
 ### 2.3 Data Request Processing (IEEE 802.15.4-2015 #6.3.4)
 
@@ -859,7 +859,7 @@ device.authorized = true;
 2. **Binding Table**
    - Not implemented
    - Referenced in config attributes but not present
-   - Required for full ZigBee compliance
+   - Required for full Zigbee compliance
 
 3. **Address Map Table**
    - Not implemented
@@ -1157,7 +1157,7 @@ device.authorized = true;
    - Curve25519 key exchange
    - Advanced install code methods
 
-**R23 Status:** ❌ **NOT R23 COMPLIANT** (R21/ZigBee 3.0 level)
+**R23 Status:** ❌ **NOT R23 COMPLIANT** (R21/Zigbee 3.0 level)
 
 ---
 
@@ -1346,7 +1346,7 @@ Per AGENTS.md:
 ### Production Readiness
 
 **✅ RECOMMENDED FOR:**
-- ZigBee 3.0 PRO centralized networks
+- Zigbee 3.0 PRO centralized networks
 - Coordinator/Trust Center role
 - Development and testing environments
 - IoT device control applications
@@ -1365,7 +1365,7 @@ Per AGENTS.md:
 
 ### Verdict
 
-**This implementation is remarkably solid for a host-based ZigBee stack.** It demonstrates:
+**This implementation is remarkably solid for a host-based Zigbee stack.** It demonstrates:
 
 - ✅ Correct understanding of complex multi-layer protocols
 - ✅ Thoughtful architectural decisions
@@ -1374,13 +1374,13 @@ Per AGENTS.md:
 
 **However**, the explicitly marked uncertainties (XXX comments) around **APS key selection** and **security-critical code paths** MUST be resolved before production deployment in security-sensitive environments.
 
-The project acknowledges its WIP status (v0.2.0, "expect breaking changes"), and this analysis confirms that assessment. With the recommended fixes, especially verification of key handling, this could be a production-grade ZigBee coordinator implementation.
+The project acknowledges its WIP status (v0.2.0, "expect breaking changes"), and this analysis confirms that assessment. With the recommended fixes, especially verification of key handling, this could be a production-grade Zigbee coordinator implementation.
 
 ---
 
 ## Appendix A: Specification References
 
-- **05-3474-23:** ZigBee Specification Revision 23.1
+- **05-3474-23:** Zigbee Specification Revision 23.1
 - **IEEE 802.15.4-2015:** MAC and PHY Layer Specification
 - **16-02828-012:** Base Device Behavior v3.0.1
 - **07-5123:** ZCL Specification Revision 8
@@ -1398,7 +1398,7 @@ The project acknowledges its WIP status (v0.2.0, "expect breaking changes"), and
 - **RSSI:** Received Signal Strength Indicator
 - **TC:** Trust Center
 - **TLV:** Type-Length-Value
-- **ZDO:** ZigBee Device Object
+- **ZDO:** Zigbee Device Object
 - **ZVD:** Zigbee Virtual Device (Zigbee Direct)
 
 ---

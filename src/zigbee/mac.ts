@@ -76,7 +76,7 @@ export const enum ZigbeeMACConsts {
     /** currently assumed always 2 */
     FCS_LEN = 2,
 
-    //---- ZigBee-specific
+    //---- Zigbee-specific
     ZIGBEE_PAYLOAD_IE_OUI = 0x4a191b,
 
     ZIGBEE_BEACON_PROTOCOL_ID = 0x00,
@@ -1332,7 +1332,7 @@ function crc16CCITT(data: Buffer): number {
 
 function decryptPayload(data: Buffer, offset: number, frameControl: MACFrameControl): [Buffer, offset: number] {
     if (frameControl.securityEnabled) {
-        // XXX: not needed for ZigBee
+        // XXX: not needed for Zigbee
         throw new Error("Unsupported MAC: security enabled");
     }
 
@@ -1370,7 +1370,7 @@ export function encodeMACFrame(header: MACHeader, payload: Buffer): Buffer {
     return data.subarray(0, offset);
 }
 
-// #region ZigBee-specific
+// #region Zigbee-specific
 
 /** Subset of @see MACHeader */
 export type MACHeaderZigbee = {
@@ -1393,7 +1393,7 @@ export type MACHeaderZigbee = {
 /** Encode MAC frame with hotpath for Zigbee NWK/APS payload */
 export function encodeMACFrameZigbee(header: MACHeaderZigbee, payload: Buffer): Buffer {
     let offset = 0;
-    const data = Buffer.alloc(ZigbeeMACConsts.PAYLOAD_MAX_SAFE_SIZE); // TODO: optimize with max ZigBee header length
+    const data = Buffer.alloc(ZigbeeMACConsts.PAYLOAD_MAX_SAFE_SIZE); // TODO: optimize with max Zigbee header length
 
     // always transmit with v2003 (0) frame version @see D.6 Frame Version Value of 05-3474-23
     header.frameControl.frameVersion = MACFrameVersion.V2003;
@@ -1417,7 +1417,7 @@ export type MACZigbeeBeacon = {
     routerCapacity: boolean;
     /** The tree depth of the device, 0 indicates the network coordinator */
     deviceDepth: number;
-    /** Whether the device can accept join requests from ZigBee end devices */
+    /** Whether the device can accept join requests from Zigbee end devices */
     endDeviceCapacity: boolean;
     extendedPANId: bigint;
     /** The time difference between a device and its parent's beacon. */

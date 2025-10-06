@@ -909,7 +909,7 @@ export class OTRCPDriver {
     // #region Wrappers
 
     /**
-     * Wraps ZigBee APS DATA sending for ZDO.
+     * Wraps Zigbee APS DATA sending for ZDO.
      * Throws if could not send.
      * @param payload
      * @param nwkDest16
@@ -961,7 +961,7 @@ export class OTRCPDriver {
     }
 
     /**
-     * Wraps ZigBee APS DATA sending for unicast.
+     * Wraps Zigbee APS DATA sending for unicast.
      * Throws if could not send.
      * @param payload
      * @param profileId
@@ -1000,7 +1000,7 @@ export class OTRCPDriver {
     }
 
     /**
-     * Wraps ZigBee APS DATA sending for groupcast.
+     * Wraps Zigbee APS DATA sending for groupcast.
      * Throws if could not send.
      * @param payload
      * @param profileId
@@ -1026,7 +1026,7 @@ export class OTRCPDriver {
     }
 
     /**
-     * Wraps ZigBee APS DATA sending for broadcast.
+     * Wraps Zigbee APS DATA sending for broadcast.
      * Throws if could not send.
      * @param payload
      * @param profileId

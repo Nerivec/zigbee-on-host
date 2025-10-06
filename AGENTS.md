@@ -2,10 +2,10 @@
 
 ## Project Overview
 
-ZigBee on Host is an open-source ZigBee stack designed to run on a host and communicate with a radio co-processor (RCP). The implementation targets compatibility with OpenThread RCP firmware, supporting multiple chip manufacturers (Silabs, TI, Nordic) through the Spinel protocol's `STREAM_RAW` mechanism.
+Zigbee on Host is an open-source Zigbee stack designed to run on a host and communicate with a radio co-processor (RCP). The implementation targets compatibility with OpenThread RCP firmware, supporting multiple chip manufacturers (Silabs, TI, Nordic) through the Spinel protocol's `STREAM_RAW` mechanism.
 
 **Architecture:**
-- **Host-based ZigBee stack** with RCP communication
+- **Host-based Zigbee stack** with RCP communication
 - **Language:** TypeScript (~7,000 lines of source code)
 - **Runtime:** Node.js ^20.19.0 || >=22.12.0
 - **License:** GPL-3.0-or-later
@@ -18,13 +18,13 @@ ZigBee on Host is an open-source ZigBee stack designed to run on a host and comm
     - `properties.ts` - Spinel properties (2,800 lines)
     - `commands.ts` - Spinel commands
     - `statuses.ts` - Status codes
- - **ZigBee Protocol Utilities (`src/zigbee/`):**
+ - **Zigbee Protocol Utilities (`src/zigbee/`):**
     - `mac.ts` - IEEE 802.15.4 MAC layer utilities
     - `zigbee-nwk.ts` - Network layer utilities
     - `zigbee-aps.ts` - Application Support layer utilities
     - `zigbee-nwkgp.ts` - Green Power utilities
-    - `zigbee.ts` - Main ZigBee utilities
-  - **ZigBee Stack Handlers (`src/zigbee-stack/`):**
+    - `zigbee.ts` - Main Zigbee utilities
+  - **Zigbee Stack Handlers (`src/zigbee-stack/`):**
     - `stack-context.ts` - Shared state and context
     - `mac-handler.ts` - MAC layer handler
     - `nwk-handler.ts` - Network layer handler
@@ -39,9 +39,9 @@ ZigBee on Host is an open-source ZigBee stack designed to run on a host and comm
 
 **Key Components:**
 - `src/drivers/` - RCP communication drivers (main: `ot-rcp-driver.ts`)
-- `src/zigbee-stack/` - ZigBee protocol stack handlers (MAC, NWK, APS, Green Power, context)
+- `src/zigbee-stack/` - Zigbee protocol stack handlers (MAC, NWK, APS, Green Power, context)
 - `src/spinel/` - Spinel protocol implementation (HDLC framing, properties)
-- `src/zigbee/` - ZigBee protocol utilities (frame encoding/decoding)
+- `src/zigbee/` - Zigbee protocol utilities (frame encoding/decoding)
 - `src/dev/` - Development tools (excluded from production builds)
 - `src/utils/` - Shared utilities (logging framework)
 
@@ -210,9 +210,9 @@ npm run check:ci        # Check without fixing
 ```
 src/
 ├── drivers/          # RCP communication
-├── zigbee-stack/     # ZigBee protocol stack handlers
+├── zigbee-stack/     # Zigbee protocol stack handlers
 ├── spinel/           # Spinel protocol
-├── zigbee/           # ZigBee protocol utilities
+├── zigbee/           # Zigbee protocol utilities
 ├── dev/              # Development tools (excluded from prod)
 └── utils/            # Shared utilities
 ```
@@ -353,16 +353,16 @@ docker compose -f docker-dev/compose.yaml exec zigbee-on-host npm run build
 docker compose -f docker-dev/compose.yaml down
 ```
 
-## ZigBee Protocol Implementation
+## Zigbee Protocol Implementation
 
 ### Current Implementation Status
 
 **Implemented features:**
 - ✅ Spinel & HDLC protocol encoding/decoding
 - ✅ MAC frame encoding/decoding
-- ✅ ZigBee NWK frame encoding/decoding
-- ✅ ZigBee NWK GP (Green Power) frames
-- ✅ ZigBee APS frame encoding/decoding
+- ✅ Zigbee NWK frame encoding/decoding
+- ✅ Zigbee NWK GP (Green Power) frames
+- ✅ Zigbee APS frame encoding/decoding
 - ✅ Network forming
 - ✅ Network state saving (backups)
 - ✅ Network state reset
@@ -398,12 +398,12 @@ docker compose -f docker-dev/compose.yaml down
 - `commands.ts` - Spinel commands
 - `statuses.ts` - Status codes
 
-**ZigBee Layers (`src/zigbee/`):**
+**Zigbee Layers (`src/zigbee/`):**
 - `mac.ts` - IEEE 802.15.4 MAC layer
 - `zigbee-nwk.ts` - Network layer
 - `zigbee-aps.ts` - Application Support layer
 - `zigbee-nwkgp.ts` - Green Power
-- `zigbee.ts` - Main ZigBee utilities
+- `zigbee.ts` - Main Zigbee utilities
 
 **Driver (`src/drivers/`):**
 - `ot-rcp-driver.ts` - Main RCP driver (4,700 lines)
@@ -457,7 +457,7 @@ docker compose -f docker-dev/compose.yaml down
 
 ### Wireshark Integration
 
-**ZEP Support:** Built-in ZigBee Encapsulation Protocol (ZEP) support for packet capture analysis
+**ZEP Support:** Built-in Zigbee Encapsulation Protocol (ZEP) support for packet capture analysis
 
 **Dev tool:** `src/dev/wireshark.ts` provides Wireshark integration utilities
 
@@ -482,7 +482,7 @@ docker compose -f docker-dev/compose.yaml down
 
 ### Performance Focus
 
-- **Design philosophy:** Performance-critical ZigBee stack
+- **Design philosophy:** Performance-critical Zigbee stack
 - **No expensive operations** in hot code paths
 - **Early bail-outs** to minimize processing
 - **Lean bundle:** Zero external production dependencies
@@ -498,17 +498,17 @@ docker compose -f docker-dev/compose.yaml down
 
 ### Use Cases
 
-- **Production:** IoT device control via ZigBee networks
-- **Development:** Building ZigBee applications
-- **Pentesting:** ZigBee network security testing (craft custom payloads at any layer)
-- **Research:** Study ZigBee protocol implementations
+- **Production:** IoT device control via Zigbee networks
+- **Development:** Building Zigbee applications
+- **Pentesting:** Zigbee network security testing (craft custom payloads at any layer)
+- **Research:** Study Zigbee protocol implementations
 
 ### Contributing
 
 - Submit sniffs/captures to help improve compatibility
 - Search for `TODO`, `HACK`, `XXX` markers for areas needing work
 - Maintain zero production dependencies policy
-- Align with ZigBee 3.0 specification
+- Align with Zigbee 3.0 specification
   - Zigbee specification (05-3474-23): Revision 23.1
   - Base device behavior (16-02828-012): v3.0.1
   - ZCL specification (07-5123): Revision 8

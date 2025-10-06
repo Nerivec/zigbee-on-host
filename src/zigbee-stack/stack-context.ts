@@ -52,7 +52,7 @@ export interface StackContextCallbacks {
 }
 
 /**
- * Network parameters for the ZigBee network.
+ * Network parameters for the Zigbee network.
  */
 export type NetworkParameters = {
     eui64: bigint;
@@ -311,7 +311,7 @@ const CONFIG_SAVE_STATE_TIME = 60000;
 const CONFIG_SAVE_FRAME_COUNTER_JUMP_OFFSET = 1024;
 
 /**
- * Centralized shared state and counters for the ZigBee stack.
+ * Centralized shared state and counters for the Zigbee stack.
  *
  * This context holds all shared state between protocol layers including:
  * - Network parameters

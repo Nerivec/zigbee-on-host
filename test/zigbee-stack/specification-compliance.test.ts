@@ -1,15 +1,15 @@
 /**
- * ZigBee Specification Compliance Tests
+ * Zigbee Specification Compliance Tests
  *
- * These tests verify that the handlers adhere to the ZigBee specification.
+ * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
- * - ZigBee specification (05-3474-23): Revision 23.1
+ * - Zigbee specification (05-3474-23): Revision 23.1
  * - Base device behavior (16-02828-012): v3.0.1
  * - ZCL specification (07-5123): Revision 8
  * - Green Power specification (14-0563-19): Version 1.1.2
  *
  * All tests are independent of the driver and use only handlers and context.
- * Test data is sourced from test/data.ts which contains valid ZigBee payloads.
+ * Test data is sourced from test/data.ts which contains valid Zigbee payloads.
  */
 
 import { rmSync } from "node:fs";
@@ -46,7 +46,7 @@ import {
     TrustCenterKeyRequestPolicy,
 } from "../../src/zigbee-stack/stack-context.js";
 
-describe("ZigBee Specification Compliance Tests", () => {
+describe("Zigbee Specification Compliance Tests", () => {
     let saveDir: string;
     let context: StackContext;
     let netParams: NetworkParameters;
@@ -61,7 +61,7 @@ describe("ZigBee Specification Compliance Tests", () => {
     const sentFrames: Buffer[] = [];
 
     beforeEach(() => {
-        // Initialize network parameters per ZigBee specification defaults
+        // Initialize network parameters per Zigbee specification defaults
         netParams = {
             eui64: 0x00124b0012345678n,
             panId: 0x1a62,
@@ -209,13 +209,13 @@ describe("ZigBee Specification Compliance Tests", () => {
          */
         describe("MAC Beacon Frame (IEEE 802.15.4-2020 §6.3.1)", () => {
             it("should set beacon order to 0x0f for non-beacon enabled networks", () => {
-                // Per ZigBee spec, non-beacon networks use beacon order = 0x0f
+                // Per Zigbee spec, non-beacon networks use beacon order = 0x0f
                 const beaconOrder = 0x0f;
                 expect(beaconOrder).toStrictEqual(15);
             });
 
             it("should set superframe order to 0x0f for non-beacon enabled networks", () => {
-                // Per ZigBee spec, non-beacon networks use superframe order = 0x0f
+                // Per Zigbee spec, non-beacon networks use superframe order = 0x0f
                 const superframeOrder = 0x0f;
                 expect(superframeOrder).toStrictEqual(15);
             });
@@ -304,15 +304,15 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
     });
 
-    describe("ZigBee Network Layer Specification Compliance", () => {
+    describe("Zigbee Network Layer Specification Compliance", () => {
         /**
-         * ZigBee Spec 05-3474-23 Section 3.3.1: NWK Frame Format
+         * Zigbee Spec 05-3474-23 Section 3.3.1: NWK Frame Format
          * The NWK frame control field SHALL be 16 bits.
          */
-        describe("NWK Frame Control Field (ZigBee §3.3.1)", () => {
+        describe("NWK Frame Control Field (Zigbee §3.3.1)", () => {
             it("should enforce frame type values 0-3", () => {
                 // Frame type is 2 bits (values 0-3)
-                // Per ZigBee spec Table 3-40
+                // Per Zigbee spec Table 3-40
                 const validFrameTypes = [
                     ZigbeeNWKFrameType.DATA, // 0b00
                     ZigbeeNWKFrameType.CMD, // 0b01
@@ -326,15 +326,15 @@ describe("ZigBee Specification Compliance Tests", () => {
                 }
             });
 
-            it("should enforce protocol version 2 for ZigBee PRO", () => {
-                // ZigBee PRO uses protocol version 2 (ZigBee 2007)
-                // Per ZigBee spec Table 3-40
+            it("should enforce protocol version 2 for Zigbee PRO", () => {
+                // Zigbee PRO uses protocol version 2 (Zigbee 2007)
+                // Per Zigbee spec Table 3-40
                 expect(ZigbeeNWKConsts.VERSION_2007).toStrictEqual(2);
             });
 
             it("should enforce discover route field values", () => {
                 // Discover route is 2 bits (values 0-3)
-                // Per ZigBee spec Table 3-40
+                // Per Zigbee spec Table 3-40
                 const validDiscoverRoutes = [
                     ZigbeeNWKRouteDiscovery.SUPPRESS, // 0b00
                     ZigbeeNWKRouteDiscovery.ENABLE, // 0b01
@@ -350,10 +350,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 3.3.1.1: NWK Frame Control
+         * Zigbee Spec 05-3474-23 Section 3.3.1.1: NWK Frame Control
          * Frame control bits SHALL be set according to frame type and options.
          */
-        describe("NWK Frame Control Bits (ZigBee §3.3.1.1)", () => {
+        describe("NWK Frame Control Bits (Zigbee §3.3.1.1)", () => {
             it("should set multicast flag only for multicast frames", () => {
                 // Multicast bit is bit 8 of frame control
                 // SHALL be set to 1 for multicast frames, 0 otherwise
@@ -387,10 +387,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 3.3.1.8: NWK Radius
+         * Zigbee Spec 05-3474-23 Section 3.3.1.8: NWK Radius
          * Radius SHALL be decremented by each router that forwards the frame.
          */
-        describe("NWK Radius Handling (ZigBee §3.3.1.8)", () => {
+        describe("NWK Radius Handling (Zigbee §3.3.1.8)", () => {
             it("should decrement radius but never below 1", () => {
                 // Radius decrements with each hop but SHALL NOT go below 1
                 let radius = 30;
@@ -407,7 +407,7 @@ describe("ZigBee Specification Compliance Tests", () => {
             });
 
             it("should use default radius of 2*nwkMaxDepth", () => {
-                // Per ZigBee spec, default radius is 2 * nwkMaxDepth
+                // Per Zigbee spec, default radius is 2 * nwkMaxDepth
                 // nwkMaxDepth is typically 15, so default radius is 30
                 const maxDepth = 15;
                 const defaultRadius = maxDepth * 2;
@@ -416,10 +416,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 3.4.1: Route Discovery
+         * Zigbee Spec 05-3474-23 Section 3.4.1: Route Discovery
          * Route discovery SHALL be performed according to AODV principles.
          */
-        describe("NWK Route Discovery (ZigBee §3.4.1)", () => {
+        describe("NWK Route Discovery (Zigbee §3.4.1)", () => {
             it("should support route request command", () => {
                 expect(ZigbeeNWKCommandId.ROUTE_REQ).toStrictEqual(0x01);
             });
@@ -429,7 +429,7 @@ describe("ZigBee Specification Compliance Tests", () => {
             });
 
             it("should support many-to-one route discovery modes", () => {
-                // Per ZigBee spec Table 3-44
+                // Per Zigbee spec Table 3-44
                 expect(ZigbeeNWKManyToOne.DISABLED).toStrictEqual(0x00);
                 expect(ZigbeeNWKManyToOne.WITH_SOURCE_ROUTING).toStrictEqual(0x01);
                 expect(ZigbeeNWKManyToOne.WITHOUT_SOURCE_ROUTING).toStrictEqual(0x02);
@@ -442,10 +442,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 3.4.2: Routing Table
+         * Zigbee Spec 05-3474-23 Section 3.4.2: Routing Table
          * Each routing table entry SHALL contain route status and costs.
          */
-        describe("NWK Routing Table (ZigBee §3.4.2)", () => {
+        describe("NWK Routing Table (Zigbee §3.4.2)", () => {
             it("should track route cost for path selection", () => {
                 const route = context.sourceRouteTable.get(0x1234);
                 // Route entries SHALL have a pathCost field
@@ -467,10 +467,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 3.5: Network Status Command
+         * Zigbee Spec 05-3474-23 Section 3.5: Network Status Command
          * Network status codes SHALL be used to report routing failures.
          */
-        describe("NWK Status Command (ZigBee §3.5)", () => {
+        describe("NWK Status Command (Zigbee §3.5)", () => {
             it("should support network status command", () => {
                 expect(ZigbeeNWKCommandId.NWK_STATUS).toStrictEqual(0x03);
             });
@@ -497,10 +497,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 3.6.1: Leave Command
+         * Zigbee Spec 05-3474-23 Section 3.6.1: Leave Command
          * Leave command SHALL support removal of child devices.
          */
-        describe("NWK Leave Command (ZigBee §3.6.1)", () => {
+        describe("NWK Leave Command (Zigbee §3.6.1)", () => {
             it("should support leave command", () => {
                 expect(ZigbeeNWKCommandId.LEAVE).toStrictEqual(0x04);
             });
@@ -522,10 +522,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 3.6.3: Rejoin Commands
+         * Zigbee Spec 05-3474-23 Section 3.6.3: Rejoin Commands
          * Rejoin request and response SHALL be used for rejoining network.
          */
-        describe("NWK Rejoin Commands (ZigBee §3.6.3)", () => {
+        describe("NWK Rejoin Commands (Zigbee §3.6.3)", () => {
             it("should support rejoin request command", () => {
                 expect(ZigbeeNWKCommandId.REJOIN_REQ).toStrictEqual(0x06);
             });
@@ -536,10 +536,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 3.6.6: Link Status Command
+         * Zigbee Spec 05-3474-23 Section 3.6.6: Link Status Command
          * Link status SHALL be sent periodically by routers.
          */
-        describe("NWK Link Status Command (ZigBee §3.6.6)", () => {
+        describe("NWK Link Status Command (Zigbee §3.6.6)", () => {
             it("should support link status command", () => {
                 expect(ZigbeeNWKCommandId.LINK_STATUS).toStrictEqual(0x08);
             });
@@ -561,10 +561,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 3.3.1.10: NWK Sequence Number
+         * Zigbee Spec 05-3474-23 Section 3.3.1.10: NWK Sequence Number
          * Sequence number SHALL be 8 bits (0-255).
          */
-        describe("NWK Sequence Number (ZigBee §3.3.1.10)", () => {
+        describe("NWK Sequence Number (Zigbee §3.3.1.10)", () => {
             it("should wrap sequence numbers at 255 to 0", () => {
                 // Implemented in handlers, verified through counter behavior
                 let seqNum = 0;
@@ -577,10 +577,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 3.7: NWK Frame Size
+         * Zigbee Spec 05-3474-23 Section 3.7: NWK Frame Size
          * Maximum NWK frame size constraints.
          */
-        describe("NWK Frame Size Limits (ZigBee §3.7)", () => {
+        describe("NWK Frame Size Limits (Zigbee §3.7)", () => {
             it("should enforce maximum NWK frame size", () => {
                 // NWK frame must fit in MAC payload
                 expect(ZigbeeNWKConsts.FRAME_MAX_SIZE).toBeLessThanOrEqual(ZigbeeMACConsts.PAYLOAD_MAX_SIZE);
@@ -593,15 +593,15 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
     });
 
-    describe("ZigBee Application Support Layer Specification Compliance", () => {
+    describe("Zigbee Application Support Layer Specification Compliance", () => {
         /**
-         * ZigBee Spec 05-3474-23 Section 2.2.5: APS Frame Format
+         * Zigbee Spec 05-3474-23 Section 2.2.5: APS Frame Format
          * APS frame control field SHALL be 8 bits.
          */
-        describe("APS Frame Control Field (ZigBee §2.2.5)", () => {
+        describe("APS Frame Control Field (Zigbee §2.2.5)", () => {
             it("should enforce frame type values 0-3", () => {
                 // Frame type is 2 bits (values 0-3)
-                // Per ZigBee spec Table 2-2
+                // Per Zigbee spec Table 2-2
                 const validFrameTypes = [
                     ZigbeeAPSFrameType.DATA, // 0b00
                     ZigbeeAPSFrameType.CMD, // 0b01
@@ -617,7 +617,7 @@ describe("ZigBee Specification Compliance Tests", () => {
 
             it("should enforce delivery mode values", () => {
                 // Delivery mode is 2 bits (values 0-3)
-                // Per ZigBee spec Table 2-2
+                // Per Zigbee spec Table 2-2
                 expect(ZigbeeAPSDeliveryMode.UNICAST).toStrictEqual(0x00);
                 expect(ZigbeeAPSDeliveryMode.BCAST).toStrictEqual(0x02);
                 expect(ZigbeeAPSDeliveryMode.GROUP).toStrictEqual(0x03);
@@ -625,10 +625,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 2.2.5.1: APS Counter
+         * Zigbee Spec 05-3474-23 Section 2.2.5.1: APS Counter
          * APS counter SHALL be 8 bits and increment for each frame.
          */
-        describe("APS Counter (ZigBee §2.2.5.1)", () => {
+        describe("APS Counter (Zigbee §2.2.5.1)", () => {
             it("should wrap APS counter at 255 to 0", () => {
                 const macHandler = new MACHandler(context, macHandlerCallbacks, 99999);
                 const nwkHandler = new NWKHandler(context, macHandler, nwkHandlerCallbacks);
@@ -649,10 +649,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 4.4: APS Security
+         * Zigbee Spec 05-3474-23 Section 4.4: APS Security
          * APS commands SHALL support security operations.
          */
-        describe("APS Security Commands (ZigBee §4.4)", () => {
+        describe("APS Security Commands (Zigbee §4.4)", () => {
             it("should support TRANSPORT_KEY command", () => {
                 // TRANSPORT_KEY (0x05) for sending keys
                 expect(ZigbeeAPSCommandId.TRANSPORT_KEY).toStrictEqual(0x05);
@@ -690,10 +690,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 4.4.1: TRANSPORT_KEY
+         * Zigbee Spec 05-3474-23 Section 4.4.1: TRANSPORT_KEY
          * Key types SHALL be defined per specification.
          */
-        describe("APS Key Types (ZigBee §4.4.1)", () => {
+        describe("APS Key Types (Zigbee §4.4.1)", () => {
             it("should define trust center master key type", () => {
                 expect(ZigbeeAPSConsts.CMD_KEY_TC_MASTER).toStrictEqual(0x00);
             });
@@ -715,17 +715,17 @@ describe("ZigBee Specification Compliance Tests", () => {
             });
 
             it("should enforce key length of 16 bytes", () => {
-                // All ZigBee keys SHALL be 128 bits (16 bytes)
+                // All Zigbee keys SHALL be 128 bits (16 bytes)
                 expect(ZigbeeAPSConsts.CMD_KEY_LENGTH).toStrictEqual(16);
                 expect(ZigbeeConsts.SEC_KEYSIZE).toStrictEqual(16);
             });
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 2.2.8: APS Frame Size
+         * Zigbee Spec 05-3474-23 Section 2.2.8: APS Frame Size
          * Maximum APS frame size constraints.
          */
-        describe("APS Frame Size Limits (ZigBee §2.2.8)", () => {
+        describe("APS Frame Size Limits (Zigbee §2.2.8)", () => {
             it("should enforce maximum APS frame size", () => {
                 // APS frame must fit in NWK payload
                 expect(ZigbeeAPSConsts.FRAME_MAX_SIZE).toBeLessThanOrEqual(ZigbeeNWKConsts.PAYLOAD_MAX_SIZE);
@@ -740,10 +740,10 @@ describe("ZigBee Specification Compliance Tests", () => {
 
     describe("Trust Center Policy Compliance", () => {
         /**
-         * ZigBee Spec 05-3474-23 Section 4.7.3: Trust Center Policies
+         * Zigbee Spec 05-3474-23 Section 4.7.3: Trust Center Policies
          * Trust center SHALL enforce security policies.
          */
-        describe("Trust Center Policies (ZigBee §4.7.3)", () => {
+        describe("Trust Center Policies (Zigbee §4.7.3)", () => {
             it("should default to secure configuration", () => {
                 // Trust Center SHALL default to secure settings
                 expect(context.trustCenterPolicies.allowJoins).toStrictEqual(false);
@@ -752,7 +752,7 @@ describe("ZigBee Specification Compliance Tests", () => {
             });
 
             it("should support install code policy options", () => {
-                // Install code policy per ZigBee spec
+                // Install code policy per Zigbee spec
                 expect(InstallCodePolicy.NOT_SUPPORTED).toStrictEqual(0x00);
                 expect(InstallCodePolicy.NOT_REQUIRED).toStrictEqual(0x01);
                 expect(InstallCodePolicy.REQUIRED).toStrictEqual(0x02);
@@ -782,10 +782,10 @@ describe("ZigBee Specification Compliance Tests", () => {
 
     describe("Security Compliance", () => {
         /**
-         * ZigBee Spec 05-3474-23 Section 4.3: Security Processing
+         * Zigbee Spec 05-3474-23 Section 4.3: Security Processing
          * Frame counters SHALL be monotonically increasing.
          */
-        describe("Frame Counter Management (ZigBee §4.3)", () => {
+        describe("Frame Counter Management (Zigbee §4.3)", () => {
             it("should increment TC key frame counter monotonically", () => {
                 const fc1 = context.nextTCKeyFrameCounter();
                 const fc2 = context.nextTCKeyFrameCounter();
@@ -813,10 +813,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 4.5: Key Types
+         * Zigbee Spec 05-3474-23 Section 4.5: Key Types
          * Security keys SHALL be identified by key type.
          */
-        describe("Security Key Types (ZigBee §4.5)", () => {
+        describe("Security Key Types (Zigbee §4.5)", () => {
             it("should define link key type", () => {
                 // Link key (0x00) for link-level security
                 expect(ZigbeeKeyType.LINK).toStrictEqual(0x00);
@@ -841,10 +841,10 @@ describe("ZigBee Specification Compliance Tests", () => {
 
     describe("Link Quality Assessment Compliance", () => {
         /**
-         * ZigBee Spec 05-3474-23 Section 3.6.3: Link Quality
+         * Zigbee Spec 05-3474-23 Section 3.6.3: Link Quality
          * Link quality SHALL be computed from RSSI and LQI.
          */
-        describe("LQI/LQA Computation (ZigBee §3.6.3)", () => {
+        describe("LQI/LQA Computation (Zigbee §3.6.3)", () => {
             it("should map RSSI to LQI in range 0-255", () => {
                 // LQI SHALL be in range 0-255
                 const lqi = context.mapRSSIToLQI(-50);
@@ -891,10 +891,10 @@ describe("ZigBee Specification Compliance Tests", () => {
 
     describe("Device Table Compliance", () => {
         /**
-         * ZigBee Spec 05-3474-23 Section 2.5.5.1: Device Table
+         * Zigbee Spec 05-3474-23 Section 2.5.5.1: Device Table
          * Device table SHALL maintain device information.
          */
-        describe("Device Table Management (ZigBee §2.5.5.1)", () => {
+        describe("Device Table Management (Zigbee §2.5.5.1)", () => {
             it("should store devices by IEEE address", () => {
                 const device64 = 0x00124b0011223344n;
                 const device16 = 0xabcd;
@@ -971,10 +971,10 @@ describe("ZigBee Specification Compliance Tests", () => {
 
     describe("Broadcast Address Compliance", () => {
         /**
-         * ZigBee Spec 05-3474-23 Section 3.7.1: Broadcast Addresses
+         * Zigbee Spec 05-3474-23 Section 3.7.1: Broadcast Addresses
          * Broadcast addresses SHALL be in range 0xfff8-0xffff.
          */
-        describe("Broadcast Addresses (ZigBee §3.7.1)", () => {
+        describe("Broadcast Addresses (Zigbee §3.7.1)", () => {
             it("should define coordinator address as 0x0000", () => {
                 expect(ZigbeeConsts.COORDINATOR_ADDRESS).toStrictEqual(0x0000);
             });
@@ -1019,10 +1019,10 @@ describe("ZigBee Specification Compliance Tests", () => {
 
     describe("Endpoint Addressing Compliance", () => {
         /**
-         * ZigBee Spec 05-3474-23 Section 2.2.4: Endpoints
+         * Zigbee Spec 05-3474-23 Section 2.2.4: Endpoints
          * Endpoint 0 is reserved for ZDO.
          */
-        describe("Endpoint Addressing (ZigBee §2.2.4)", () => {
+        describe("Endpoint Addressing (Zigbee §2.2.4)", () => {
             it("should define ZDO endpoint as 0", () => {
                 expect(ZigbeeConsts.ZDO_ENDPOINT).toStrictEqual(0x00);
             });
@@ -1046,10 +1046,10 @@ describe("ZigBee Specification Compliance Tests", () => {
 
     describe("Profile and Cluster Compliance", () => {
         /**
-         * ZigBee Spec 05-3474-23 Section 2.6: Profiles
+         * Zigbee Spec 05-3474-23 Section 2.6: Profiles
          * ZDO profile is 0x0000.
          */
-        describe("Profile Identifiers (ZigBee §2.6)", () => {
+        describe("Profile Identifiers (Zigbee §2.6)", () => {
             it("should define ZDO profile as 0x0000", () => {
                 expect(ZigbeeConsts.ZDO_PROFILE_ID).toStrictEqual(0x0000);
             });
@@ -1060,10 +1060,10 @@ describe("ZigBee Specification Compliance Tests", () => {
         });
 
         /**
-         * ZigBee Spec 05-3474-23 Section 2.5.3: ZDO Clusters
+         * Zigbee Spec 05-3474-23 Section 2.5.3: ZDO Clusters
          * End Device Announce cluster is 0x0013.
          */
-        describe("ZDO Cluster Identifiers (ZigBee §2.5.3)", () => {
+        describe("ZDO Cluster Identifiers (Zigbee §2.5.3)", () => {
             it("should define End Device Announce cluster", () => {
                 expect(ZigbeeConsts.END_DEVICE_ANNOUNCE).toStrictEqual(0x0013);
             });
@@ -1075,7 +1075,7 @@ describe("ZigBee Specification Compliance Tests", () => {
  * SPECIFICATION COMPLIANCE NOTES
  * ==============================
  *
- * This test file verifies adherence to the ZigBee specification (05-3474-23 Revision 23.1)
+ * This test file verifies adherence to the Zigbee specification (05-3474-23 Revision 23.1)
  * and IEEE 802.15.4-2020 standard. All tests are derived from specification requirements
  * and do not test implementation details.
  *
@@ -1090,53 +1090,53 @@ describe("ZigBee Specification Compliance Tests", () => {
  *    - Current implementation: Uses MAC_INDIRECT_TRANSMISSION_TIMEOUT which may differ
  *    - Reference: src/drivers/mac-handler.ts:processDataReq()
  *
- * 2. **Route Discovery Timing** (ZigBee §3.4.1.2)
+ * 2. **Route Discovery Timing** (Zigbee §3.4.1.2)
  *    - Specification: Route request SHALL be broadcast and route reply SHALL be unicast
  *    - Current implementation: Timing and retry mechanisms may not fully comply
  *    - Reference: src/drivers/nwk-handler.ts:sendRouteReq()
  *
- * 3. **Link Status Periodicity** (ZigBee §3.6.6.2)
+ * 3. **Link Status Periodicity** (Zigbee §3.6.6.2)
  *    - Specification: Link status SHALL be sent every nwkLinkStatusPeriod seconds
  *    - Current implementation: Uses CONFIG_NWK_LINK_STATUS_PERIOD = 15000ms with jitter
  *    - Reference: src/drivers/nwk-handler.ts (line 41-42)
  *    - Note: 15s is within acceptable range but may differ from specification default
  *
- * 4. **Many-to-One Route Request Rate Limiting** (ZigBee §3.4.1.6)
+ * 4. **Many-to-One Route Request Rate Limiting** (Zigbee §3.4.1.6)
  *    - Specification: MTORR SHALL NOT be sent more frequently than nwkRouteDiscoveryTime
  *    - Current implementation: Uses CONFIG_NWK_CONCENTRATOR_MIN_TIME = 10000ms
  *    - Reference: src/drivers/nwk-handler.ts (line 56)
  *    - Note: 10s may differ from specification default of nwkRouteDiscoveryTime
  *
- * 5. **APS Acknowledgment Timing** (ZigBee §2.2.9.1)
+ * 5. **APS Acknowledgment Timing** (Zigbee §2.2.9.1)
  *    - Specification: APS acknowledgments SHALL be sent within apsAckWaitDuration
  *    - Current implementation: ACKs are sent immediately without timing verification
  *    - Reference: src/drivers/aps-handler.ts:sendACK()
  *
- * 6. **Security Frame Counter Persistence** (ZigBee §4.3.1.2)
+ * 6. **Security Frame Counter Persistence** (Zigbee §4.3.1.2)
  *    - Specification: Frame counters MUST be persisted and SHALL NOT repeat after reboot
  *    - Current implementation: Frame counters may reset on restart if not saved properly
  *    - Reference: src/drivers/stack-context.ts (frame counter methods)
  *    - Note: Relies on save/restore mechanism which should jump counter on boot
  *
- * 7. **Install Code Policy Enforcement** (ZigBee §4.6.3.4)
+ * 7. **Install Code Policy Enforcement** (Zigbee §4.6.3.4)
  *    - Specification: When REQUIRED, devices MUST use install codes to join
  *    - Current implementation: Policy is defined but enforcement may be incomplete
  *    - Reference: src/drivers/stack-context.ts:InstallCodePolicy
  *    - Note: Marked as WIP in AGENTS.md
  *
- * 8. **Application Link Key Establishment** (ZigBee §4.6.3)
+ * 8. **Application Link Key Establishment** (Zigbee §4.6.3)
  *    - Specification: Trust Center SHALL establish application link keys per policy
  *    - Current implementation: Policy is defined but full implementation pending
  *    - Reference: src/drivers/stack-context.ts:ApplicationKeyRequestPolicy
  *    - Note: Marked as WIP in AGENTS.md
  *
- * 9. **Route Repair Mechanism** (ZigBee §3.4.1.3)
+ * 9. **Route Repair Mechanism** (Zigbee §3.4.1.3)
  *    - Specification: Route repair SHALL be initiated upon detecting route failure
  *    - Current implementation: Basic failure tracking exists but repair may be incomplete
  *    - Reference: src/drivers/nwk-handler.ts:markRouteFailure()
  *    - Note: Marked as WIP in AGENTS.md
  *
- * 10. **Network Key Rotation** (ZigBee §4.6.3.3)
+ * 10. **Network Key Rotation** (Zigbee §4.6.3.3)
  *     - Specification: Network key SHALL be rotated per networkKeyUpdatePeriod
  *     - Current implementation: Policy supports it but automatic rotation not implemented
  *     - Reference: src/drivers/stack-context.ts:networkKeyUpdatePeriod
@@ -1163,10 +1163,10 @@ describe("ZigBee Specification Compliance Tests", () => {
  *
  * Key specification sections referenced:
  * - IEEE 802.15.4-2020: Sections 6.2-6.7 (MAC layer)
- * - ZigBee 05-3474-23: Section 2 (APS layer)
- * - ZigBee 05-3474-23: Section 3 (NWK layer)
- * - ZigBee 05-3474-23: Section 4 (Security)
- * - ZigBee 05-3474-23: Appendix B (Constants and attributes)
+ * - Zigbee 05-3474-23: Section 2 (APS layer)
+ * - Zigbee 05-3474-23: Section 3 (NWK layer)
+ * - Zigbee 05-3474-23: Section 4 (Security)
+ * - Zigbee 05-3474-23: Appendix B (Constants and attributes)
  *
  * Note: This test suite focuses on structural compliance with the specification.
  * Functional integration tests and end-to-end behavior are covered in other test files.
