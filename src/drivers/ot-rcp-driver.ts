@@ -60,7 +60,7 @@ const CONFIG_TID_MASK = 0x0e;
 const CONFIG_HIGHWATER_MARK = HDLC_TX_CHUNK_SIZE * 4;
 
 export class OTRCPDriver {
-    readonly #callbacks: StackCallbacks;
+    readonly #onMACFrame: StackCallbacks["onMACFrame"];
     readonly #streamRawConfig: StreamRawConfig;
     readonly writer: OTRCPWriter;
     readonly parser: OTRCPParser;
@@ -111,7 +111,7 @@ export class OTRCPDriver {
             mkdirSync(saveDir);
         }
 
-        this.#callbacks = callbacks;
+        this.#onMACFrame = callbacks.onMACFrame;
         this.#streamRawConfig = streamRawConfig;
         this.writer = new OTRCPWriter({ highWaterMark: CONFIG_HIGHWATER_MARK });
         this.parser = new OTRCPParser({ readableHighWaterMark: CONFIG_HIGHWATER_MARK });
@@ -123,13 +123,13 @@ export class OTRCPDriver {
         this.#networkUp = false;
 
         const contextCallbacks: StackContextCallbacks = {
-            onDeviceLeft: this.#callbacks.onDeviceLeft,
+            onDeviceLeft: callbacks.onDeviceLeft,
         };
 
         this.context = new StackContext(contextCallbacks, join(saveDir, "zoh.save"), netParams);
 
         const macCallbacks: MACHandlerCallbacks = {
-            onFrame: this.#callbacks.onMACFrame,
+            onFrame: callbacks.onMACFrame,
             onSendFrame: this.sendStreamRaw.bind(this),
             onAPSSendTransportKeyNWK: async (address16, key, keySeqNum, destination64) => {
                 await this.apsHandler.sendTransportKeyNWK(address16, key, keySeqNum, destination64);
@@ -145,7 +145,7 @@ export class OTRCPDriver {
         this.macHandler = new MACHandler(this.context, macCallbacks, SpinelStatus.NO_ACK, emitMACFrames);
 
         const nwkCallbacks: NWKHandlerCallbacks = {
-            onDeviceRejoined: this.#callbacks.onDeviceRejoined,
+            onDeviceRejoined: callbacks.onDeviceRejoined,
             onAPSSendTransportKeyNWK: async (address16, key, keySeqNum, destination64) => {
                 await this.apsHandler.sendTransportKeyNWK(address16, key, keySeqNum, destination64);
             },
@@ -154,17 +154,17 @@ export class OTRCPDriver {
         this.nwkHandler = new NWKHandler(this.context, this.macHandler, nwkCallbacks);
 
         const apsCallbacks: APSHandlerCallbacks = {
-            onFrame: this.#callbacks.onFrame,
-            onDeviceJoined: this.#callbacks.onDeviceJoined,
-            onDeviceRejoined: this.#callbacks.onDeviceRejoined,
-            onDeviceAuthorized: this.#callbacks.onDeviceAuthorized,
+            onFrame: callbacks.onFrame,
+            onDeviceJoined: callbacks.onDeviceJoined,
+            onDeviceRejoined: callbacks.onDeviceRejoined,
+            onDeviceAuthorized: callbacks.onDeviceAuthorized,
         };
 
         this.apsHandler = new APSHandler(this.context, this.macHandler, this.nwkHandler, apsCallbacks);
 
         // Setup NWK GP handler callbacks
         const nwkGPCallbacks: NWKGPHandlerCallbacks = {
-            onGPFrame: this.#callbacks.onGPFrame,
+            onGPFrame: callbacks.onGPFrame,
         };
 
         this.nwkGPHandler = new NWKGPHandler(nwkGPCallbacks);
@@ -245,7 +245,7 @@ export class OTRCPDriver {
         // Emit MAC frames if listeners registered (not in hot path for normal operation)
         if (this.macHandler.emitFrames) {
             setImmediate(() => {
-                this.#callbacks.onMACFrame(payload, metadata?.rssi);
+                this.#onMACFrame(payload, metadata?.rssi);
             });
         }
 
@@ -647,7 +647,7 @@ export class OTRCPDriver {
 
         // override `onStreamRawFrame` behavior for sniff
         this.onStreamRawFrame = async (payload, metadata) => {
-            this.#callbacks.onMACFrame(payload, metadata?.rssi);
+            this.#onMACFrame(payload, metadata?.rssi);
             await Promise.resolve();
         };
     }

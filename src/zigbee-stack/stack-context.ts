@@ -3,6 +3,7 @@ import { encodeCoordinatorDescriptors } from "../drivers/descriptors.js";
 import { logger } from "../utils/logger.js";
 import {
     estimateTLVStateSize,
+    type ParsedState,
     readTLVs,
     SAVE_FORMAT_VERSION,
     serializeDeviceEntry,
@@ -689,18 +690,19 @@ export class StackContext {
         // write end marker (aids debugging and validates complete write)
         state.writeUInt8(TLVTag.END_MARKER, offset++);
 
+        const writtenState = state.subarray(0, offset);
+
         // write only the used portion
-        await writeFile(this.#savePath, state.subarray(0, offset));
+        await writeFile(this.#savePath, writtenState);
+
+        logger.debug(() => `Saved state to ${this.#savePath} (${writtenState.byteLength} bytes)`, NS);
     }
 
     /**
-     * Load state from file system if exists, else save "initial" state.
-     * Afterwards, various keys are pre-hashed and descriptors pre-encoded.
+     * Read the current network state in the save file, if any present.
+     * @returns
      */
-    public async loadState(): Promise<void> {
-        // pre-emptive
-        this.#loaded = true;
-
+    public async readNetworkState(): Promise<ParsedState | undefined> {
         try {
             const stateBuffer = await readFile(this.#savePath);
 
@@ -716,6 +718,25 @@ export class StackContext {
                 logger.warning(`Unknown save format version ${version}, attempting to load`, NS);
             }
 
+            logger.debug(() => `Current save network: eui64=${state.eui64} panId=${state.panId} channel=${state.channel}`, NS);
+
+            return state;
+        } catch {
+            /* empty */
+        }
+    }
+
+    /**
+     * Load state from file system if exists, else save "initial" state.
+     * Afterwards, various keys are pre-hashed and descriptors pre-encoded.
+     */
+    public async loadState(): Promise<void> {
+        // pre-emptive
+        this.#loaded = true;
+
+        const state = await this.readNetworkState();
+
+        if (state) {
             // Network parameters already parsed to final types - update context
             this.netParams.eui64 = state.eui64;
             this.netParams.panId = state.panId;
@@ -762,7 +783,7 @@ export class StackContext {
                     this.sourceRouteTable.set(address16, routes);
                 }
             }
-        } catch {
+        } else {
             // `this.#savePath` does not exist, using constructor-given network params, do initial save
             await this.saveState();
         }
