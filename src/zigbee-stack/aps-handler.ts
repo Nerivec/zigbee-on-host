@@ -38,7 +38,7 @@ export interface APSHandlerCallbacks {
 }
 
 /**
- * APS Handler - ZigBee Application Support Layer Operations
+ * APS Handler - Zigbee Application Support Layer Operations
  */
 export class APSHandler {
     readonly #context: StackContext;
@@ -86,7 +86,7 @@ export class APSHandler {
     }
 
     /**
-     * Send a ZigBee APS DATA frame.
+     * Send a Zigbee APS DATA frame.
      * Throws if could not send.
      * @param finalPayload
      * @param macDest16
@@ -976,7 +976,7 @@ export class APSHandler {
     ): Promise<number> {
         const device64 = data.readBigUInt64LE(offset);
         offset += 8;
-        // ZigBee 2006 and later
+        // Zigbee 2006 and later
         const device16 = data.readUInt16LE(offset);
         offset += 2;
         const status = data.readUInt8(offset);
@@ -1632,7 +1632,7 @@ export class APSHandler {
      *
      * USE CASES: ZVD (Zigbee Virtual Devices), Zigbee Direct - NOT SUPPORTED
      *
-     * NOTE: Non-critical for ZigBee 3.0 PRO networks
+     * NOTE: Non-critical for Zigbee 3.0 PRO networks
      */
     public processRelayMessageDownstream(
         data: Buffer,
@@ -1673,7 +1673,7 @@ export class APSHandler {
      *
      * USE CASES: ZVD (Zigbee Virtual Devices), Zigbee Direct - NOT SUPPORTED
      *
-     * NOTE: Non-critical for ZigBee 3.0 PRO networks
+     * NOTE: Non-critical for Zigbee 3.0 PRO networks
      */
     public processRelayMessageUpstream(
         data: Buffer,

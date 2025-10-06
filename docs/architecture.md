@@ -1,4 +1,4 @@
-# ZigBee on Host - Architecture Documentation
+# Zigbee on Host - Architecture Documentation
 
 **Document Version:** 1.0  
 **Last Updated:** October 4, 2025  
@@ -16,7 +16,7 @@
 
 ## Overview
 
-ZigBee on Host is a host-based ZigBee stack implementation that communicates with OpenThread RCP (Radio Co-Processor) firmware via the Spinel protocol. The architecture follows a clean layered design aligned with the ZigBee specification structure.
+Zigbee on Host is a host-based Zigbee stack implementation that communicates with OpenThread RCP (Radio Co-Processor) firmware via the Spinel protocol. The architecture follows a clean layered design aligned with the Zigbee specification structure.
 
 ### Key Design Principles
 
@@ -109,14 +109,14 @@ src/
 │   ├── ot-rcp-writer.ts   - Spinel writer
 │   ├── descriptors.ts     - Coordinator descriptors
 │   └── wip.ts             - Work in progress features
-├── zigbee-stack/          - ZigBee protocol stack handlers
+├── zigbee-stack/          - Zigbee protocol stack handlers
 │   ├── stack-context.ts   - Shared state
 │   ├── mac-handler.ts     - MAC layer
 │   ├── nwk-handler.ts     - NWK layer
 │   ├── nwk-gp-handler.ts  - Green Power
 │   └── aps-handler.ts     - APS layer
 ├── spinel/                - Spinel protocol implementation
-├── zigbee/                - ZigBee protocol utilities
+├── zigbee/                - Zigbee protocol utilities
 └── utils/                 - Shared utilities
 ```
 
@@ -211,7 +211,7 @@ interface MACHandlerCallbacks {
 
 ### NWKHandler (Network Layer)
 
-**Responsibility:** ZigBee Network layer operations
+**Responsibility:** Zigbee Network layer operations
 
 **Functions:**
 - Handle NWK frame transmission/reception
@@ -257,7 +257,7 @@ interface NWKHandlerCallbacks {
 
 ### NWKGPHandler (Green Power)
 
-**Responsibility:** ZigBee Green Power frame processing
+**Responsibility:** Zigbee Green Power frame processing
 
 **Functions:**
 - Process Green Power frames
@@ -283,7 +283,7 @@ interface NWKGPHandlerCallbacks {
 
 ### APSHandler (Application Support Layer)
 
-**Responsibility:** ZigBee APS layer and ZDO operations
+**Responsibility:** Zigbee APS layer and ZDO operations
 
 **Functions:**
 - Handle APS frame transmission/reception
@@ -388,8 +388,8 @@ MAC Frame Type Detection
     │              ↓
     │          Determine Payload Type
     │              ├─ Beacon → Process beacon (future)
-    │              ├─ ZigBee NWK → [NWKHandler.onZigbeeNWKFrame()]
-    │              └─ ZigBee NWKGP → [NWKGPHandler.onZigbeeNWKGPFrame()]
+    │              ├─ Zigbee NWK → [NWKHandler.onZigbeeNWKFrame()]
+    │              └─ Zigbee NWKGP → [NWKGPHandler.onZigbeeNWKGPFrame()]
     │
     └─ MAC Beacon → Process beacon (future)
 

@@ -11,111 +11,111 @@ export const enum ZigbeeNWKConsts {
     PAYLOAD_MIN_SIZE = 86,
     PAYLOAD_MAX_SIZE = 108,
 
-    //---- ZigBee version numbers.
-    /** Re: 053474r06ZB_TSC-ZigBeeSpecification.pdf */
+    //---- Zigbee version numbers.
+    /** Re: 053474r06ZB_TSC-ZigbeeSpecification.pdf */
     // VERSION_2004 = 1,
-    /** Re: 053474r17ZB_TSC-ZigBeeSpecification.pdf */
+    /** Re: 053474r17ZB_TSC-ZigbeeSpecification.pdf */
     VERSION_2007 = 2,
     VERSION_GREEN_POWER = 3,
 
-    //---- ZigBee NWK Route Options Flags
-    /** ZigBee 2004 only. */
+    //---- Zigbee NWK Route Options Flags
+    /** Zigbee 2004 only. */
     // ROUTE_OPTION_REPAIR = 0x80,
-    /** ZigBee 2006 and later */
+    /** Zigbee 2006 and later */
     ROUTE_OPTION_MCAST = 0x40,
-    /** ZigBee 2007 and later (route request only). */
+    /** Zigbee 2007 and later (route request only). */
     ROUTE_OPTION_DEST_EXT = 0x20,
-    /** ZigBee 2007 and later (route request only). */
+    /** Zigbee 2007 and later (route request only). */
     ROUTE_OPTION_MANY_MASK = 0x18,
-    /** ZigBee 2007 and layer (route reply only). */
+    /** Zigbee 2007 and layer (route reply only). */
     ROUTE_OPTION_RESP_EXT = 0x20,
-    /** ZigBee 2007 and later (route reply only). */
+    /** Zigbee 2007 and later (route reply only). */
     ROUTE_OPTION_ORIG_EXT = 0x10,
-    /* Many-to-One modes, ZigBee 2007 and later (route request only). */
+    /* Many-to-One modes, Zigbee 2007 and later (route request only). */
     ROUTE_OPTION_MANY_NONE = 0x00,
-    /* Many-to-One modes, ZigBee 2007 and later (route request only). */
+    /* Many-to-One modes, Zigbee 2007 and later (route request only). */
     ROUTE_OPTION_MANY_REC = 0x01,
-    /* Many-to-One modes, ZigBee 2007 and later (route request only). */
+    /* Many-to-One modes, Zigbee 2007 and later (route request only). */
     ROUTE_OPTION_MANY_NOREC = 0x02,
 
-    //---- ZigBee NWK Route Options Flags
-    // CMD_ROUTE_OPTION_REPAIR = 0x80, /* ZigBee 2004 only. */
-    // CMD_ROUTE_OPTION_MCAST = 0x40, /* ZigBee 2006 and later, @deprecated */
-    CMD_ROUTE_OPTION_DEST_EXT = 0x20 /* ZigBee 2007 and later (route request only). */,
-    CMD_ROUTE_OPTION_MANY_MASK = 0x18 /* ZigBee 2007 and later (route request only). */,
-    CMD_ROUTE_OPTION_RESP_EXT = 0x20 /* ZigBee 2007 and layer (route reply only). */,
-    CMD_ROUTE_OPTION_ORIG_EXT = 0x10 /* ZigBee 2007 and later (route reply only). */,
+    //---- Zigbee NWK Route Options Flags
+    // CMD_ROUTE_OPTION_REPAIR = 0x80, /* Zigbee 2004 only. */
+    // CMD_ROUTE_OPTION_MCAST = 0x40, /* Zigbee 2006 and later, @deprecated */
+    CMD_ROUTE_OPTION_DEST_EXT = 0x20 /* Zigbee 2007 and later (route request only). */,
+    CMD_ROUTE_OPTION_MANY_MASK = 0x18 /* Zigbee 2007 and later (route request only). */,
+    CMD_ROUTE_OPTION_RESP_EXT = 0x20 /* Zigbee 2007 and layer (route reply only). */,
+    CMD_ROUTE_OPTION_ORIG_EXT = 0x10 /* Zigbee 2007 and later (route reply only). */,
 
-    //---- Many-to-One modes, ZigBee 2007 and later (route request only)
+    //---- Many-to-One modes, Zigbee 2007 and later (route request only)
     CMD_ROUTE_OPTION_MANY_NONE = 0x00,
     CMD_ROUTE_OPTION_MANY_REC = 0x01,
     CMD_ROUTE_OPTION_MANY_NOREC = 0x02,
 
-    //----  ZigBee NWK Leave Options Flags
+    //----  Zigbee NWK Leave Options Flags
     CMD_LEAVE_OPTION_REMOVE_CHILDREN = 0x80,
     CMD_LEAVE_OPTION_REQUEST = 0x40,
     CMD_LEAVE_OPTION_REJOIN = 0x20,
 
-    //---- ZigBee NWK Link Status Options
+    //---- Zigbee NWK Link Status Options
     CMD_LINK_OPTION_LAST_FRAME = 0x40,
     CMD_LINK_OPTION_FIRST_FRAME = 0x20,
     CMD_LINK_OPTION_COUNT_MASK = 0x1f,
 
-    //---- ZigBee NWK Link Status cost fields
+    //---- Zigbee NWK Link Status cost fields
     CMD_LINK_INCOMING_COST_MASK = 0x07,
     CMD_LINK_OUTGOING_COST_MASK = 0x70,
 
-    //---- ZigBee NWK Report Options
+    //---- Zigbee NWK Report Options
     CMD_NWK_REPORT_COUNT_MASK = 0x1f,
     CMD_NWK_REPORT_ID_MASK = 0xe0,
     CMD_NWK_REPORT_ID_PAN_CONFLICT = 0x00,
 
-    //---- ZigBee NWK Update Options
+    //---- Zigbee NWK Update Options
     CMD_NWK_UPDATE_COUNT_MASK = 0x1f,
     CMD_NWK_UPDATE_ID_MASK = 0xe0,
     CMD_NWK_UPDATE_ID_PAN_UPDATE = 0x00,
 
-    //---- ZigBee NWK Values of the Parent Information Bitmask (Table 3.47)
+    //---- Zigbee NWK Values of the Parent Information Bitmask (Table 3.47)
     CMD_ED_TIMEO_RSP_PRNT_INFO_MAC_DATA_POLL_KEEPAL_SUPP = 0x01,
     CMD_ED_TIMEO_RSP_PRNT_INFO_ED_TIMOU_REQ_KEEPAL_SUPP = 0x02,
     CMD_ED_TIMEO_RSP_PRNT_INFO_PWR_NEG_SUPP = 0x04,
 
-    //---- ZigBee NWK Link Power Delta Options
+    //---- Zigbee NWK Link Power Delta Options
     CMD_NWK_LINK_PWR_DELTA_TYPE_MASK = 0x03,
 
     //---- MAC Association Status extension
     ASSOC_STATUS_ADDR_CONFLICT = 0xf0,
 
-    //---- ZigBee NWK FCF fields
+    //---- Zigbee NWK FCF fields
     FCF_FRAME_TYPE = 0x0003,
     FCF_VERSION = 0x003c,
     FCF_DISCOVER_ROUTE = 0x00c0,
-    /** ZigBee 2006 and Later */
+    /** Zigbee 2006 and Later */
     FCF_MULTICAST = 0x0100,
     FCF_SECURITY = 0x0200,
-    /** ZigBee 2006 and Later */
+    /** Zigbee 2006 and Later */
     FCF_SOURCE_ROUTE = 0x0400,
-    /** ZigBee 2006 and Later */
+    /** Zigbee 2006 and Later */
     FCF_EXT_DEST = 0x0800,
-    /** ZigBee 2006 and Later */
+    /** Zigbee 2006 and Later */
     FCF_EXT_SOURCE = 0x1000,
-    /** ZigBee PRO r21 */
+    /** Zigbee PRO r21 */
     FCF_END_DEVICE_INITIATOR = 0x2000,
 
-    //---- ZigBee NWK Multicast Control fields - ZigBee 2006 and later
+    //---- Zigbee NWK Multicast Control fields - Zigbee 2006 and later
     MCAST_MODE = 0x03,
     MCAST_RADIUS = 0x1c,
     MCAST_MAX_RADIUS = 0xe0,
 }
 
-/** ZigBee NWK FCF Frame Types */
+/** Zigbee NWK FCF Frame Types */
 export const enum ZigbeeNWKFrameType {
     DATA = 0x00,
     CMD = 0x01,
     INTERPAN = 0x03,
 }
 
-/** ZigBee NWK Discovery Modes. */
+/** Zigbee NWK Discovery Modes. */
 export const enum ZigbeeNWKRouteDiscovery {
     SUPPRESS = 0x0000,
     ENABLE = 0x0001,
@@ -133,7 +133,7 @@ export const enum ZigbeeNWKRelayType {
     RELAY_DOWNSTREAM = 2,
 }
 
-/** ZigBee NWK Command Types */
+/** Zigbee NWK Command Types */
 export const enum ZigbeeNWKCommandId {
     /* Route Request Command. */
     ROUTE_REQ = 0x01,
@@ -141,19 +141,19 @@ export const enum ZigbeeNWKCommandId {
     ROUTE_REPLY = 0x02,
     /* Network Status Command. */
     NWK_STATUS = 0x03,
-    /* Leave Command. ZigBee 2006 and Later */
+    /* Leave Command. Zigbee 2006 and Later */
     LEAVE = 0x04,
-    /* Route Record Command.  ZigBee 2006 and later */
+    /* Route Record Command.  Zigbee 2006 and later */
     ROUTE_RECORD = 0x05,
-    /* Rejoin Request Command. ZigBee 2006 and later */
+    /* Rejoin Request Command. Zigbee 2006 and later */
     REJOIN_REQ = 0x06,
-    /* Rejoin Response Command. ZigBee 2006 and later */
+    /* Rejoin Response Command. Zigbee 2006 and later */
     REJOIN_RESP = 0x07,
-    /* Link Status Command. ZigBee 2007 and later */
+    /* Link Status Command. Zigbee 2007 and later */
     LINK_STATUS = 0x08,
-    /* Network Report Command. ZigBee 2007 and later */
+    /* Network Report Command. Zigbee 2007 and later */
     NWK_REPORT = 0x09,
-    /* Network Update Command. ZigBee 2007 and later */
+    /* Network Update Command. Zigbee 2007 and later */
     NWK_UPDATE = 0x0a,
     /* Network End Device Timeout Request Command. r21 */
     ED_TIMEOUT_REQUEST = 0x0b,
@@ -250,16 +250,16 @@ export type ZigbeeNWKFrameControl = {
     frameType: ZigbeeNWKFrameType;
     protocolVersion: number;
     discoverRoute: ZigbeeNWKRouteDiscovery;
-    /** ZigBee 2006 and Later @deprecated */
+    /** Zigbee 2006 and Later @deprecated */
     multicast?: boolean;
     security: boolean;
-    /** ZigBee 2006 and Later */
+    /** Zigbee 2006 and Later */
     sourceRoute: boolean;
-    /** ZigBee 2006 and Later */
+    /** Zigbee 2006 and Later */
     extendedDestination: boolean;
-    /** ZigBee 2006 and Later */
+    /** Zigbee 2006 and Later */
     extendedSource: boolean;
-    /** ZigBee PRO r21 */
+    /** Zigbee PRO r21 */
     endDeviceInitiator: boolean;
 };
 
@@ -284,8 +284,8 @@ export type ZigbeeNWKHeader = {
 export type ZigbeeNWKPayload = Buffer;
 
 /**
- * Decode ZigBee NWK frame control field.
- * HOT PATH: Called for every incoming ZigBee NWK frame.
+ * Decode Zigbee NWK frame control field.
+ * HOT PATH: Called for every incoming Zigbee NWK frame.
  */
 /* @__INLINE__ */
 export function decodeZigbeeNWKFrameControl(data: Buffer, offset: number): [ZigbeeNWKFrameControl, offset: number] {

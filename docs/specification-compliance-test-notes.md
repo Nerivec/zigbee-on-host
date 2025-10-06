@@ -1,8 +1,8 @@
-# ZigBee Specification Compliance Test Notes
+# Zigbee Specification Compliance Test Notes
 
 ## Overview
 
-The `specification-compliance.test.ts` file contains 101 comprehensive tests that verify the ZigBee stack's adherence to official specifications. These tests are **independent of the driver** and test only the handlers and context components against specification requirements.
+The `specification-compliance.test.ts` file contains 101 comprehensive tests that verify the Zigbee stack's adherence to official specifications. These tests are **independent of the driver** and test only the handlers and context components against specification requirements.
 
 ## Test Coverage
 
@@ -13,7 +13,7 @@ The `specification-compliance.test.ts` file contains 101 comprehensive tests tha
 - Association procedures (§6.3.3)
 - Frame size limits (§6.7)
 
-### ZigBee Network Layer (34 tests)
+### Zigbee Network Layer (34 tests)
 - NWK Frame Control Field (§3.3.1)
 - Frame Control Bits (§3.3.1.1)
 - Radius handling (§3.3.1.8)
@@ -26,7 +26,7 @@ The `specification-compliance.test.ts` file contains 101 comprehensive tests tha
 - Sequence numbers (§3.3.1.10)
 - Frame size limits (§3.7)
 
-### ZigBee Application Support Layer (17 tests)
+### Zigbee Application Support Layer (17 tests)
 - APS Frame Control Field (§2.2.5)
 - APS counter management (§2.2.5.1)
 - Security commands (§4.4)
@@ -64,7 +64,7 @@ The `specification-compliance.test.ts` file contains 101 comprehensive tests tha
 
 All tests are derived from:
 - **IEEE 802.15.4-2020**: Wireless Medium Access Control (MAC) and Physical Layer (PHY) Specifications
-- **ZigBee Specification (05-3474-23)**: Revision 23.1
+- **Zigbee Specification (05-3474-23)**: Revision 23.1
 - **Base Device Behavior (16-02828-012)**: Version 3.0.1
 - **ZCL Specification (07-5123)**: Revision 8
 - **Green Power Specification (14-0563-19)**: Version 1.1.2
@@ -73,7 +73,7 @@ All tests are derived from:
 
 **Status**: ✅ All 101 tests PASS
 
-The current codebase adheres to the ZigBee specification for all tested requirements.
+The current codebase adheres to the Zigbee specification for all tested requirements.
 
 ## Potential Areas of Non-Compliance (Future Work)
 
@@ -85,55 +85,55 @@ Based on code analysis, the following areas may require attention in future impl
 - **Reference**: `src/zigbee-stack/mac-handler.ts:processDataReq()`
 - **Impact**: Low (current timeout is reasonable)
 
-### 2. Route Discovery Timing (ZigBee §3.4.1.2)
+### 2. Route Discovery Timing (Zigbee §3.4.1.2)
 - **Specification**: Specific timing requirements for route request/reply
 - **Current**: Timing and retry mechanisms may not fully comply
 - **Reference**: `src/zigbee-stack/nwk-handler.ts:sendRouteReq()`
 - **Impact**: Low (functional but may not meet exact timing)
 
-### 3. Link Status Periodicity (ZigBee §3.6.6.2)
+### 3. Link Status Periodicity (Zigbee §3.6.6.2)
 - **Specification**: Link status SHALL be sent every `nwkLinkStatusPeriod`
 - **Current**: Uses 15000ms with jitter
 - **Reference**: `src/zigbee-stack/nwk-handler.ts` (lines 41-42)
 - **Impact**: None (15s is within acceptable range)
 
-### 4. Many-to-One Route Request Rate Limiting (ZigBee §3.4.1.6)
+### 4. Many-to-One Route Request Rate Limiting (Zigbee §3.4.1.6)
 - **Specification**: MTORR SHALL NOT be sent more frequently than `nwkRouteDiscoveryTime`
 - **Current**: Uses 10000ms minimum time
 - **Reference**: `src/zigbee-stack/nwk-handler.ts` (line 56)
 - **Impact**: Low (10s is reasonable)
 
-### 5. APS Acknowledgment Timing (ZigBee §2.2.9.1)
+### 5. APS Acknowledgment Timing (Zigbee §2.2.9.1)
 - **Specification**: APS ACKs SHALL be sent within `apsAckWaitDuration`
 - **Current**: ACKs sent immediately without timing verification
 - **Reference**: `src/zigbee-stack/aps-handler.ts:sendACK()`
 - **Impact**: None (immediate is compliant)
 
-### 6. Security Frame Counter Persistence (ZigBee §4.3.1.2)
+### 6. Security Frame Counter Persistence (Zigbee §4.3.1.2)
 - **Specification**: Frame counters MUST be persisted and NOT repeat after reboot
 - **Current**: Relies on save/restore mechanism
 - **Reference**: `src/zigbee-stack/stack-context.ts`
 - **Impact**: None (save mechanism handles this)
 
-### 7. Install Code Policy Enforcement (ZigBee §4.6.3.4) ⚠️
+### 7. Install Code Policy Enforcement (Zigbee §4.6.3.4) ⚠️
 - **Specification**: When REQUIRED, devices MUST use install codes
 - **Current**: Policy defined but enforcement incomplete
 - **Reference**: `src/zigbee-stack/stack-context.ts:InstallCodePolicy`
 - **Status**: Work in progress (per AGENTS.md)
 
-### 8. Application Link Key Establishment (ZigBee §4.6.3) ⚠️
+### 8. Application Link Key Establishment (Zigbee §4.6.3) ⚠️
 - **Specification**: Trust Center SHALL establish app link keys per policy
 - **Current**: Policy defined but implementation pending
 - **Reference**: `src/zigbee-stack/stack-context.ts:ApplicationKeyRequestPolicy`
 - **Status**: Work in progress (per AGENTS.md)
 
-### 9. Route Repair Mechanism (ZigBee §3.4.1.3) ⚠️
+### 9. Route Repair Mechanism (Zigbee §3.4.1.3) ⚠️
 - **Specification**: Route repair SHALL be initiated upon route failure
 - **Current**: Basic failure tracking exists
 - **Reference**: `src/zigbee-stack/nwk-handler.ts:markRouteFailure()`
 - **Status**: Work in progress (per AGENTS.md)
 
-### 10. Network Key Rotation (ZigBee §4.6.3.3) ⚠️
+### 10. Network Key Rotation (Zigbee §4.6.3.3) ⚠️
 - **Specification**: Network key SHALL be rotated per `networkKeyUpdatePeriod`
 - **Current**: Policy supports it but automatic rotation not implemented
 - **Reference**: `src/zigbee-stack/stack-context.ts:networkKeyUpdatePeriod`
@@ -147,7 +147,7 @@ These tests follow a **specification-first approach**:
 2. **Use specification values**: Test assertions use exact values from specification tables
 3. **Reference specification sections**: Each test documents the relevant specification section
 4. **Independent testing**: Tests use only handlers and context, not the full driver
-5. **Valid test data**: Uses payloads from `test/data.ts` which are from real ZigBee networks
+5. **Valid test data**: Uses payloads from `test/data.ts` which are from real Zigbee networks
 
 ## Running the Tests
 
@@ -164,7 +164,7 @@ npm test -- test/specification-compliance.test.ts -t "MAC Layer"
 
 ## Maintenance
 
-When updating the ZigBee stack:
+When updating the Zigbee stack:
 
 1. Run these tests first to ensure specification compliance is maintained
 2. If a test fails, check if:

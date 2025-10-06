@@ -54,7 +54,7 @@ This project follows a strict layered architecture:
 └─────────────────────────────────────────────────┘
                       ↓
 ┌─────────────────────────────────────────────────┐
-│      ZigBee Stack Handlers (src/zigbee-stack/)  │
+│      Zigbee Stack Handlers (src/zigbee-stack/)  │
 │  - MACHandler (MAC layer operations)            │
 │  - NWKHandler (Network layer operations)        │
 │  - NWKGPHandler (Green Power operations)        │
@@ -63,7 +63,7 @@ This project follows a strict layered architecture:
 └─────────────────────────────────────────────────┘
                       ↓
 ┌─────────────────────────────────────────────────┐
-│   ZigBee Protocol Utilities (src/zigbee/)       │
+│   Zigbee Protocol Utilities (src/zigbee/)       │
 │  - MAC (IEEE 802.15.4)                          │
 │  - NWK (Network Layer)                          │
 │  - NWK GP (Green Power)                         │
@@ -88,9 +88,9 @@ This project follows a strict layered architecture:
 ### Directory Structure Rules
 
 - **src/drivers/**: RCP communication and main adapter logic
-- **src/zigbee-stack/**: ZigBee stack handlers (MAC, NWK, APS, GP, context)
+- **src/zigbee-stack/**: Zigbee stack handlers (MAC, NWK, APS, GP, context)
 - **src/spinel/**: Spinel protocol implementation (OpenThread RCP)
-- **src/zigbee/**: ZigBee protocol utilities (frame encoding/decoding)
+- **src/zigbee/**: Zigbee protocol utilities (frame encoding/decoding)
 - **src/utils/**: Shared utilities (minimal)
 - **src/dev/**: Development tools (excluded from production builds)
 - **test/**: Test files matching source structure
@@ -290,7 +290,7 @@ nli: number;
 
 ### Critical Performance Rules
 
-This is a performance-critical ZigBee stack. Always follow these patterns:
+This is a performance-critical Zigbee stack. Always follow these patterns:
 
 #### 1. No Expensive Operations in Hot Paths
 
@@ -556,7 +556,7 @@ const buffer = Buffer.allocUnsafe(size); // for temporary buffers
 const buffer = Buffer.alloc(size); // for zero-initialized buffers
 const buffer = Buffer.from(array); // from existing data
 
-// Read operations (little-endian default in ZigBee)
+// Read operations (little-endian default in Zigbee)
 const uint8 = buffer.readUInt8(offset);
 const uint16 = buffer.readUInt16LE(offset);
 const uint32 = buffer.readUInt32LE(offset);
@@ -649,7 +649,7 @@ constructor(callbacks: StackCallbacks, streamRawConfig: StreamRawConfig, netPara
 this.#callbacks.onDeviceJoined(source16, source64, capabilities);
 ```
 
-## ZigBee-Specific Patterns
+## Zigbee-Specific Patterns
 
 ### Address Handling
 

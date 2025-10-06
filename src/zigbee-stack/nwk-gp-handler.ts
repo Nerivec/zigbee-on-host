@@ -13,7 +13,7 @@ export interface NWKGPHandlerCallbacks {
 }
 
 /**
- * NWK GP Handler - ZigBee Green Power Network Layer
+ * NWK GP Handler - Zigbee Green Power Network Layer
  */
 export class NWKGPHandler {
     readonly #callbacks: NWKGPHandlerCallbacks;

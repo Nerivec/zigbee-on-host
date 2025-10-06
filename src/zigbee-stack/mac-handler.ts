@@ -278,7 +278,7 @@ export class MACHandler {
      *       - Implementation stores in pendingAssociations for DATA_REQ ✅
      *       - Respects macResponseWaitTime via timestamp check ✅
      * - ⚠️  TIMING: Uses Date.now() for timestamp - should align with MAC_INDIRECT_TRANSMISSION_TIMEOUT
-     * - ✅ Sends TRANSPORT_KEY_NWK after successful association (ZigBee-specific)
+     * - ✅ Sends TRANSPORT_KEY_NWK after successful association (Zigbee-specific)
      * - ✅ Uses MAC capabilities to determine device type correctly
      *
      * @param data Command data
@@ -385,19 +385,19 @@ export class MACHandler {
      * - ✅ Uses destAddrMode=NONE (beacons have no destination)
      * - ✅ Uses sourceAddrMode=SHORT with coordinator address
      * - ⚠️  SUPERFRAME SPEC VALUES:
-     *       - beaconOrder=0x0f: Non-beacon enabled PAN ✅ (correct for ZigBee PRO)
+     *       - beaconOrder=0x0f: Non-beacon enabled PAN ✅ (correct for Zigbee PRO)
      *       - superframeOrder=0x0f: Matches beaconOrder ✅
      *       - finalCAPSlot=0x0f: Comment says "XXX: value from sniff, matches above"
      *         * Should be calculated based on GTS allocation per spec
-     *         * Value 0x0f means no GTS, which is typical for ZigBee ✅
+     *         * Value 0x0f means no GTS, which is typical for Zigbee ✅
      * - ✅ Sets batteryExtension=false (coordinator is mains powered)
      * - ✅ Sets panCoordinator=true (this is the coordinator)
      * - ✅ Uses associationPermit flag from context
-     * - ✅ Sets gtsInfo.permit=false (no GTS support - typical for ZigBee)
+     * - ✅ Sets gtsInfo.permit=false (no GTS support - typical for Zigbee)
      * - ✅ Empty pendAddr (no pending address fields)
-     * - ✅ ZigBee Beacon Payload:
+     * - ✅ Zigbee Beacon Payload:
      *       - protocolId=ZIGBEE_BEACON_PROTOCOL_ID (0x00) ✅
-     *       - profile=0x2 (ZigBee PRO) ✅
+     *       - profile=0x2 (Zigbee PRO) ✅
      *       - version=VERSION_2007 ✅
      *       - routerCapacity=true ✅
      *       - deviceDepth=0 (coordinator) ✅
@@ -447,7 +447,7 @@ export class MACHandler {
             },
             encodeMACZigbeeBeacon({
                 protocolId: ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_ID,
-                profile: 0x2, // ZigBee PRO
+                profile: 0x2, // Zigbee PRO
                 version: ZigbeeNWKConsts.VERSION_2007,
                 routerCapacity: true,
                 deviceDepth: 0, // coordinator
