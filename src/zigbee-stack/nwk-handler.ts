@@ -914,6 +914,17 @@ export class NWKHandler {
 
     /**
      * 05-3474-R #3.4.3
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Correctly decodes status code
+     * - ✅ Handles destination16 parameter for routing failures
+     * - ✅ Marks route as failed and triggers MTORR
+     * - ✅ Logs network status issues
+     * - ⚠️ INCOMPLETE: Route repair not fully implemented (marked as WIP)
+     * - ❌ NOT IMPLEMENTED: TLV processing (R23)
+     * - ❌ NOT IMPLEMENTED: Network address update notification
+     *
+     * IMPACT: Receives status but minimal action beyond route marking
      */
     public processStatus(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const status = data.readUInt8(offset);
@@ -956,6 +967,12 @@ export class NWKHandler {
 
     /**
      * 05-3474-R #3.4.3
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Sends to appropriate destination (broadcast or unicast)
+     * - ✅ Includes error codes (NO_ROUTE_AVAILABLE, LINK_FAILURE, etc.)
+     * - ✅ No security applied (per spec)
+     * - ✅ Optional destination16 for routing failures/address conflicts
      *
      * @param requestSource16
      * @param status
@@ -1482,8 +1499,19 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-R #3.4.9
-     *  deprecated in R23, should no longer be sent by R23 devices
+     * 05-3474-R #3.4.9 (deprecated in R23)
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Correctly decodes options, EPID, updateID, panID
+     * - ✅ Handles PAN ID conflict reports
+     * - ✅ Logs report information
+     * - ❌ NOT IMPLEMENTED: Channel update action
+     * - ❌ NOT IMPLEMENTED: Network update propagation
+     * - ❌ NOT IMPLEMENTED: PAN ID conflict resolution
+     * - ❌ NOT IMPLEMENTED: TLV support (R23)
+     *
+     * NOTE: Deprecated in R23, should no longer be sent by R23 devices
+     * IMPACT: Coordinator doesn't act on network reports
      */
     public processReport(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const options = data.readUInt8(offset);
@@ -1518,6 +1546,17 @@ export class NWKHandler {
 
     /**
      * 05-3474-R #3.4.10
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Correctly decodes options, EPID, updateID, panID
+     * - ✅ Handles PAN update information
+     * - ✅ Logs update information
+     * - ❌ NOT IMPLEMENTED: Channel update if updateID is newer
+     * - ❌ NOT IMPLEMENTED: Network parameter updates
+     * - ❌ NOT IMPLEMENTED: Update propagation
+     * - ❌ NOT IMPLEMENTED: TLV support (R23)
+     *
+     * IMPACT: Coordinator doesn't act on network updates
      */
     public processUpdate(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const options = data.readUInt8(offset);
@@ -1555,6 +1594,18 @@ export class NWKHandler {
 
     /**
      * 05-3474-R #3.4.11
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Correctly decodes requested timeout (0-14 scale)
+     * - ✅ Validates device exists
+     * - ✅ Returns appropriate status
+     * - ⚠️ INCOMPLETE: Accepts requested timeout without validation/policy
+     * - ❌ NOT IMPLEMENTED: Timeout table management
+     * - ❌ NOT IMPLEMENTED: Keep-alive mechanism
+     * - ❌ NOT IMPLEMENTED: Timeout expiration handling
+     * - ❌ NOT IMPLEMENTED: TLV support (R23)
+     *
+     * IMPACT: Timeout values accepted but not enforced
      */
     public async processEdTimeoutRequest(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
         // 0 => 10 seconds
@@ -1593,6 +1644,15 @@ export class NWKHandler {
 
     /**
      * 05-3474-R #3.4.12
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Correctly decodes status (SUCCESS, INCORRECT_VALUE, UNSUPPORTED_FEATURE)
+     * - ✅ Decodes parent info (keepalive support, power negotiation)
+     * - ✅ Logs timeout response information
+     * - ❌ NOT IMPLEMENTED: Action on response (only logs)
+     * - ❌ NOT IMPLEMENTED: TLV support (R23)
+     *
+     * NOTE: Coordinator typically doesn't receive this (sent to end devices)
      */
     public processEdTimeoutResponse(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         // SUCCESS 0x00 The End Device Timeout Request message was accepted by the parent.
@@ -1619,6 +1679,12 @@ export class NWKHandler {
     /**
      * 05-3474-R #3.4.12
      *
+     * SPEC COMPLIANCE:
+     * - ✅ Includes status and timeout value
+     * - ✅ Unicast to requester
+     * - ✅ Applies NWK security
+     * - ⚠️ TODO: parentInfo flags need proper implementation
+     *
      * @param requestDest16
      * @param requestedTimeout Requested timeout enumeration [0-14] (mapping to actual timeout) @see processEdTimeoutRequest
      * @returns
@@ -1644,6 +1710,16 @@ export class NWKHandler {
 
     /**
      * 05-3474-R #3.4.13
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Decodes transmit power delta
+     * - ✅ Logs power delta information
+     * - ✅ Extracts nested TLVs (if present)
+     * - ❌ NOT IMPLEMENTED: Power adjustment action
+     * - ❌ NOT IMPLEMENTED: Feedback mechanism
+     * - ❌ NOT IMPLEMENTED: R23 TLV processing
+     *
+     * IMPACT: Receives command but doesn't adjust transmit power
      */
     public processLinkPwrDelta(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const options = data.readUInt8(offset);

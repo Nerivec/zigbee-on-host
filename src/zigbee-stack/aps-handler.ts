@@ -1135,6 +1135,17 @@ export class APSHandler {
 
     /**
      * 05-3474-R #4.4.11.3
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Correctly decodes target IEEE address (childInfo)
+     * - ✅ Validates source and logs removal
+     * - ❌ NOT IMPLEMENTED: Actual device removal (only logs)
+     * - ❌ MISSING: Should initiate LEAVE sequence to target device
+     * - ❌ MISSING: Should notify parent to remove child
+     * - ❌ MISSING: Parent router role handling
+     *
+     * IMPLEMENTATION GAP: Coordinator receives command but doesn't act on it.
+     * Parent routers should send LEAVE to child and UPDATE_DEVICE(status 0x02) to TC.
      */
     public processRemoveDevice(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const target = data.readBigUInt64LE(offset);
@@ -1151,6 +1162,13 @@ export class APSHandler {
 
     /**
      * 05-3474-R #4.4.11.3
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Includes target IEEE address
+     * - ✅ Applies NWK + APS LOAD encryption
+     * - ✅ Unicast to parent router
+     *
+     * NOTE: Trust Center sends this to parent router, which should then remove child
      *
      * @param nwkDest16 parent
      * @param target64
@@ -1288,6 +1306,14 @@ export class APSHandler {
 
     /**
      * 05-3474-R #4.4.11.5
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Correctly decodes sequence number
+     * - ❌ NOT IMPLEMENTED: Actual key switching logic (CRITICAL)
+     * - ❌ NOT IMPLEMENTED: Frame counter reset after key switch
+     * - ❌ NOT IMPLEMENTED: Activation of new network key
+     *
+     * IMPACT: Network key rotation is non-functional - security risk for long-term deployments
      */
     public processSwitchKey(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const seqNum = data.readUInt8(offset);
@@ -1304,6 +1330,12 @@ export class APSHandler {
 
     /**
      * 05-3474-R #4.4.11.5
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Includes sequence number identifying network key
+     * - ✅ Broadcast or unicast delivery
+     * - ✅ Applies NWK security only (not APS)
+     * - ❌ NOT IMPLEMENTED: Integration with actual key switching mechanism
      *
      * @param nwkDest16
      * @param seqNum SHALL contain the sequence number identifying the network key to be made active.
@@ -1328,6 +1360,17 @@ export class APSHandler {
 
     /**
      * 05-3474-R #4.4.11.6
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Correctly decodes destination address
+     * - ✅ Extracts tunneled APS command frame
+     * - ✅ Validates structure
+     * - ❌ NOT IMPLEMENTED: Tunnel forwarding (only logs)
+     * - ❌ MISSING: Should extract and forward tunneled command to destination
+     * - ❌ MISSING: Security context validation
+     *
+     * IMPLEMENTATION: TC sends TUNNEL for nested joins (works), but coordinator
+     * can't relay tunneled frames from routers (incomplete).
      */
     public processTunnel(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const destination = data.readBigUInt64LE(offset);
@@ -1346,6 +1389,13 @@ export class APSHandler {
 
     /**
      * 05-3474-R #4.4.11.6
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Includes destination64
+     * - ✅ Encapsulates APS command frame
+     * - ✅ Applies APS TRANSPORT encryption
+     * - ✅ NO ACK request (per spec exception - TUNNEL is the only APS command without ACK)
+     * - ✅ Used correctly for nested device joins (TRANSPORT_KEY delivery through routers)
      *
      * @param nwkDest16
      * @param destination64 SHALL be the 64-bit extended address of the device that is to receive the tunneled command
@@ -1571,7 +1621,18 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.9
+     * R23 FEATURE - 05-3474-R #4.4.11.9
+     *
+     * SPEC COMPLIANCE:
+     * - ⚠️ R23 feature with minimal implementation
+     * - ✅ Structure parsing exists (destination64)
+     * - ❌ NOT IMPLEMENTED: Message relaying functionality
+     * - ❌ NOT IMPLEMENTED: TLV processing
+     * - ❌ NOT IMPLEMENTED: Fragment handling
+     *
+     * USE CASES: ZVD (Zigbee Virtual Devices), Zigbee Direct - NOT SUPPORTED
+     *
+     * NOTE: Non-critical for ZigBee 3.0 PRO networks
      */
     public processRelayMessageDownstream(
         data: Buffer,
@@ -1601,7 +1662,18 @@ export class APSHandler {
     // TODO: send RELAY_MESSAGE_DOWNSTREAM
 
     /**
-     * 05-3474-R #4.4.11.10
+     * R23 FEATURE - 05-3474-R #4.4.11.10
+     *
+     * SPEC COMPLIANCE:
+     * - ⚠️ R23 feature with minimal implementation
+     * - ✅ Structure parsing exists (source64)
+     * - ❌ NOT IMPLEMENTED: Message relaying functionality
+     * - ❌ NOT IMPLEMENTED: TLV processing
+     * - ❌ NOT IMPLEMENTED: Fragment handling
+     *
+     * USE CASES: ZVD (Zigbee Virtual Devices), Zigbee Direct - NOT SUPPORTED
+     *
+     * NOTE: Non-critical for ZigBee 3.0 PRO networks
      */
     public processRelayMessageUpstream(
         data: Buffer,
