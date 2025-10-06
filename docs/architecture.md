@@ -344,6 +344,7 @@ public getDevice(address: bigint | number): DeviceTableEntry | undefined
 public getAddress64(address16: number): bigint | undefined
 public getAddress16(address64: bigint): number | undefined
 public async saveState(): Promise<void>
+public async readNetworkState(): Promise<NetworkParameters | undefined>
 public async loadState(): Promise<void>
 
 // Trust Center operations

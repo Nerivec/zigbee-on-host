@@ -32,7 +32,7 @@ interface ParsedDevice extends Omit<DeviceTableEntry, "capabilities" | "recentLQ
  * Top-level parsed state structure with final values ready to use.
  * All values parsed directly from buffers during TLV reading.
  */
-interface ParsedState extends NetworkParameters {
+export interface ParsedState extends NetworkParameters {
     // File metadata
     version?: number;
 
