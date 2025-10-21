@@ -32,9 +32,9 @@ export const enum ZigbeeAPSConsts {
 
     FCF_FRAME_TYPE = 0x03,
     FCF_DELIVERY_MODE = 0x0c,
-    /** ZigBee 2004 and earlier.  */
+    /** Zigbee 2004 and earlier.  */
     // FCF_INDIRECT_MODE = 0x10,
-    /** ZigBee 2007 and later.    */
+    /** Zigbee 2007 and later.    */
     FCF_ACK_FORMAT = 0x10,
     FCF_SECURITY = 0x20,
     FCF_ACK_REQ = 0x40,
@@ -54,7 +54,7 @@ export const enum ZigbeeAPSDeliveryMode {
     UNICAST = 0x00,
     // INDIRECT = 0x01, /** removed in Zigbee 2006 and later */
     BCAST = 0x02,
-    /** ZigBee 2006 and later */
+    /** Zigbee 2006 and later */
     GROUP = 0x03,
 }
 
@@ -122,7 +122,13 @@ export type ZigbeeAPSHeader = {
 
 export type ZigbeeAPSPayload = Buffer;
 
+/**
+ * Decode Zigbee APS frame control field.
+ * HOT PATH: Called for every incoming Zigbee APS frame.
+ */
+/* @__INLINE__ */
 export function decodeZigbeeAPSFrameControl(data: Buffer, offset: number): [ZigbeeAPSFrameControl, offset: number] {
+    // HOT PATH: Extract APS FCF fields with bitwise operations
     const fcf = data.readUInt8(offset);
     offset += 1;
 

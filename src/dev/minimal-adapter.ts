@@ -2,10 +2,13 @@ import { createSocket, type Socket as DgramSocket } from "node:dgram";
 import { Socket } from "node:net";
 import { setTimeout } from "node:timers/promises";
 import { SerialPort } from "serialport";
-import { type NetworkParameters, OTRCPDriver } from "../drivers/ot-rcp-driver.js";
+import { OTRCPDriver } from "../drivers/ot-rcp-driver.js";
 import type { StreamRawConfig } from "../spinel/spinel.js";
 import { logger } from "../utils/logger.js";
+import type { MACHeader } from "../zigbee/mac.js";
 import type { ZigbeeAPSHeader, ZigbeeAPSPayload } from "../zigbee/zigbee-aps.js";
+import type { ZigbeeNWKGPHeader } from "../zigbee/zigbee-nwkgp.js";
+import type { NetworkParameters } from "../zigbee-stack/stack-context.js";
 import { createWiresharkZEPFrame, DEFAULT_WIRESHARK_IP, DEFAULT_ZEP_UDP_PORT } from "./wireshark.js";
 
 const NS = "minimal-adapter";
@@ -20,7 +23,7 @@ export function isTcpPath(path: string): boolean {
  * ```ts
  * {
  *     path: 'COM4',
- *     baudRate: 460800,
+ *     baudRate: 921600,
  *     rtscts: true,
  * }
  * ```
@@ -65,30 +68,39 @@ export class MinimalAdapter {
     /** True when serial/socket is currently closing */
     #closing: boolean;
 
+    #sendMACToZEP: boolean;
     #wiresharkSeqNum: number;
     #wiresharkPort: number;
     #wiresharkAddress: string;
     readonly #wiresharkSocket: DgramSocket;
 
     constructor(portOptions: PortOptions, streamRawConfig: StreamRawConfig, netParams: NetworkParameters, sendMACToZEP: boolean) {
+        this.#sendMACToZEP = sendMACToZEP;
         this.#wiresharkSeqNum = 0; // start at 1
         this.#wiresharkSocket = createSocket("udp4");
         this.#wiresharkPort = process.env.WIRESHARK_ZEP_PORT ? Number.parseInt(process.env.WIRESHARK_ZEP_PORT, 10) : DEFAULT_ZEP_UDP_PORT;
         this.#wiresharkAddress = process.env.WIRESHARK_ADDRESS ? process.env.WIRESHARK_ADDRESS : DEFAULT_WIRESHARK_IP;
         this.#wiresharkSocket.bind(this.#wiresharkPort);
 
-        this.driver = new OTRCPDriver(streamRawConfig, netParams, ".", sendMACToZEP);
+        this.driver = new OTRCPDriver(
+            {
+                onFatalError: this.onFatalError.bind(this),
+                onMACFrame: this.onMACFrame.bind(this),
+                onFrame: this.onFrame.bind(this),
+                onGPFrame: this.onGPFrame.bind(this),
+                onDeviceJoined: this.onDeviceJoined.bind(this),
+                onDeviceRejoined: this.onDeviceRejoined.bind(this),
+                onDeviceLeft: this.onDeviceLeft.bind(this),
+                onDeviceAuthorized: this.onDeviceAuthorized.bind(this),
+            },
+            streamRawConfig,
+            netParams,
+            ".",
+            sendMACToZEP,
+        );
 
         this.#portOptions = portOptions;
         this.#closing = false;
-
-        if (sendMACToZEP) {
-            this.driver.on("macFrame", (payload, rssi) => {
-                const wsZEPFrame = createWiresharkZEPFrame(this.driver.netParams.channel, 1, 0, rssi ?? 0, this.nextWiresharkSeqNum(), payload);
-
-                this.#wiresharkSocket.send(wsZEPFrame, this.#wiresharkPort, this.#wiresharkAddress);
-            });
-        }
 
         // noop logger as needed
         // setLogger({ debug: () => {}, info: () => {}, warning: () => {}, error: () => {}});
@@ -162,7 +174,7 @@ export class MinimalAdapter {
 
         const serialOpts = {
             path: this.#portOptions.path!,
-            baudRate: typeof this.#portOptions.baudRate === "number" ? this.#portOptions.baudRate : 460800,
+            baudRate: typeof this.#portOptions.baudRate === "number" ? this.#portOptions.baudRate : 921600,
             rtscts: typeof this.#portOptions.rtscts === "boolean" ? this.#portOptions.rtscts : false,
             autoOpen: false,
             parity: "none" as const,
@@ -250,8 +262,8 @@ export class MinimalAdapter {
 
                 if (options.allowJoins) {
                     // allow joins on start for 254 seconds
-                    this.driver.allowJoins(0xfe, true);
-                    this.driver.gpEnterCommissioningMode(0xfe);
+                    this.driver.context.allowJoins(0xfe, true);
+                    this.driver.nwkGPHandler.enterCommissioningMode(0xfe);
                 }
 
                 break;
@@ -292,17 +304,10 @@ export class MinimalAdapter {
                 break;
             }
         }
-
-        this.driver.on("frame", this.onFrame.bind(this));
-        this.driver.on("deviceJoined", this.onDeviceJoined.bind(this));
-        this.driver.on("deviceRejoined", this.onDeviceRejoined.bind(this));
-        this.driver.on("deviceLeft", this.onDeviceLeft.bind(this));
     }
 
     public async stop(): Promise<void> {
         this.#closing = true;
-
-        this.driver.removeAllListeners();
 
         if (this.#serialPort?.isOpen || (this.#socketPort != null && !this.#socketPort.closed)) {
             try {
@@ -346,7 +351,23 @@ export class MinimalAdapter {
         }
     }
 
+    private onFatalError(message: string): void {
+        logger.error(message, NS);
+    }
+
+    private onMACFrame(payload: Buffer, rssi?: number): void {
+        if (this.#sendMACToZEP) {
+            const wsZEPFrame = createWiresharkZEPFrame(this.driver.context.netParams.channel, 1, 0, rssi ?? 0, this.nextWiresharkSeqNum(), payload);
+
+            this.#wiresharkSocket.send(wsZEPFrame, this.#wiresharkPort, this.#wiresharkAddress);
+        }
+    }
+
     private onFrame(_sender16: number | undefined, _sender64: bigint | undefined, _apsHeader: ZigbeeAPSHeader, _apsPayload: ZigbeeAPSPayload): void {
+        // as needed for testing
+    }
+
+    private onGPFrame(_cmdId: number, _payload: Buffer<ArrayBufferLike>, _macHeader: MACHeader, _nwkHeader: ZigbeeNWKGPHeader, _lqa: number): void {
         // as needed for testing
     }
 
@@ -359,6 +380,10 @@ export class MinimalAdapter {
     }
 
     private onDeviceLeft(_source16: number, _source64: bigint): void {
+        // as needed for testing
+    }
+
+    private onDeviceAuthorized(_source16: number, _source64: bigint): void {
         // as needed for testing
     }
 }

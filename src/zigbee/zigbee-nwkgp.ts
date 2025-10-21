@@ -12,7 +12,7 @@ export const enum ZigbeeNWKGPConsts {
     PAYLOAD_MIN_SIZE = 86,
     PAYLOAD_MAX_SIZE = 108,
 
-    //---- ZigBee NWK GP FCF fields
+    //---- Zigbee NWK GP FCF fields
     FCF_AUTO_COMMISSIONING = 0x40,
     FCF_CONTROL_EXTENSION = 0x80,
     FCF_FRAME_TYPE = 0x03,
@@ -26,7 +26,7 @@ export const enum ZigbeeNWKGPConsts {
     FCF_EXT_DIRECTION = 0x80, // 7 b.
 }
 
-/** ZigBee NWK GP FCF frame types. */
+/** Zigbee NWK GP FCF frame types. */
 export const enum ZigbeeNWKGPFrameType {
     DATA = 0x00,
     MAINTENANCE = 0x01,
@@ -190,7 +190,13 @@ export type ZigbeeNWKGPHeader = {
 
 export type ZigbeeNWKGPPayload = Buffer;
 
+/**
+ * Decode Zigbee NWK GP frame control field.
+ * HOT PATH: Called for every incoming Green Power frame.
+ */
+/* @__INLINE__ */
 export function decodeZigbeeNWKGPFrameControl(data: Buffer, offset: number): [ZigbeeNWKGPFrameControl, offset: number] {
+    // HOT PATH: Extract NWKGP FCF fields with bitwise operations
     const fcf = data.readUInt8(offset);
     offset += 1;
 

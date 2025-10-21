@@ -8,7 +8,7 @@
  * - Length >= 128: two bytes with high bit set in first byte
  */
 
-import type { DeviceTableEntry, NetworkParameters, SourceRouteTableEntry } from "../drivers/ot-rcp-driver";
+import type { DeviceTableEntry, NetworkParameters, SourceRouteTableEntry } from "../zigbee-stack/stack-context.js";
 
 /**
  * Parsed device entry with final values ready to use.
@@ -32,7 +32,7 @@ interface ParsedDevice extends Omit<DeviceTableEntry, "capabilities" | "recentLQ
  * Top-level parsed state structure with final values ready to use.
  * All values parsed directly from buffers during TLV reading.
  */
-interface ParsedState extends NetworkParameters {
+export interface ParsedState extends NetworkParameters {
     // File metadata
     version?: number;
 
