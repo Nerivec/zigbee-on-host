@@ -22,16 +22,16 @@ describe("NWK GP Handler", () => {
             const nwkHeader = createNWKGPHeader();
 
             // First call should not be duplicate
-            const isDuplicate1 = nwkgpHandler.checkDuplicate(macHeader, nwkHeader);
+            const isDuplicate1 = nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader);
             expect(isDuplicate1).toStrictEqual(false);
 
             // Same frame counter should be duplicate
-            const isDuplicate2 = nwkgpHandler.checkDuplicate(macHeader, nwkHeader);
+            const isDuplicate2 = nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader);
             expect(isDuplicate2).toStrictEqual(true);
 
             // Different frame counter should not be duplicate
             nwkHeader.securityFrameCounter = 101;
-            const isDuplicate3 = nwkgpHandler.checkDuplicate(macHeader, nwkHeader);
+            const isDuplicate3 = nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader);
             expect(isDuplicate3).toStrictEqual(false);
         });
 
@@ -43,16 +43,16 @@ describe("NWK GP Handler", () => {
             nwkHeader.securityFrameCounter = undefined;
 
             // First call should not be duplicate
-            const isDuplicate1 = nwkgpHandler.checkDuplicate(macHeader, nwkHeader);
+            const isDuplicate1 = nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader);
             expect(isDuplicate1).toStrictEqual(false);
 
             // Same MAC sequence number should be duplicate
-            const isDuplicate2 = nwkgpHandler.checkDuplicate(macHeader, nwkHeader);
+            const isDuplicate2 = nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader);
             expect(isDuplicate2).toStrictEqual(true);
 
             // Different MAC sequence number should not be duplicate
             macHeader.sequenceNumber = 11;
-            const isDuplicate3 = nwkgpHandler.checkDuplicate(macHeader, nwkHeader);
+            const isDuplicate3 = nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader);
             expect(isDuplicate3).toStrictEqual(false);
         });
     });

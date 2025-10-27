@@ -6,6 +6,7 @@ import {
     type ParsedState,
     readTLVs,
     SAVE_FORMAT_VERSION,
+    serializeAppLinkKeyEntry,
     serializeDeviceEntry,
     TLVTag,
     writeTLV,
@@ -20,6 +21,7 @@ import { makeKeyedHash, makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeCo
 import type { ZigbeeAPSHeader, ZigbeeAPSPayload } from "../zigbee/zigbee-aps.js";
 import { ZigbeeNWKConsts } from "../zigbee/zigbee-nwk.js";
 import type { ZigbeeNWKGPHeader } from "../zigbee/zigbee-nwkgp.js";
+import { CONFIG_NWK_MAX_HOPS } from "./nwk-handler.js";
 
 const NS = "stack-context";
 
@@ -166,6 +168,15 @@ export type DeviceTableEntry = {
      * Note: this is runtime-only
      */
     recentLQAs: number[];
+    /** Last accepted NWK security frame counter. Runtime-only. */
+    incomingNWKFrameCounter?: number;
+    /** End device timeout metadata. Runtime-only. */
+    endDeviceTimeout?: {
+        timeoutIndex: number;
+        timeoutMs: number;
+        lastUpdated: number;
+        expiresAt: number;
+    };
 };
 
 export type SourceRouteTableEntry = {
@@ -179,6 +190,12 @@ export type SourceRouteTableEntry = {
     failureCount: number;
     /** Timestamp when this route was last used successfully (undefined if never used) */
     lastUsed?: number;
+};
+
+export type AppLinkKeyStoreEntry = {
+    deviceA: bigint;
+    deviceB: bigint;
+    key: Buffer;
 };
 
 /**
@@ -305,6 +322,25 @@ interface IndirectTxContext {
     timestamp: number;
 }
 
+/** Table 3-54 */
+export const END_DEVICE_TIMEOUT_TABLE_MS = [
+    10_000,
+    2 * 60 * 1000,
+    4 * 60 * 1000,
+    8 * 60 * 1000,
+    16 * 60 * 1000,
+    32 * 60 * 1000,
+    64 * 60 * 1000,
+    128 * 60 * 1000,
+    256 * 60 * 1000,
+    512 * 60 * 1000,
+    1024 * 60 * 1000,
+    2048 * 60 * 1000,
+    4096 * 60 * 1000,
+    8192 * 60 * 1000,
+    16_384 * 60 * 1000,
+] as const;
+
 /** The time between state saving to disk. (msec) */
 const CONFIG_SAVE_STATE_TIME = 60000;
 /** Offset added to frame counter properties on save */
@@ -328,6 +364,8 @@ export class StackContext {
     readonly address16ToAddress64 = new Map<number, bigint>();
     /** Source routing table (mapped by 16-bit address) */
     readonly sourceRouteTable = new Map<number, SourceRouteTableEntry[]>();
+    /** Application link keys stored for device pairs (ordered by IEEE address) */
+    readonly appLinkKeyTable = new Map<string, AppLinkKeyStoreEntry>();
     /** Trust Center policies */
     readonly trustCenterPolicies: TrustCenterPolicies = {
         allowJoins: false,
@@ -370,6 +408,9 @@ export class StackContext {
     //---- Trust Center (see 05-3474-R #4.7.1)
 
     #allowJoinTimeout: NodeJS.Timeout | undefined;
+
+    #pendingNetworkKey: Buffer | undefined;
+    #pendingNetworkKeySequenceNumber: number | undefined;
 
     /** Minimum observed RSSI */
     rssiMin = -100;
@@ -418,6 +459,7 @@ export class StackContext {
         this.address16ToAddress64.clear();
         this.sourceRouteTable.clear();
         this.indirectTransmissions.clear();
+        this.appLinkKeyTable.clear();
     }
 
     /**
@@ -442,6 +484,50 @@ export class StackContext {
         this.netParams.networkKeyFrameCounter = ((this.netParams.networkKeyFrameCounter + 1) & 0xffffffff) >>> 0;
 
         return this.netParams.networkKeyFrameCounter;
+    }
+
+    /**
+     * Store a pending network key that will become active once a matching SWITCH_KEY is received.
+     * @param key Raw network key bytes (16 bytes)
+     * @param sequenceNumber Sequence number advertised for the pending key
+     */
+    public setPendingNetworkKey(key: Buffer, sequenceNumber: number): void {
+        this.#pendingNetworkKey = Buffer.from(key);
+        this.#pendingNetworkKeySequenceNumber = sequenceNumber & 0xff;
+
+        logger.debug(() => `Staged pending network key seq=${this.#pendingNetworkKeySequenceNumber}`, NS);
+    }
+
+    /**
+     * Activate the staged network key if the sequence number matches.
+     * Resets frame counters and re-registers hashed keys for cryptographic operations.
+     * @param sequenceNumber Sequence number referenced by SWITCH_KEY command
+     * @returns true when activation succeeded, false when no matching pending key exists
+     */
+    public activatePendingNetworkKey(sequenceNumber: number): boolean {
+        const normalizedSeq = sequenceNumber & 0xff;
+
+        if (this.#pendingNetworkKey === undefined || this.#pendingNetworkKeySequenceNumber !== normalizedSeq) {
+            return false;
+        }
+
+        this.netParams.networkKey = Buffer.from(this.#pendingNetworkKey);
+        this.netParams.networkKeySequenceNumber = normalizedSeq;
+        this.netParams.networkKeyFrameCounter = 0;
+
+        this.#pendingNetworkKey = undefined;
+        this.#pendingNetworkKeySequenceNumber = undefined;
+
+        registerDefaultHashedKeys(
+            makeKeyedHashByType(ZigbeeKeyType.LINK, this.netParams.tcKey),
+            makeKeyedHashByType(ZigbeeKeyType.NWK, this.netParams.networkKey),
+            makeKeyedHashByType(ZigbeeKeyType.TRANSPORT, this.netParams.tcKey),
+            makeKeyedHashByType(ZigbeeKeyType.LOAD, this.netParams.tcKey),
+        );
+
+        logger.debug(() => `Activated network key seq=${normalizedSeq}`, NS);
+
+        return true;
     }
 
     /**
@@ -483,6 +569,29 @@ export class StackContext {
         return device?.address16;
     }
 
+    // private countDirectChildren(exclude64?: bigint): { childCount: number; routerCount: number } {
+    //     let childCount = 0;
+    //     let routerCount = 0;
+
+    //     for (const [device64, entry] of this.deviceTable) {
+    //         if (!entry.neighbor) {
+    //             continue;
+    //         }
+
+    //         if (exclude64 !== undefined && device64 === exclude64) {
+    //             continue;
+    //         }
+
+    //         childCount += 1;
+
+    //         if (entry.capabilities?.deviceType === 1) {
+    //             routerCount += 1;
+    //         }
+    //     }
+
+    //     return { childCount, routerCount };
+    // }
+
     /**
      * 05-3474-23 #3.6.1.10
      */
@@ -497,6 +606,76 @@ export class StackContext {
         } while (!unique);
 
         return newNetworkAddress;
+    }
+
+    /**
+     * Update the stored end device timeout metadata for a device.
+     * @param address64 IEEE address of the end device.
+     * @param timeoutIndex Requested timeout index (0-14).
+     * @param now Optional timestamp override (for testing).
+     * @returns Updated timeout metadata or undefined if device/index invalid.
+     */
+    public updateEndDeviceTimeout(address64: bigint, timeoutIndex: number, now = Date.now()): DeviceTableEntry["endDeviceTimeout"] | undefined {
+        const timeoutMs = END_DEVICE_TIMEOUT_TABLE_MS[timeoutIndex];
+
+        if (timeoutMs === undefined) {
+            return undefined;
+        }
+
+        const device = this.deviceTable.get(address64);
+
+        if (device === undefined) {
+            return undefined;
+        }
+
+        device.endDeviceTimeout = {
+            timeoutIndex,
+            timeoutMs,
+            lastUpdated: now,
+            expiresAt: now + timeoutMs,
+        };
+
+        return device.endDeviceTimeout;
+    }
+
+    /**
+     * Update and validate the incoming NWK security frame counter for a device.
+     * Returns false if the provided counter is a replay (<= stored value, excluding wrap).
+     */
+    public updateIncomingNWKFrameCounter(address64: bigint | undefined, frameCounter: number): boolean {
+        if (address64 === undefined) {
+            return true;
+        }
+
+        const device = this.deviceTable.get(address64);
+
+        if (device === undefined) {
+            return true;
+        }
+
+        const previous = device.incomingNWKFrameCounter;
+
+        if (previous === undefined) {
+            device.incomingNWKFrameCounter = frameCounter >>> 0;
+
+            return true;
+        }
+
+        const normalizedCounter = frameCounter >>> 0;
+
+        if (previous === 0xffffffff && normalizedCounter === 0) {
+            device.incomingNWKFrameCounter = normalizedCounter;
+
+            return true;
+        }
+
+        if (normalizedCounter > previous) {
+            device.incomingNWKFrameCounter = normalizedCounter;
+
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -629,9 +808,42 @@ export class StackContext {
      */
     /* @__INLINE__ */
     public decrementRadius(radius: number): number {
-        const newRadius = radius - 1;
+        const newRadius = (radius === 0 ? CONFIG_NWK_MAX_HOPS : radius) - 1;
 
         return newRadius < 1 ? 1 : newRadius;
+    }
+
+    /**
+     * Make a key for AppLinkKeyStoreEntry
+     * HOT PATH: Optimized computation
+     * @param deviceA
+     * @param deviceB
+     * @returns
+     */
+    /* @__INLINE__ */
+    #makeAppLinkKeyId(deviceA: bigint, deviceB: bigint): string {
+        return deviceA < deviceB ? `${deviceA}-${deviceB}` : `${deviceB}-${deviceA}`;
+    }
+
+    public getAppLinkKey(deviceA: bigint, deviceB: bigint): Buffer | undefined {
+        const entry = this.appLinkKeyTable.get(this.#makeAppLinkKeyId(deviceA, deviceB));
+
+        if (entry === undefined) {
+            return undefined;
+        }
+
+        return entry.key;
+    }
+
+    public setAppLinkKey(deviceA: bigint, deviceB: bigint, key: Buffer): void {
+        const [canonicalA, canonicalB] = deviceA < deviceB ? [deviceA, deviceB] : [deviceB, deviceA];
+        const stored: AppLinkKeyStoreEntry = {
+            deviceA: canonicalA,
+            deviceB: canonicalB,
+            key,
+        };
+
+        this.appLinkKeyTable.set(this.#makeAppLinkKeyId(canonicalA, canonicalB), stored);
     }
 
     /**
@@ -644,7 +856,7 @@ export class StackContext {
      */
     public async saveState(): Promise<void> {
         // estimate buffer size (generous upper bound)
-        const estimatedSize = estimateTLVStateSize(this.deviceTable.size);
+        const estimatedSize = estimateTLVStateSize(this.deviceTable.size, this.appLinkKeyTable.size);
         const state = Buffer.allocUnsafe(estimatedSize);
         let offset = 0;
 
@@ -685,6 +897,11 @@ export class StackContext {
                 sourceRouteEntries,
             );
             offset = writeTLV(state, offset, TLVTag.DEVICE_ENTRY, deviceEntry);
+        }
+
+        for (const entry of this.appLinkKeyTable.values()) {
+            const serializedEntry = serializeAppLinkKeyEntry(entry.deviceA, entry.deviceB, entry.key);
+            offset = writeTLV(state, offset, TLVTag.APP_LINK_KEY_ENTRY, serializedEntry);
         }
 
         // write end marker (aids debugging and validates complete write)
@@ -764,6 +981,8 @@ export class StackContext {
                     authorized,
                     neighbor,
                     recentLQAs: [],
+                    incomingNWKFrameCounter: undefined, // TODO: record this (should persist across reboots)
+                    endDeviceTimeout: undefined,
                 });
                 this.address16ToAddress64.set(address16, address64);
 
@@ -782,6 +1001,10 @@ export class StackContext {
 
                     this.sourceRouteTable.set(address16, routes);
                 }
+            }
+
+            for (const entry of state.appLinkKeys) {
+                this.setAppLinkKey(entry.deviceA, entry.deviceB, entry.key);
             }
         } else {
             // `this.#savePath` does not exist, using constructor-given network params, do initial save
@@ -990,6 +1213,25 @@ export class StackContext {
         }
         /* v8 ignore stop */
 
+        // const existingDevice64 = source64 ?? (source16 !== undefined ? this.address16ToAddress64.get(source16) : undefined);
+        // const existingEntry = existingDevice64 !== undefined ? this.deviceTable.get(existingDevice64) : undefined;
+
+        // if (status === MACAssociationStatus.SUCCESS && neighbor) {
+        //     const isExistingDirectChild = existingEntry?.neighbor === true;
+
+        //     if (!isExistingDirectChild && initialJoin && !unknownRejoin) {
+        //         const { childCount, routerCount } = this.countDirectChildren(existingDevice64);
+
+        //         if (childCount >= CONFIG_NWK_MAX_CHILDREN) {
+        //             newAddress16 = 0xffff;
+        //             status = MACAssociationStatus.PAN_FULL;
+        //         } else if (capabilities?.deviceType === 1 && routerCount >= CONFIG_NWK_MAX_ROUTERS) {
+        //             newAddress16 = 0xffff;
+        //             status = MACAssociationStatus.PAN_FULL;
+        //         }
+        //     }
+        // }
+
         logger.debug(
             () =>
                 `DEVICE_JOINING[src=${source16}:${source64} newAddr16=${newAddress16} initialJoin=${initialJoin} deviceType=${capabilities?.deviceType} powerSource=${capabilities?.powerSource} rxOnWhenIdle=${capabilities?.rxOnWhenIdle}] replying with status=${status}`,
@@ -1005,6 +1247,8 @@ export class StackContext {
                     authorized: false,
                     neighbor,
                     recentLQAs: [],
+                    incomingNWKFrameCounter: undefined,
+                    endDeviceTimeout: undefined,
                 });
                 this.address16ToAddress64.set(newAddress16, source64!);
 

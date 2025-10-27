@@ -5,6 +5,7 @@ import {
     encodeMACZigbeeBeacon,
     MACAssociationStatus,
     MACCommandId,
+    MACDisassociationReason,
     MACFrameAddressMode,
     MACFrameType,
     MACFrameVersion,
@@ -96,7 +97,7 @@ export class MACHandler {
      */
     public async sendFrameDirect(seqNum: number, payload: Buffer, dest16: number | undefined, dest64: bigint | undefined): Promise<boolean> {
         if (dest16 === undefined && dest64 !== undefined) {
-            dest16 = this.#context.getDevice(dest64)?.address16;
+            dest16 = this.#context.getAddress16(dest64);
         }
 
         try {
@@ -245,8 +246,11 @@ export class MACHandler {
                 offset = await this.processDataReq(data, offset, macHeader);
                 break;
             }
+            case MACCommandId.DISASSOC_NOTIFY: {
+                offset = await this.processDisassocNotify(data, offset, macHeader);
+                break;
+            }
             // TODO: other cases?
-            // DISASSOC_NOTIFY
             // PANID_CONFLICT
             // ORPHAN_NOTIFY
             // COORD_REALIGN
@@ -295,7 +299,7 @@ export class MACHandler {
         if (macHeader.source64 === undefined) {
             logger.debug(() => `<=x= MAC ASSOC_REQ[macSrc=${macHeader.source16}:${macHeader.source64} cap=${capabilities}] Invalid source64`, NS);
         } else {
-            const address16 = this.#context.getDevice(macHeader.source64)?.address16;
+            const address16 = this.#context.getAddress16(macHeader.source64);
             const decodedCap = decodeMACCapabilities(capabilities);
             const [status, newAddress16] = await this.#context.associate(
                 address16,
@@ -342,6 +346,21 @@ export class MACHandler {
             () => `<=== MAC ASSOC_RSP[macSrc=${macHeader.source16}:${macHeader.source64} addr16=${address} status=${MACAssociationStatus[status]}]`,
             NS,
         );
+
+        return offset;
+    }
+
+    public async processDisassocNotify(data: Buffer, offset: number, macHeader: MACHeader): Promise<number> {
+        const reason = data.readUInt8(offset);
+        offset += 1;
+
+        logger.debug(() => `<=== MAC DISASSOC_NOTIFY[macSrc=${macHeader.source16}:${macHeader.source64} reason=${reason}]`, NS);
+
+        if (reason === MACDisassociationReason.COORDINATOR_INITIATED || reason === MACDisassociationReason.DEVICE_INITIATED) {
+            const source16 = macHeader.source16 ?? (macHeader.source64 !== undefined ? this.#context.getAddress16(macHeader.source64) : undefined);
+
+            await this.#context.disassociate(source16, macHeader.source64);
+        }
 
         return offset;
     }

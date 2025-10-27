@@ -58,7 +58,7 @@ export class NWKGPHandler {
         logger.info("Exited Green Power commissioning mode", NS);
     }
 
-    public checkDuplicate(macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader): boolean {
+    public isDuplicateFrame(macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader): boolean {
         let duplicate = false;
 
         if (nwkHeader.securityFrameCounter !== undefined) {

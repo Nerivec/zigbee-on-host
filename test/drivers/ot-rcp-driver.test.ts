@@ -602,6 +602,8 @@ describe("OT RCP Driver", () => {
                 authorized: true,
                 neighbor: true,
                 recentLQAs: [],
+                endDeviceTimeout: undefined,
+                incomingNWKFrameCounter: undefined,
             });
             expect(driver.context.deviceTable.get(12656887476334n)).toStrictEqual({
                 address16: 3457,
@@ -609,6 +611,8 @@ describe("OT RCP Driver", () => {
                 authorized: true,
                 neighbor: true,
                 recentLQAs: [],
+                endDeviceTimeout: undefined,
+                incomingNWKFrameCounter: undefined,
             });
             expect(driver.context.deviceTable.get(12328965645634n)).toStrictEqual({
                 address16: 9674,
@@ -616,6 +620,8 @@ describe("OT RCP Driver", () => {
                 authorized: true,
                 neighbor: false,
                 recentLQAs: [],
+                endDeviceTimeout: undefined,
+                incomingNWKFrameCounter: undefined,
             });
             expect(driver.context.deviceTable.get(234367481234n)).toStrictEqual({
                 address16: 54748,
@@ -623,6 +629,8 @@ describe("OT RCP Driver", () => {
                 authorized: false,
                 neighbor: true,
                 recentLQAs: [],
+                endDeviceTimeout: undefined,
+                incomingNWKFrameCounter: undefined,
             });
             expect(driver.context.address16ToAddress64.size).toStrictEqual(4);
             expect(driver.context.address16ToAddress64.get(1)).toStrictEqual(1234n);
@@ -1766,6 +1774,8 @@ describe("OT RCP Driver", () => {
                 authorized: false,
                 neighbor: true,
                 recentLQAs: [],
+                endDeviceTimeout: undefined,
+                incomingNWKFrameCounter: undefined,
             });
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_DEVICE_ANNOUNCE_BCAST, Buffer.from([0xd8, 0xff, 0x00, 0x00])), "utf8", () => {});
@@ -1805,6 +1815,8 @@ describe("OT RCP Driver", () => {
                 authorized: true,
                 neighbor: true,
                 recentLQAs: [200, 153, 178, 188],
+                incomingNWKFrameCounter: 33498,
+                endDeviceTimeout: undefined,
             });
         });
 

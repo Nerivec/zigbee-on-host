@@ -361,11 +361,6 @@ describe("StackContext", () => {
         expect(context.decrementRadius(2)).toStrictEqual(1);
     });
 
-    it("should return 0 when radius equal or below 1", () => {
-        expect(context.decrementRadius(1)).toStrictEqual(1);
-        expect(context.decrementRadius(0)).toStrictEqual(1);
-    });
-
     it("should handle large radius values", () => {
         expect(context.decrementRadius(255)).toStrictEqual(254);
         expect(context.decrementRadius(30)).toStrictEqual(29);

@@ -178,6 +178,11 @@ export const enum MACCommandId {
     /* 0x25-0xff reserved in IEEE802.15.4-2015 */
 }
 
+export const enum MACDisassociationReason {
+    COORDINATOR_INITIATED = 0x01,
+    DEVICE_INITIATED = 0x02,
+}
+
 export const enum MACSecurityLevel {
     NONE = 0x00,
     MIC_32 = 0x01,

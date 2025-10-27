@@ -23,7 +23,7 @@ import {
     ZigbeeNWKStatus,
 } from "../zigbee/zigbee-nwk.js";
 import type { MACHandler } from "../zigbee-stack/mac-handler.js";
-import type { SourceRouteTableEntry, StackCallbacks, StackContext } from "../zigbee-stack/stack-context.js";
+import { END_DEVICE_TIMEOUT_TABLE_MS, type SourceRouteTableEntry, type StackCallbacks, type StackContext } from "../zigbee-stack/stack-context.js";
 
 const NS = "nwk-handler";
 
@@ -31,7 +31,7 @@ const NS = "nwk-handler";
 // const CONFIG_NWK_ROUTE_DISCOVERY_TIME = 0x4c4b4; // 0x2710 msec on 2.4GHz
 /** The maximum depth of the network (number of hops) used for various calculations of network timing and limitations. */
 const CONFIG_NWK_MAX_DEPTH = 15;
-const CONFIG_NWK_MAX_HOPS = CONFIG_NWK_MAX_DEPTH * 2;
+export const CONFIG_NWK_MAX_HOPS = CONFIG_NWK_MAX_DEPTH * 2;
 /** The number of network layer retries on unicast messages that are attempted before reporting the result to the higher layer. */
 // const CONFIG_NWK_UNICAST_RETRIES = 3;
 /** The delay between network layer retries. (ms) */
@@ -45,7 +45,14 @@ const CONFIG_NWK_LINK_STATUS_JITTER = 1000;
 /** The number of missed link status command frames before resetting the link costs to zero. */
 // const CONFIG_NWK_ROUTER_AGE_LIMIT = 3;
 /** This is an index into Table 3-54. It indicates the default timeout in minutes for any end device that does not negotiate a different timeout value. */
-// const CONFIG_NWK_END_DEVICE_TIMEOUT_DEFAULT = 8;
+export const CONFIG_NWK_ED_TIMEOUT_DEFAULT = 8;
+/**
+ * Default parent info byte for end device timeout negotiation
+ * - Bit 0 MAC Data Poll Keepalive Supported
+ * - Bit 1 End Device Timeout Request Keepalive Supported
+ * - Bit 2 Power Negotiation Support
+ */
+const CONFIG_NWK_ED_TIMEOUT_PARENT_INFO_DEFAULT = 0b00000111;
 /** The time between concentrator route discoveries. (msec) */
 const CONFIG_NWK_CONCENTRATOR_DISCOVERY_TIME = 60000;
 /** The hop count radius for concentrator route discoveries. */
@@ -60,6 +67,9 @@ const CONFIG_NWK_ROUTE_EXPIRY_TIME = 300000;
 const CONFIG_NWK_ROUTE_MAX_FAILURES = 3;
 /** Minimum time between many-to-one route request broadcasts to avoid flooding (msec) */
 const CONFIG_NWK_CONCENTRATOR_MIN_TIME = 10000;
+// export const CONFIG_NWK_MAX_ROUTERS = 6;
+// export const CONFIG_NWK_MAX_CHILDREN = 20;
+// export const CONFIG_NWK_MAX_SOURCE_ROUTE = 16;
 
 /**
  * Callbacks for NWK handler to communicate with driver
@@ -442,6 +452,9 @@ export class NWKHandler {
      */
     /* @__INLINE__ */
     public createSourceRouteEntry(relayAddresses: number[], pathCost: number): SourceRouteTableEntry {
+        // const limitedRelays =
+        //     relayAddresses.length > CONFIG_NWK_MAX_SOURCE_ROUTE ? relayAddresses.slice(0, CONFIG_NWK_MAX_SOURCE_ROUTE) : relayAddresses;
+        // const normalizedPathCost = Math.min(pathCost, limitedRelays.length + 1);
         return {
             relayAddresses,
             pathCost,
@@ -769,7 +782,7 @@ export class NWKHandler {
         logger.debug(() => `===> NWK ROUTE_REQ[mto=${manyToOne} dst=${destination16}:${destination64}]`, NS);
         const hasDestination64 = destination64 !== undefined;
         const options =
-            (((manyToOne ? 1 : 0) << 3) & ZigbeeNWKConsts.CMD_ROUTE_OPTION_MANY_MASK) |
+            ((manyToOne << 3) & ZigbeeNWKConsts.CMD_ROUTE_OPTION_MANY_MASK) |
             (((hasDestination64 ? 1 : 0) << 5) & ZigbeeNWKConsts.CMD_ROUTE_OPTION_DEST_EXT);
         const finalPayload = Buffer.alloc(1 + 1 + 1 + 2 + 1 + (hasDestination64 ? 8 : 0));
         let offset = 0;
@@ -835,7 +848,45 @@ export class NWKHandler {
                 `<=== NWK ROUTE_REPLY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} id=${id} orig=${originator16}:${originator64} rsp=${responder16}:${responder64} pCost=${pathCost}]`,
             NS,
         );
-        // TODO
+
+        // Cache source route to responder when coordinator initiated discovery
+        if (originator16 === ZigbeeConsts.COORDINATOR_ADDRESS) {
+            const nextHopCandidates: number[] = nwkHeader.relayAddresses !== undefined ? [...nwkHeader.relayAddresses] : [];
+            const macNextHop =
+                macHeader.source16 ?? (macHeader.source64 !== undefined ? this.#context.deviceTable.get(macHeader.source64)?.address16 : undefined);
+
+            if (macNextHop !== undefined && macNextHop !== responder16) {
+                if (nextHopCandidates.length === 0 || nextHopCandidates[nextHopCandidates.length - 1] !== macNextHop) {
+                    nextHopCandidates.push(macNextHop);
+                }
+            }
+
+            const normalizedPathCost = pathCost === 0 ? nextHopCandidates.length + 1 : pathCost;
+            const routeEntry = this.createSourceRouteEntry(nextHopCandidates, Math.max(1, normalizedPathCost));
+            const existingEntries = this.#context.sourceRouteTable.get(responder16);
+
+            if (existingEntries === undefined) {
+                this.#context.sourceRouteTable.set(responder16, [routeEntry]);
+            } else {
+                const existingIndex = existingEntries.findIndex(
+                    (entry) =>
+                        entry.relayAddresses.length === routeEntry.relayAddresses.length &&
+                        entry.relayAddresses.every((relay, idx) => relay === routeEntry.relayAddresses[idx]),
+                );
+
+                if (existingIndex !== -1) {
+                    const existingEntry = existingEntries[existingIndex];
+                    existingEntry.pathCost = routeEntry.pathCost;
+                    existingEntry.lastUpdated = routeEntry.lastUpdated;
+                    existingEntry.failureCount = 0;
+                } else if (!this.hasSourceRoute(responder16, routeEntry, existingEntries)) {
+                    // TODO: do we want this here?
+                    existingEntries.push(routeEntry);
+                }
+            }
+
+            this.markRouteSuccess(responder16);
+        }
 
         return offset;
     }
@@ -1393,9 +1444,9 @@ export class NWKHandler {
                 } else {
                     // check if we already have this route; if so, update it
                     const existingIndex = entries.findIndex(
-                        (e: SourceRouteTableEntry) =>
+                        (e) =>
                             e.relayAddresses.length === entry.relayAddresses.length &&
-                            e.relayAddresses.every((relay: number, idx: number) => relay === entry.relayAddresses[idx]),
+                            e.relayAddresses.every((relay, idx) => relay === entry.relayAddresses[idx]),
                     );
 
                     if (existingIndex !== -1) {
@@ -1608,21 +1659,7 @@ export class NWKHandler {
      * IMPACT: Timeout values accepted but not enforced
      */
     public async processEdTimeoutRequest(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
-        // 0 => 10 seconds
-        // 1 => 2 minutes
-        // 2 => 4 minutes
-        // 3 => 8 minutes
-        // 4 => 16 minutes
-        // 5 => 32 minutes
-        // 6 => 64 minutes
-        // 7 => 128 minutes
-        // 8 => 256 minutes
-        // 9 => 512 minutes
-        // 10 => 1024 minutes
-        // 11 => 2048 minutes
-        // 12 => 4096 minutes
-        // 13 => 8192 minutes
-        // 14 => 16384 minutes
+        // index into END_DEVICE_TIMEOUT_TABLE_MS
         const requestedTimeout = data.readUInt8(offset);
         offset += 1;
         // not currently used (all reserved)
@@ -1635,7 +1672,26 @@ export class NWKHandler {
             NS,
         );
 
-        await this.sendEdTimeoutResponse(nwkHeader.source16!, requestedTimeout);
+        // sanity check
+        if (nwkHeader.source16 !== undefined) {
+            const timeoutResolved = END_DEVICE_TIMEOUT_TABLE_MS[requestedTimeout];
+            const source64 = nwkHeader.source64 ?? this.#context.address16ToAddress64.get(nwkHeader.source16);
+            let status = 0x00;
+
+            if (timeoutResolved === undefined) {
+                status = 0x01;
+            } else if (source64 === undefined) {
+                status = 0x02;
+            } else {
+                const metadata = this.#context.updateEndDeviceTimeout(source64, requestedTimeout);
+
+                if (metadata === undefined) {
+                    status = 0x02;
+                }
+            }
+
+            await this.sendEdTimeoutResponse(nwkHeader.source16, requestedTimeout, status);
+        }
 
         return offset;
     }
@@ -1689,12 +1745,20 @@ export class NWKHandler {
      * @param requestedTimeout Requested timeout enumeration [0-14] (mapping to actual timeout) @see processEdTimeoutRequest
      * @returns
      */
-    public async sendEdTimeoutResponse(requestDest16: number, requestedTimeout: number): Promise<boolean> {
-        logger.debug(() => `===> NWK ED_TIMEOUT_RESPONSE[reqDst16=${requestDest16} requestedTimeout=${requestedTimeout}]`, NS);
+    public async sendEdTimeoutResponse(
+        requestDest16: number,
+        requestedTimeout: number,
+        statusOverride?: number,
+        parentInfoOverride?: number,
+    ): Promise<boolean> {
+        logger.debug(
+            () =>
+                `===> NWK ED_TIMEOUT_RESPONSE[reqDst16=${requestDest16} requestedTimeout=${requestedTimeout} statusOverride=${statusOverride} parentInfoOverride=${parentInfoOverride}]`,
+            NS,
+        );
 
-        // sanity check
-        const status = requestedTimeout >= 0 && requestedTimeout <= 14 ? 0x00 : 0x01;
-        const parentInfo = 0b00000111; // TODO: ?
+        const status = statusOverride ?? (END_DEVICE_TIMEOUT_TABLE_MS[requestedTimeout] !== undefined ? 0x00 : 0x01);
+        const parentInfo = parentInfoOverride ?? CONFIG_NWK_ED_TIMEOUT_PARENT_INFO_DEFAULT;
         const finalPayload = Buffer.from([ZigbeeNWKCommandId.ED_TIMEOUT_RESPONSE, status, parentInfo]);
 
         return await this.sendCommand(

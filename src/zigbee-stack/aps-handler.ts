@@ -19,13 +19,10 @@ import {
 } from "../zigbee/zigbee-aps.js";
 import { encodeZigbeeNWKFrame, ZigbeeNWKConsts, ZigbeeNWKFrameType, type ZigbeeNWKHeader, ZigbeeNWKRouteDiscovery } from "../zigbee/zigbee-nwk.js";
 import type { MACHandler } from "./mac-handler.js";
-import type { NWKHandler } from "./nwk-handler.js";
+import { CONFIG_NWK_MAX_HOPS, type NWKHandler } from "./nwk-handler.js";
 import { ApplicationKeyRequestPolicy, type StackCallbacks, type StackContext, TrustCenterKeyRequestPolicy } from "./stack-context.js";
 
 const NS = "aps-handler";
-
-// Configuration constants
-const CONFIG_NWK_MAX_HOPS = 30;
 
 /**
  * Callbacks for APS handler to communicate with driver
@@ -36,6 +33,34 @@ export interface APSHandlerCallbacks {
     onDeviceRejoined: StackCallbacks["onDeviceRejoined"];
     onDeviceAuthorized: StackCallbacks["onDeviceAuthorized"];
 }
+
+/** Duration while APS duplicate table entries remain valid (milliseconds). Spec default ≈ 8s. */
+const CONFIG_APS_DUPLICATE_TIMEOUT_MS = 8000;
+/** Default ack wait duration per Zigbee 3.0 spec (milliseconds). */
+const CONFIG_APS_ACK_WAIT_DURATION_MS = 1500;
+/** Default number of APS retransmissions when ACK is missing. */
+const CONFIG_APS_MAX_FRAME_RETRIES = 3;
+
+type SendDataParams = {
+    finalPayload: Buffer;
+    nwkDiscoverRoute: ZigbeeNWKRouteDiscovery;
+    nwkDest16: number | undefined;
+    nwkDest64: bigint | undefined;
+    apsDeliveryMode: ZigbeeAPSDeliveryMode;
+    clusterId: number;
+    profileId: number;
+    destEndpoint: number | undefined;
+    sourceEndpoint: number | undefined;
+    group: number | undefined;
+};
+
+type PendingAckEntry = {
+    params: SendDataParams;
+    apsCounter: number;
+    dest16: number;
+    retries: number;
+    timer: NodeJS.Timeout | undefined;
+};
 
 /**
  * APS Handler - Zigbee Application Support Layer Operations
@@ -50,6 +75,11 @@ export class APSHandler {
     #counter = 0;
     #zdoSeqNum = 0;
 
+    /** Recently seen APS frames for duplicate rejection */
+    readonly #apsDuplicateTable = new Map<string, { counter: number; expiresAt: number }>();
+    /** Pending APS acknowledgments waiting for retransmission */
+    readonly #pendingAcks = new Map<string, PendingAckEntry>();
+
     constructor(context: StackContext, macHandler: MACHandler, nwkHandler: NWKHandler, callbacks: APSHandlerCallbacks) {
         this.#context = context;
         this.#macHandler = macHandler;
@@ -59,7 +89,15 @@ export class APSHandler {
 
     async start() {}
 
-    stop() {}
+    stop() {
+        for (const entry of this.#pendingAcks.values()) {
+            if (entry.timer !== undefined) {
+                clearTimeout(entry.timer);
+            }
+        }
+
+        this.#pendingAcks.clear();
+    }
 
     /**
      * Get next APS counter.
@@ -86,7 +124,40 @@ export class APSHandler {
     }
 
     /**
-     * Send a Zigbee APS DATA frame.
+     * Check whether an incoming APS frame is a duplicate and update the duplicate table accordingly.
+     * @returns true when the frame was already seen within the duplicate removal timeout.
+     */
+    public isDuplicateFrame(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader, now = Date.now()): boolean {
+        if (apsHeader.counter === undefined) {
+            // skip check
+            return false;
+        }
+
+        this.#pruneExpiredAPSDuplicates(now);
+
+        // XXX: perf: string of bigint/number, this is called a lot
+        const sourceKey = nwkHeader.source64 !== undefined ? `64:${nwkHeader.source64}` : `16:${nwkHeader.source16}`;
+        const entry = this.#apsDuplicateTable.get(sourceKey);
+
+        if (entry !== undefined && entry.counter === apsHeader.counter && entry.expiresAt > now) {
+            return true;
+        }
+
+        this.#apsDuplicateTable.set(sourceKey, { counter: apsHeader.counter, expiresAt: now + CONFIG_APS_DUPLICATE_TIMEOUT_MS });
+
+        return false;
+    }
+
+    #pruneExpiredAPSDuplicates(now: number): void {
+        for (const [sourceKey, entry] of this.#apsDuplicateTable) {
+            if (entry.expiresAt <= now) {
+                this.#apsDuplicateTable.delete(sourceKey);
+            }
+        }
+    }
+
+    /**
+     * Send a Zigbee APS DATA frame and track pending ACK if necessary.
      * Throws if could not send.
      * @param finalPayload
      * @param macDest16
@@ -113,7 +184,39 @@ export class APSHandler {
         sourceEndpoint: number | undefined,
         group: number | undefined,
     ): Promise<number> {
+        const params: SendDataParams = {
+            finalPayload,
+            nwkDiscoverRoute,
+            nwkDest16,
+            nwkDest64,
+            apsDeliveryMode,
+            clusterId,
+            profileId,
+            destEndpoint,
+            sourceEndpoint,
+            group,
+        };
         const apsCounter = this.nextCounter();
+        const sendDest16 = await this.#sendDataInternal(params, apsCounter, 0);
+
+        if (sendDest16 !== undefined) {
+            this.#trackPendingAck(sendDest16, apsCounter, params);
+        }
+
+        return apsCounter;
+    }
+
+    /**
+     * Send a Zigbee APS DATA frame.
+     * Throws if could not send.
+     * @param params
+     * @param apsCounter
+     * @param attempt
+     * @returns Destination 16 data was sent to (undefined if bcast)
+     */
+    async #sendDataInternal(params: SendDataParams, apsCounter: number, attempt: number): Promise<number | undefined> {
+        const { finalPayload, nwkDiscoverRoute, apsDeliveryMode, clusterId, profileId, destEndpoint, sourceEndpoint, group } = params;
+        let { nwkDest16, nwkDest64 } = params;
         const nwkSeqNum = this.#nwkHandler.nextSeqNum();
         const macSeqNum = this.#macHandler.nextSeqNum();
         let relayIndex: number | undefined;
@@ -123,7 +226,7 @@ export class APSHandler {
             [relayIndex, relayAddresses] = this.#nwkHandler.findBestSourceRoute(nwkDest16, nwkDest64);
         } catch (error) {
             logger.error(
-                `=x=> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) nwkDst=${nwkDest16}:${nwkDest64}] ${(error as Error).message}`,
+                `=x=> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) attempt=${attempt} nwkDst=${nwkDest16}:${nwkDest64}] ${(error as Error).message}`,
                 NS,
             );
 
@@ -135,16 +238,23 @@ export class APSHandler {
         }
 
         if (nwkDest16 === undefined) {
-            logger.error(`=x=> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) nwkDst=${nwkDest16}:${nwkDest64}] Invalid parameters`, NS);
+            logger.error(
+                `=x=> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) attempt=${attempt} nwkDst=${nwkDest16}:${nwkDest64}] Invalid parameters`,
+                NS,
+            );
 
             throw new Error("Invalid parameters");
         }
+
+        // update params as needed
+        params.nwkDest16 = nwkDest16;
+        params.nwkDest64 = nwkDest64;
 
         const macDest16 = nwkDest16 < ZigbeeConsts.BCAST_MIN ? (relayAddresses?.[relayIndex!] ?? nwkDest16) : ZigbeeMACConsts.BCAST_ADDR;
 
         logger.debug(
             () =>
-                `===> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) macDst16=${macDest16} nwkDst=${nwkDest16}:${nwkDest64} nwkDiscRte=${nwkDiscoverRoute} apsDlv=${apsDeliveryMode}]`,
+                `===> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum})${attempt > 0 ? ` attempt=${attempt}` : ""} macDst16=${macDest16} nwkDst=${nwkDest16}:${nwkDest64} nwkDiscRte=${nwkDiscoverRoute} apsDlv=${apsDeliveryMode}]`,
             NS,
         );
 
@@ -237,20 +347,112 @@ export class APSHandler {
 
         if (result === false) {
             logger.error(
-                `=x=> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) macDst16=${macDest16} nwkDst=${nwkDest16}:${nwkDest64}] Failed to send`,
+                `=x=> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) attempt=${attempt} macDst16=${macDest16} nwkDst=${nwkDest16}:${nwkDest64}] Failed to send`,
                 NS,
             );
 
             throw new Error("Failed to send");
         }
 
-        return apsCounter;
+        if (macDest16 === ZigbeeMACConsts.BCAST_ADDR) {
+            return undefined;
+        }
+
+        return nwkDest16;
+    }
+
+    #trackPendingAck(dest16: number, apsCounter: number, params: SendDataParams): void {
+        const key = `${dest16}:${apsCounter}`;
+        const existing = this.#pendingAcks.get(key);
+
+        if (existing?.timer !== undefined) {
+            clearTimeout(existing.timer);
+        }
+
+        this.#pendingAcks.set(key, {
+            params,
+            apsCounter,
+            dest16,
+            retries: 0,
+            timer: setTimeout(async () => {
+                await this.#handleAckTimeout(key);
+            }, CONFIG_APS_ACK_WAIT_DURATION_MS),
+        });
+    }
+
+    async #handleAckTimeout(key: string): Promise<void> {
+        const entry = this.#pendingAcks.get(key);
+
+        if (entry === undefined) {
+            return;
+        }
+
+        if (entry.retries >= CONFIG_APS_MAX_FRAME_RETRIES) {
+            this.#pendingAcks.delete(key);
+            logger.error(`=x=> APS DATA[apsCounter=${entry.apsCounter} dest16=${entry.dest16}] Retries exhausted`, NS);
+
+            return;
+        }
+
+        entry.retries += 1;
+
+        try {
+            await this.#sendDataInternal(entry.params, entry.apsCounter, entry.retries);
+        } catch (error) {
+            this.#pendingAcks.delete(key);
+            logger.warning(
+                () =>
+                    `=x=> APS DATA retry failed[apsCounter=${entry.apsCounter} dest16=${entry.dest16} attempt=${entry.retries}] ${(error as Error).message}`,
+                NS,
+            );
+
+            return;
+        }
+
+        entry.timer = setTimeout(async () => {
+            await this.#handleAckTimeout(key);
+        }, CONFIG_APS_ACK_WAIT_DURATION_MS);
+    }
+
+    #resolvePendingAck(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): void {
+        if (apsHeader.counter === undefined) {
+            return;
+        }
+
+        let source16 = nwkHeader.source16;
+
+        if (source16 === undefined && nwkHeader.source64 !== undefined) {
+            source16 = this.#context.getAddress16(nwkHeader.source64);
+        }
+
+        if (source16 === undefined) {
+            return;
+        }
+
+        const key = `${source16}:${apsHeader.counter}`;
+        const entry = this.#pendingAcks.get(key);
+
+        if (entry === undefined) {
+            return;
+        }
+
+        if (entry.timer !== undefined) {
+            clearTimeout(entry.timer);
+        }
+
+        this.#pendingAcks.delete(key);
+
+        logger.debug(
+            () =>
+                `<=== APS ACK[src16=${source16} apsCounter=${apsHeader.counter} dstEp=${apsHeader.sourceEndpoint} clusterId=${apsHeader.clusterId}]`,
+            NS,
+        );
     }
 
     public async sendACK(macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Promise<void> {
         logger.debug(
             () =>
-                `===> APS ACK[dst16=${nwkHeader.source16} seqNum=${nwkHeader.seqNum} dstEp=${apsHeader.sourceEndpoint} clusterId=${apsHeader.clusterId}]`,
+                `===> APS ACK[dst16=${nwkHeader.source16} apsCounter=${apsHeader.counter} dstEp=${apsHeader.sourceEndpoint} clusterId=${apsHeader.clusterId}]`,
             NS,
         );
 
@@ -375,12 +577,24 @@ export class APSHandler {
         switch (apsHeader.frameControl.frameType) {
             case ZigbeeAPSFrameType.ACK: {
                 // ACKs should never contain a payload
-                // TODO: ?
-                break;
+                this.#resolvePendingAck(nwkHeader, apsHeader);
+
+                return;
             }
             case ZigbeeAPSFrameType.DATA:
             case ZigbeeAPSFrameType.INTERPAN: {
                 if (data.byteLength < 1) {
+                    return;
+                }
+
+                if (nwkHeader.source16 === undefined && nwkHeader.source64 === undefined) {
+                    logger.debug(() => `<=~= APS Ignoring frame with no sender info seqNum=${nwkHeader.seqNum}`, NS);
+                    return;
+                }
+
+                // Delegate APS duplicate check to APS handler
+                if (this.isDuplicateFrame(nwkHeader, apsHeader)) {
+                    logger.debug(() => `<=~= APS Ignoring duplicate frame seqNum=${nwkHeader.seqNum} counter=${apsHeader.counter}`, NS);
                     return;
                 }
 
@@ -432,11 +646,6 @@ export class APSHandler {
                             return;
                         }
                     }
-                }
-
-                if (nwkHeader.source16 === undefined && nwkHeader.source64 === undefined) {
-                    logger.debug(() => "<=~= APS Ignoring frame with no sender info", NS);
-                    return;
                 }
 
                 setImmediate(() => {
@@ -623,7 +832,7 @@ export class APSHandler {
                 break;
             }
             case ZigbeeAPSCommandId.REMOVE_DEVICE: {
-                offset = this.processRemoveDevice(data, offset, macHeader, nwkHeader, apsHeader);
+                offset = await this.processRemoveDevice(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
             case ZigbeeAPSCommandId.REQUEST_KEY: {
@@ -693,6 +902,10 @@ export class APSHandler {
                         `<=== APS TRANSPORT_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType} key=${key} seqNum=${seqNum} dst64=${destination} src64=${source}]`,
                     NS,
                 );
+
+                if (destination === this.#context.netParams.eui64 || destination === 0n) {
+                    this.#context.setPendingNetworkKey(key, seqNum);
+                }
 
                 break;
             }
@@ -828,6 +1041,7 @@ export class APSHandler {
         // TODO: tunneling support `, tunnelDest?: bigint`
         logger.debug(() => `===> APS TRANSPORT_KEY_NWK[key=${key.toString("hex")} seqNum=${seqNum} dst64=${destination64}]`, NS);
 
+        const isBroadcast = nwkDest16 >= ZigbeeConsts.BCAST_MIN;
         const finalPayload = Buffer.alloc(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
         let offset = 0;
         finalPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
@@ -838,7 +1052,7 @@ export class APSHandler {
         offset += ZigbeeAPSConsts.CMD_KEY_LENGTH;
         finalPayload.writeUInt8(seqNum, offset);
         offset += 1;
-        finalPayload.writeBigUInt64LE(destination64, offset);
+        finalPayload.writeBigUInt64LE(isBroadcast ? 0n : destination64, offset);
         offset += 8;
         finalPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
         offset += 8;
@@ -868,8 +1082,8 @@ export class APSHandler {
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             false, // nwkSecurity
             nwkDest16, // nwkDest16
-            undefined, // nwkDest64
-            ZigbeeAPSDeliveryMode.UNICAST, // apsDeliveryMode
+            isBroadcast ? undefined : destination64, // nwkDest64
+            isBroadcast ? ZigbeeAPSDeliveryMode.BCAST : ZigbeeAPSDeliveryMode.UNICAST, // apsDeliveryMode
             {
                 control: {
                     level: ZigbeeSecurityLevel.NONE,
@@ -1147,7 +1361,13 @@ export class APSHandler {
      * IMPLEMENTATION GAP: Coordinator receives command but doesn't act on it.
      * Parent routers should send LEAVE to child and UPDATE_DEVICE(status 0x02) to TC.
      */
-    public processRemoveDevice(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
+    public async processRemoveDevice(
+        data: Buffer,
+        offset: number,
+        macHeader: MACHeader,
+        nwkHeader: ZigbeeNWKHeader,
+        _apsHeader: ZigbeeAPSHeader,
+    ): Promise<number> {
         const target = data.readBigUInt64LE(offset);
         offset += 8;
 
@@ -1156,6 +1376,20 @@ export class APSHandler {
                 `<=== APS REMOVE_DEVICE[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} target64=${target}]`,
             NS,
         );
+
+        const childEntry = this.#context.deviceTable.get(target);
+
+        if (childEntry !== undefined) {
+            const leaveSent = await this.#nwkHandler.sendLeave(childEntry.address16, false);
+
+            if (!leaveSent) {
+                logger.warning(`<=x= APS REMOVE_DEVICE[target64=${target}] Failed to send NWK leave`, NS);
+            }
+
+            await this.#context.disassociate(childEntry.address16, target);
+        } else {
+            logger.warning(`<=x= APS REMOVE_DEVICE[target64=${target}] Unknown device`, NS);
+        }
 
         return offset;
     }
@@ -1215,15 +1449,28 @@ export class APSHandler {
             return offset;
         }
 
-        const device64 = this.#context.address16ToAddress64.get(nwkHeader.source16!);
+        const requester64 = nwkHeader.source64 ?? this.#context.address16ToAddress64.get(nwkHeader.source16!);
 
         // don't send to unknown device
-        if (device64 !== undefined) {
+        if (requester64 !== undefined) {
             // TODO:
             //   const deviceKeyPair = this.apsDeviceKeyPairSet.get(nwkHeader.source16!);
             //   if (!deviceKeyPair || deviceKeyPair.keyNegotiationMethod === 0x00 /* `APS Request Key` method */) {
 
-            if (keyType === ZigbeeAPSConsts.CMD_KEY_APP_MASTER) {
+            if (keyType === ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK) {
+                logger.debug(
+                    () =>
+                        `<=== APS REQUEST_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType}]`,
+                    NS,
+                );
+
+                await this.sendTransportKeyNWK(
+                    nwkHeader.source16!,
+                    this.#context.netParams.networkKey,
+                    this.#context.netParams.networkKeySequenceNumber,
+                    requester64,
+                );
+            } else if (keyType === ZigbeeAPSConsts.CMD_KEY_APP_MASTER) {
                 const partner = data.readBigUInt64LE(offset);
                 offset += 8;
 
@@ -1234,9 +1481,17 @@ export class APSHandler {
                 );
 
                 if (this.#context.trustCenterPolicies.allowAppKeyRequest === ApplicationKeyRequestPolicy.ALLOWED) {
-                    const appLinkKey = this.getOrGenerateAppLinkKey(nwkHeader.source16!, partner);
+                    const appLinkKey = this.getOrGenerateAppLinkKey(requester64, partner);
 
                     await this.sendTransportKeyAPP(nwkHeader.source16!, appLinkKey, partner, true);
+
+                    const partnerEntry = this.#context.deviceTable.get(partner);
+
+                    if (partnerEntry?.address16 === undefined) {
+                        logger.warning(() => `<=x= APS REQUEST_KEY[partner64=${partner}] Unknown partner`, NS);
+                    } else {
+                        await this.sendTransportKeyAPP(partnerEntry.address16, appLinkKey, requester64, false);
+                    }
                 }
                 // TODO ApplicationKeyRequestPolicy.ONLY_APPROVED
             } else if (keyType === ZigbeeAPSConsts.CMD_KEY_TC_LINK) {
@@ -1247,7 +1502,7 @@ export class APSHandler {
                 );
 
                 if (this.#context.trustCenterPolicies.allowTCKeyRequest === TrustCenterKeyRequestPolicy.ALLOWED) {
-                    await this.sendTransportKeyTC(nwkHeader.source16!, this.#context.netParams.tcKey, device64);
+                    await this.sendTransportKeyTC(nwkHeader.source16!, this.#context.netParams.tcKey, requester64);
                 }
                 // TODO TrustCenterKeyRequestPolicy.ONLY_PROVISIONAL
                 //      this.apsDeviceKeyPairSet => find deviceAddress === this.context.deviceTable.get(nwkHeader.source).address64 => check provisional or drop msg
@@ -1324,6 +1579,10 @@ export class APSHandler {
                 `<=== APS SWITCH_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} seqNum=${seqNum}]`,
             NS,
         );
+
+        if (!this.#context.activatePendingNetworkKey(seqNum)) {
+            logger.warning(`<=x= APS SWITCH_KEY[seqNum=${seqNum}] Received without pending key`, NS);
+        }
 
         return offset;
     }
@@ -1527,7 +1786,7 @@ export class APSHandler {
      */
     public processConfirmKey(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const status = data.readUInt8(offset);
-        offset += 8;
+        offset += 1;
         const keyType = data.readUInt8(offset);
         offset += 1;
         const destination = data.readBigUInt64LE(offset);
@@ -1609,7 +1868,7 @@ export class APSHandler {
         const device = this.#context.deviceTable.get(destination64);
 
         // TODO: proper place?
-        if (device !== undefined && device.authorized === false) {
+        if (status === 0x00 && device !== undefined && device.authorized === false) {
             device.authorized = true;
 
             setImmediate(() => {
@@ -2025,9 +2284,17 @@ export class APSHandler {
     /**
      * Get or generate application link key for a device pair
      */
-    private getOrGenerateAppLinkKey(_device16: number, _partner64: bigint): Buffer {
-        // TODO: whole mechanism
-        return this.#context.netParams.tcKey;
+    private getOrGenerateAppLinkKey(deviceA: bigint, deviceB: bigint): Buffer {
+        const existing = this.#context.getAppLinkKey(deviceA, deviceB);
+
+        if (existing !== undefined) {
+            return existing;
+        }
+
+        const derived = Buffer.from(this.#context.netParams.tcKey);
+        this.#context.setAppLinkKey(deviceA, deviceB, derived);
+
+        return derived;
     }
 
     // #endregion

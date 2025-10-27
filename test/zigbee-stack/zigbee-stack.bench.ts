@@ -570,7 +570,7 @@ describe("Zigbee Stack Handlers", () => {
                 const [macFCF, macFCFOutOffset] = decodeMACFrameControl(NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0, 0);
                 const [macHeader] = decodeMACHeader(NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0, macFCFOutOffset, macFCF);
 
-                nwkGPHandler.checkDuplicate(macHeader, {
+                nwkGPHandler.isDuplicateFrame(macHeader, {
                     frameControl: { frameType: 0, protocolVersion: 3, autoCommissioning: false, nwkFrameControlExtension: false },
                     securityFrameCounter: 12345,
                     sourceId: 0x87654321,

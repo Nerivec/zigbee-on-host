@@ -329,7 +329,7 @@ export class OTRCPDriver {
                         }
 
                         // Delegate GP duplicate check to NWK GP handler
-                        if (this.nwkGPHandler.checkDuplicate(macHeader, nwkGPHeader)) {
+                        if (this.nwkGPHandler.isDuplicateFrame(macHeader, nwkGPHeader)) {
                             logger.debug(
                                 () =>
                                     `<-~- NWKGP Ignoring duplicate frame macSeqNum=${macHeader.sequenceNumber} nwkGPFC=${nwkGPHeader.securityFrameCounter}`,
@@ -371,16 +371,32 @@ export class OTRCPDriver {
                         return;
                     }
 
+                    const resolvedSource64 =
+                        nwkHeader.source64 ??
+                        (nwkHeader.source16 !== undefined ? this.context.address16ToAddress64.get(nwkHeader.source16) : undefined);
                     const sourceLQA = this.context.computeDeviceLQA(nwkHeader.source16, nwkHeader.source64, metadata?.rssi ?? this.context.rssiMin);
                     const nwkPayload = decodeZigbeeNWKPayload(
                         macPayload,
                         nwkHOutOffset,
                         undefined, // use pre-hashed this.context.netParams.networkKey,
-                        /* nwkHeader.frameControl.extendedSource ? nwkHeader.source64 : this.context.address16ToAddress64.get(nwkHeader.source16!) */
-                        nwkHeader.source64 ?? this.context.address16ToAddress64.get(nwkHeader.source16!),
+                        resolvedSource64,
                         nwkFCF,
                         nwkHeader,
                     );
+
+                    if (nwkFCF.security && nwkHeader.securityHeader) {
+                        const accepted = this.context.updateIncomingNWKFrameCounter(resolvedSource64, nwkHeader.securityHeader.frameCounter);
+
+                        if (!accepted) {
+                            logger.warning(
+                                () =>
+                                    `<-x- NWK Rejecting replay frame src16=${nwkHeader.source16}:${resolvedSource64} counter=${nwkHeader.securityHeader?.frameCounter}`,
+                                NS,
+                            );
+
+                            return;
+                        }
+                    }
 
                     if (nwkFCF.frameType === ZigbeeNWKFrameType.DATA) {
                         const [apsFCF, apsFCFOutOffset] = decodeZigbeeAPSFrameControl(nwkPayload, 0);
