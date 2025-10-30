@@ -17,7 +17,7 @@ export const enum ZigbeeConsts {
     BCAST_SLEEPY = 0xffff,
     /** The amount of time after which a broadcast is considered propagated throughout the network */
     BCAST_TIME_WINDOW = 9000,
-    /** The maximum amount of time that the MAC will hold a message for indirect transmission to a child. (7.68sec for ZigBee Pro) */
+    /** The maximum amount of time that the MAC will hold a message for indirect transmission to a child. (7.68sec for Zigbee Pro) */
     MAC_INDIRECT_TRANSMISSION_TIMEOUT = 7680,
 
     //---- HA
@@ -47,7 +47,7 @@ export const enum ZigbeeConsts {
     //---- Touchlink
     TOUCHLINK_PROFILE_ID = 0xc05e,
 
-    //---- ZigBee Security Constants
+    //---- Zigbee Security Constants
     SEC_L = 2,
     SEC_BLOCKSIZE = 16,
     SEC_NONCE_LEN = 16 - 2 - 1,
@@ -68,20 +68,20 @@ export const enum ZigbeeConsts {
     SEC_CONTROL_NONCE = 0x20,
 }
 
-/* ZigBee security levels. */
+/* Zigbee security levels. */
 export const enum ZigbeeSecurityLevel {
     NONE = 0x00,
     MIC32 = 0x01,
     MIC64 = 0x02,
     MIC128 = 0x03,
     ENC = 0x04,
-    /** ZigBee 3.0 */
+    /** Zigbee 3.0 */
     ENC_MIC32 = 0x05,
     ENC_MIC64 = 0x06,
     ENC_MIC128 = 0x07,
 }
 
-/* ZigBee Key Types */
+/* Zigbee Key Types */
 export const enum ZigbeeKeyType {
     LINK = 0x00,
     NWK = 0x01,
@@ -298,7 +298,7 @@ export function registerDefaultHashedKeys(link: Buffer, nwk: Buffer, transport: 
 /**
  * See B.1.4 Keyed Hash Function for Message Authentication
  *
- * @param key ZigBee Security Key (must be ZigbeeConsts.SEC_KEYSIZE) in length.
+ * @param key Zigbee Security Key (must be ZigbeeConsts.SEC_KEYSIZE) in length.
  * @param inputByte Input byte
  */
 export function makeKeyedHash(key: Buffer, inputByte: number): Buffer {
@@ -451,7 +451,7 @@ export function decryptZigbeePayload(
 
         // take until end of securityHeader for auth tag computation
         const adjustedAuthData = data.subarray(0, hOutOffset);
-        // patch the security level to ZigBee 3.0
+        // patch the security level to Zigbee 3.0
         const origControl = adjustedAuthData[controlOffset];
         adjustedAuthData[controlOffset] &= ~ZigbeeConsts.SEC_CONTROL_LEVEL;
         adjustedAuthData[controlOffset] |= ZigbeeConsts.SEC_CONTROL_LEVEL & ZigbeeSecurityLevel.ENC_MIC32;
@@ -489,7 +489,7 @@ export function encryptZigbeePayload(
         const hashedKey = key ? makeKeyedHashByType(header.control.keyId, key) : defaultHashedKeys[header.control.keyId];
         const nonce = makeNonce(header, header.source64, ZigbeeSecurityLevel.ENC_MIC32);
         const adjustedAuthData = data.subarray(0, offset);
-        // patch the security level to ZigBee 3.0
+        // patch the security level to Zigbee 3.0
         const origControl = adjustedAuthData[controlOffset];
         adjustedAuthData[controlOffset] &= ~ZigbeeConsts.SEC_CONTROL_LEVEL;
         adjustedAuthData[controlOffset] |= ZigbeeConsts.SEC_CONTROL_LEVEL & ZigbeeSecurityLevel.ENC_MIC32;

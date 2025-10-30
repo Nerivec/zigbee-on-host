@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { SpinelCommandId } from "../src/spinel/commands.js";
-import * as Hdlc from "../src/spinel/hdlc.js";
-import { SpinelPropertyId } from "../src/spinel/properties.js";
+import { SpinelCommandId } from "../../src/spinel/commands.js";
+import * as Hdlc from "../../src/spinel/hdlc.js";
+import { SpinelPropertyId } from "../../src/spinel/properties.js";
 import {
     decodeSpinelFrame,
     encodeSpinelFrame,
@@ -14,8 +14,8 @@ import {
     writePropertyAC,
     writePropertyE,
     writePropertyS,
-} from "../src/spinel/spinel.js";
-import { SpinelStatus } from "../src/spinel/statuses.js";
+} from "../../src/spinel/spinel.js";
+import { SpinelStatus } from "../../src/spinel/statuses.js";
 
 describe("Spinel & HDLC", () => {
     const encodeHdlcFrameSpy = vi.spyOn(Hdlc, "encodeHdlcFrame");

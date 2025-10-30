@@ -1,11 +1,11 @@
-import { makeKeyedHash, makeKeyedHashByType, ZigbeeKeyType } from "../src/zigbee/zigbee";
+import { makeKeyedHash, makeKeyedHashByType, ZigbeeKeyType } from "../src/zigbee/zigbee.js";
 
 export const A_CHANNEL = 15;
 export const A_PAN_ID = 0xcd12;
 export const A_EXTENDED_PAN_ID = Buffer.from([0xff, 0xee, 0xdd, 0xcc, 0x44, 0x33, 0x22, 0x11]);
 export const A_EUI64 = Buffer.from([0xef, 0xac, 0x23, 0x45, 0xbb, 0xff, 0x86, 0x99]);
 
-//---- Frames below are from sniffs of actual ZigBee networks (with various coordinators, and dates varying from 2022 to now) with details from Wireshark
+//---- Frames below are from sniffs of actual Zigbee networks (with various coordinators, and dates varying from 2022 to now) with details from Wireshark
 //---- NOTE: FCS is using TI format in most cases which is not valid against proper IEEE 802.15.4 CRC (i.e. do not compare last two bytes)
 
 // #region NETDEF
@@ -43,7 +43,7 @@ export const NETDEF_NETWORK_KEY = Buffer.from([0x01, 0x03, 0x05, 0x07, 0x09, 0x0
  *       RSSI: -85 dB
  *       LQI Correlation Value: 52
  *
- * ZigBee Network Layer Data, Dst: 0x0000, Src: 0x96ba
+ * Zigbee Network Layer Data, Dst: 0x0000, Src: 0x96ba
  *   Frame Control Field: 0x0248, Frame Type: Data, Discover Route: Enable, Security Data
  *       .... .... .... ..00 = Frame Type: Data (0x0)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -59,7 +59,7 @@ export const NETDEF_NETWORK_KEY = Buffer.from([0x01, 0x03, 0x05, 0x07, 0x09, 0x0
  *   Radius: 30
  *   Sequence Number: 151
  *   [Extended Source: SiliconLabor_ff:fe:a4:b9:73 (80:4b:50:ff:fe:a4:b9:73)]
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -70,7 +70,7 @@ export const NETDEF_NETWORK_KEY = Buffer.from([0x01, 0x03, 0x05, 0x07, 0x09, 0x0
  *       Key Sequence Number: 0
  *       Message Integrity Code: 74295ed5
  *
- * ZigBee Application Support Layer Ack, Dst Endpt: 1, Src Endpt: 1
+ * Zigbee Application Support Layer Ack, Dst Endpt: 1, Src Endpt: 1
  *   Frame Control Field: Ack (0x02)
  *       .... ..10 = Frame Type: Ack (0x2)
  *       .... 00.. = Delivery Mode: Unicast (0x0)
@@ -113,7 +113,7 @@ export const NETDEF_ACK_FRAME_TO_COORD = Buffer.from([
  *       RSSI: -53 dB
  *       LQI Correlation Value: 116
  *
- * ZigBee Network Layer Data, Dst: 0x96ba, Src: 0x0000
+ * Zigbee Network Layer Data, Dst: 0x96ba, Src: 0x0000
  *   Frame Control Field: 0x0248, Frame Type: Data, Discover Route: Enable, Security Data
  *       .... .... .... ..00 = Frame Type: Data (0x0)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -129,7 +129,7 @@ export const NETDEF_ACK_FRAME_TO_COORD = Buffer.from([
  *   Radius: 30
  *   Sequence Number: 203
  *   [Extended Source: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)]
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -140,7 +140,7 @@ export const NETDEF_ACK_FRAME_TO_COORD = Buffer.from([
  *       Key Sequence Number: 0
  *       Message Integrity Code: 55e1234c
  *
- * ZigBee Application Support Layer Ack, Dst Endpt: 1, Src Endpt: 1
+ * Zigbee Application Support Layer Ack, Dst Endpt: 1, Src Endpt: 1
  *   Frame Control Field: Ack (0x02)
  *       .... ..10 = Frame Type: Ack (0x2)
  *       .... 00.. = Delivery Mode: Unicast (0x0)
@@ -183,7 +183,7 @@ export const NETDEF_ACK_FRAME_FROM_COORD = Buffer.from([
  *       RSSI: -74 dB
  *       LQI Correlation Value: 74
  *
- * ZigBee Network Layer Command, Dst: Broadcast, Src: 0xf0a2
+ * Zigbee Network Layer Command, Dst: Broadcast, Src: 0xf0a2
  *   Frame Control Field: 0x1209, Frame Type: Command, Discover Route: Suppress, Security, Extended Source Command
  *       .... .... .... ..01 = Frame Type: Command (0x1)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -199,7 +199,7 @@ export const NETDEF_ACK_FRAME_FROM_COORD = Buffer.from([
  *   Radius: 1
  *   Sequence Number: 223
  *   Extended Source: TexasInstrum_00:24:c3:4d:a0 (00:12:4b:00:24:c3:4d:a0)
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -314,7 +314,7 @@ export const NETDEF_LINK_STATUS_FROM_DEV = Buffer.from([
  *       RSSI: -77 dB
  *       LQI Correlation Value: 68
  *
- * ZigBee Network Layer Data, Dst: 0x0000, Src: 0xaa38
+ * Zigbee Network Layer Data, Dst: 0x0000, Src: 0xaa38
  *   Frame Control Field: 0x0248, Frame Type: Data, Discover Route: Enable, Security Data
  *       .... .... .... ..00 = Frame Type: Data (0x0)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -330,7 +330,7 @@ export const NETDEF_LINK_STATUS_FROM_DEV = Buffer.from([
  *   Radius: 30
  *   Sequence Number: 128
  *   [Extended Source: SiliconLabor_ff:fe:d0:4a:58 (70:ac:08:ff:fe:d0:4a:58)]
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -341,7 +341,7 @@ export const NETDEF_LINK_STATUS_FROM_DEV = Buffer.from([
  *       Key Sequence Number: 0
  *       Message Integrity Code: 88ef5e6d
  *
- * ZigBee Application Support Layer Data, Dst Endpt: 1, Src Endpt: 1
+ * Zigbee Application Support Layer Data, Dst Endpt: 1, Src Endpt: 1
  *   Frame Control Field: Data (0x00)
  *       .... ..00 = Frame Type: Data (0x0)
  *       .... 00.. = Delivery Mode: Unicast (0x0)
@@ -354,7 +354,7 @@ export const NETDEF_LINK_STATUS_FROM_DEV = Buffer.from([
  *   Source Endpoint: 1
  *   Counter: 63
  *
- * ZigBee Cluster Library Frame
+ * Zigbee Cluster Library Frame
  *   Frame Control Field: Cluster-specific (0x09)
  *       .... ..01 = Frame Type: Cluster-specific (0x1)
  *       .... .0.. = Manufacturer Specific: False
@@ -392,7 +392,7 @@ export const NETDEF_ZCL_FRAME_CMD_TO_COORD = Buffer.from([
  *       RSSI: -77 dB
  *       LQI Correlation Value: 68
  *
- * ZigBee Network Layer Data, Dst: 0x0000, Src: 0xaa38
+ * Zigbee Network Layer Data, Dst: 0x0000, Src: 0xaa38
  *   Frame Control Field: 0x0248, Frame Type: Data, Discover Route: Enable, Security Data
  *       .... .... .... ..00 = Frame Type: Data (0x0)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -408,7 +408,7 @@ export const NETDEF_ZCL_FRAME_CMD_TO_COORD = Buffer.from([
  *   Radius: 30
  *   Sequence Number: 130
  *   [Extended Source: SiliconLabor_ff:fe:d0:4a:58 (70:ac:08:ff:fe:d0:4a:58)]
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -420,7 +420,7 @@ export const NETDEF_ZCL_FRAME_CMD_TO_COORD = Buffer.from([
  *       Message Integrity Code: 3674143b
  *       [Key: 01030507090b0d0f00020406080a0c0d]
  *
- * ZigBee Application Support Layer Data, Dst Endpt: 1, Src Endpt: 1
+ * Zigbee Application Support Layer Data, Dst Endpt: 1, Src Endpt: 1
  *   Frame Control Field: Data (0x40)
  *       .... ..00 = Frame Type: Data (0x0)
  *       .... 00.. = Delivery Mode: Unicast (0x0)
@@ -433,7 +433,7 @@ export const NETDEF_ZCL_FRAME_CMD_TO_COORD = Buffer.from([
  *   Source Endpoint: 1
  *   Counter: 64
  *
- * ZigBee Cluster Library Frame, Command: Default Response, Seq: 50
+ * Zigbee Cluster Library Frame, Command: Default Response, Seq: 50
  *   Frame Control Field: Profile-wide (0x08)
  *       .... ..00 = Frame Type: Profile-wide (0x0)
  *       .... .0.. = Manufacturer Specific: False
@@ -474,7 +474,7 @@ export const NETDEF_ZCL_FRAME_DEF_RSP_TO_COORD = Buffer.from([
  *       RSSI: -97 dB
  *       LQI Correlation Value: 28
  *
- * ZigBee Network Layer Command, Dst: 0x0000, Src: 0xac3a
+ * Zigbee Network Layer Command, Dst: 0x0000, Src: 0xac3a
  *   Frame Control Field: 0x1209, Frame Type: Command, Discover Route: Suppress, Security, Extended Source Command
  *       .... .... .... ..01 = Frame Type: Command (0x1)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -490,7 +490,7 @@ export const NETDEF_ZCL_FRAME_DEF_RSP_TO_COORD = Buffer.from([
  *   Radius: 30
  *   Sequence Number: 207
  *   Extended Source: TexasInstrum_00:25:49:f4:42 (00:12:4b:00:25:49:f4:42)
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -534,7 +534,7 @@ export const NETDEF_ROUTE_RECORD_TO_COORD = Buffer.from([
  *       RSSI: -53 dB
  *       LQI Correlation Value: 116
  *
- * ZigBee Network Layer Command, Dst: Broadcast, Src: 0x0000
+ * Zigbee Network Layer Command, Dst: Broadcast, Src: 0x0000
  *   Frame Control Field: 0x1209, Frame Type: Command, Discover Route: Suppress, Security, Extended Source Command
  *       .... .... .... ..01 = Frame Type: Command (0x1)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -550,7 +550,7 @@ export const NETDEF_ROUTE_RECORD_TO_COORD = Buffer.from([
  *   Radius: 30
  *   Sequence Number: 237
  *   Extended Source: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -743,7 +743,7 @@ export const NET2_TC_VERIFY_HASHED = makeKeyedHash(NETDEF_TC_KEY, 0x03); //Buffe
  *   Source: 0xa18f
  *   [Extended Source: TelinkSemico_6d:9b:28:0f:df (a4:c1:38:6d:9b:28:0f:df)]
  *
- * ZigBee Network Layer Command, Dst: Broadcast, Src: 0xa18f
+ * Zigbee Network Layer Command, Dst: Broadcast, Src: 0xa18f
  *   Frame Control Field: 0x1209, Frame Type: Command, Discover Route: Suppress, Security, Extended Source Command
  *       .... .... .... ..01 = Frame Type: Command (0x1)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -759,7 +759,7 @@ export const NET2_TC_VERIFY_HASHED = makeKeyedHash(NETDEF_TC_KEY, 0x03); //Buffe
  *   Radius: 1
  *   Sequence Number: 195
  *   Extended Source: TelinkSemico_6d:9b:28:0f:df (a4:c1:38:6d:9b:28:0f:df)
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -835,10 +835,10 @@ export const NET2_BEACON_REQ_FROM_DEVICE = Buffer.from([
  *       GTS Permit: False
  *   Pending Addresses: 0 Short and 0 Long
  *
- * ZigBee Beacon, ZigBee PRO, EPID: dd:dd:dd:dd:dd:dd:dd:dd
+ * Zigbee Beacon, Zigbee PRO, EPID: dd:dd:dd:dd:dd:dd:dd:dd
  *   Protocol ID: 0
- *   Beacon: Stack Profile: ZigBee PRO, Router Capacity, End Device Capacity
- *       .... .... .... 0010 = Stack Profile: ZigBee PRO (0x2)
+ *   Beacon: Stack Profile: Zigbee PRO, Router Capacity, End Device Capacity
+ *       .... .... .... 0010 = Stack Profile: Zigbee PRO (0x2)
  *       .... .... 0010 .... = Protocol Version: 2
  *       .... .1.. .... .... = Router Capacity: True
  *       .000 0... .... .... = Device Depth: 0
@@ -960,7 +960,7 @@ export const NET2_ASSOC_RESP_FROM_COORD = Buffer.from([
  *   Source: 0x0000
  *   [Extended Source: SiliconLabor_ff:fe:05:99:f9 (80:4b:50:ff:fe:05:99:f9)]
  *
- * ZigBee Network Layer Data, Dst: 0xa18f, Src: 0x0000
+ * Zigbee Network Layer Data, Dst: 0xa18f, Src: 0x0000
  *   Frame Control Field: 0x0008, Frame Type: Data, Discover Route: Suppress Data
  *       .... .... .... ..00 = Frame Type: Data (0x0)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -977,7 +977,7 @@ export const NET2_ASSOC_RESP_FROM_COORD = Buffer.from([
  *   Sequence Number: 161
  *   [Extended Source: SiliconLabor_ff:fe:05:99:f9 (80:4b:50:ff:fe:05:99:f9)]
  *
- * ZigBee Application Support Layer Command
+ * Zigbee Application Support Layer Command
  *   Frame Control Field: Command (0x21)
  *       .... ..01 = Frame Type: Command (0x1)
  *       .... 00.. = Delivery Mode: Unicast (0x0)
@@ -985,7 +985,7 @@ export const NET2_ASSOC_RESP_FROM_COORD = Buffer.from([
  *       .0.. .... = Acknowledgement Request: False
  *       0... .... = Extended Header: False
  *   Counter: 106
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x30, Key Id: Key-Transport Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...1 0... = Key Id: Key-Transport Key (0x2)
@@ -1030,7 +1030,7 @@ export const NET2_TRANSPORT_KEY_NWK_FROM_COORD = Buffer.from([
  *   Source: 0xa18f
  *   [Extended Source: TelinkSemico_6d:9b:28:0f:df (a4:c1:38:6d:9b:28:0f:df)]
  *
- * ZigBee Network Layer Data, Dst: Broadcast, Src: 0xa18f
+ * Zigbee Network Layer Data, Dst: Broadcast, Src: 0xa18f
  *   Frame Control Field: 0x0208, Frame Type: Data, Discover Route: Suppress, Security Data
  *       .... .... .... ..00 = Frame Type: Data (0x0)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1046,7 +1046,7 @@ export const NET2_TRANSPORT_KEY_NWK_FROM_COORD = Buffer.from([
  *   Radius: 30
  *   Sequence Number: 27
  *   [Extended Source: TelinkSemico_6d:9b:28:0f:df (a4:c1:38:6d:9b:28:0f:df)]
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -1058,7 +1058,7 @@ export const NET2_TRANSPORT_KEY_NWK_FROM_COORD = Buffer.from([
  *       Message Integrity Code: 337383aa
  *       [Key: 01030507090b0d0f00020406080a0c0d]
  *
- * ZigBee Application Support Layer Data, Dst Endpt: 0, Src Endpt: 0
+ * Zigbee Application Support Layer Data, Dst Endpt: 0, Src Endpt: 0
  *   Frame Control Field: Data (0x08)
  *       .... ..00 = Frame Type: Data (0x0)
  *       .... 10.. = Delivery Mode: Broadcast (0x2)
@@ -1067,11 +1067,11 @@ export const NET2_TRANSPORT_KEY_NWK_FROM_COORD = Buffer.from([
  *       0... .... = Extended Header: False
  *   Destination Endpoint: 0
  *   Device Announcement (Cluster ID: 0x0013)
- *   Profile: ZigBee Device Profile (0x0000)
+ *   Profile: Zigbee Device Profile (0x0000)
  *   Source Endpoint: 0
  *   Counter: 123
  *
- * ZigBee Device Profile, Device Announcement, Nwk Addr: 0xa18f, Ext Addr: TelinkSemico_6d:9b:28:0f:df
+ * Zigbee Device Profile, Device Announcement, Nwk Addr: 0xa18f, Ext Addr: TelinkSemico_6d:9b:28:0f:df
  *   Sequence Number: 0
  *   Nwk Addr of Interest: 0xa18f
  *   Extended Address: TelinkSemico_6d:9b:28:0f:df (a4:c1:38:6d:9b:28:0f:df)
@@ -1110,7 +1110,7 @@ export const NET2_DEVICE_ANNOUNCE_BCAST = Buffer.from([
  *   Source: 0xa18f
  *   [Extended Source: TelinkSemico_6d:9b:28:0f:df (a4:c1:38:6d:9b:28:0f:df)]
  *
- * ZigBee Network Layer Data, Dst: 0x0000, Src: 0xa18f
+ * Zigbee Network Layer Data, Dst: 0x0000, Src: 0xa18f
  *   Frame Control Field: 0x0248, Frame Type: Data, Discover Route: Enable, Security Data
  *       .... .... .... ..00 = Frame Type: Data (0x0)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1126,7 +1126,7 @@ export const NET2_DEVICE_ANNOUNCE_BCAST = Buffer.from([
  *   Radius: 30
  *   Sequence Number: 37
  *   [Extended Source: TelinkSemico_6d:9b:28:0f:df (a4:c1:38:6d:9b:28:0f:df)]
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -1138,7 +1138,7 @@ export const NET2_DEVICE_ANNOUNCE_BCAST = Buffer.from([
  *       Message Integrity Code: 6dcba80f
  *       [Key: 01030507090b0d0f00020406080a0c0d]
  *
- * ZigBee Application Support Layer Data, Dst Endpt: 0, Src Endpt: 0
+ * Zigbee Application Support Layer Data, Dst Endpt: 0, Src Endpt: 0
  *   Frame Control Field: Data (0x40)
  *       .... ..00 = Frame Type: Data (0x0)
  *       .... 00.. = Delivery Mode: Unicast (0x0)
@@ -1147,11 +1147,11 @@ export const NET2_DEVICE_ANNOUNCE_BCAST = Buffer.from([
  *       0... .... = Extended Header: False
  *   Destination Endpoint: 0
  *   Node Descriptor Request (Cluster ID: 0x0002)
- *   Profile: ZigBee Device Profile (0x0000)
+ *   Profile: Zigbee Device Profile (0x0000)
  *   Source Endpoint: 0
  *   Counter: 130
  *
- * ZigBee Device Profile, Node Descriptor Request, Nwk Addr: 0x0000
+ * Zigbee Device Profile, Node Descriptor Request, Nwk Addr: 0x0000
  *   Sequence Number: 1
  *   Nwk Addr of Interest: 0x0000
  */
@@ -1181,7 +1181,7 @@ export const NET2_NODE_DESC_REQ_FROM_DEVICE = Buffer.from([
  *   Source: 0xa18f
  *   [Extended Source: TelinkSemico_6d:9b:28:0f:df (a4:c1:38:6d:9b:28:0f:df)]
  *
- * ZigBee Network Layer Data, Dst: 0x0000, Src: 0xa18f
+ * Zigbee Network Layer Data, Dst: 0x0000, Src: 0xa18f
  *   Frame Control Field: 0x0248, Frame Type: Data, Discover Route: Enable, Security Data
  *       .... .... .... ..00 = Frame Type: Data (0x0)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1197,7 +1197,7 @@ export const NET2_NODE_DESC_REQ_FROM_DEVICE = Buffer.from([
  *   Radius: 30
  *   Sequence Number: 39
  *   [Extended Source: TelinkSemico_6d:9b:28:0f:df (a4:c1:38:6d:9b:28:0f:df)]
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -1209,7 +1209,7 @@ export const NET2_NODE_DESC_REQ_FROM_DEVICE = Buffer.from([
  *       Message Integrity Code: 61efed10
  *       [Key: 01030507090b0d0f00020406080a0c0d]
  *
- * ZigBee Application Support Layer Command
+ * Zigbee Application Support Layer Command
  *   Frame Control Field: Command (0x21)
  *       .... ..01 = Frame Type: Command (0x1)
  *       .... 00.. = Delivery Mode: Unicast (0x0)
@@ -1217,7 +1217,7 @@ export const NET2_NODE_DESC_REQ_FROM_DEVICE = Buffer.from([
  *       .0.. .... = Acknowledgement Request: False
  *       0... .... = Extended Header: False
  *   Counter: 131
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x20, Key Id: Link Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 0... = Key Id: Link Key (0x0)
@@ -1259,7 +1259,7 @@ export const NET2_REQUEST_KEY_TC_FROM_DEVICE = Buffer.from([
  *   Source: 0x0000
  *   [Extended Source: SiliconLabor_ff:fe:05:99:f9 (80:4b:50:ff:fe:05:99:f9)]
  *
- * ZigBee Network Layer Data, Dst: 0xa18f, Src: 0x0000
+ * Zigbee Network Layer Data, Dst: 0xa18f, Src: 0x0000
  *   Frame Control Field: 0x0208, Frame Type: Data, Discover Route: Suppress, Security Data
  *       .... .... .... ..00 = Frame Type: Data (0x0)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1275,7 +1275,7 @@ export const NET2_REQUEST_KEY_TC_FROM_DEVICE = Buffer.from([
  *   Radius: 30
  *   Sequence Number: 185
  *   [Extended Source: SiliconLabor_ff:fe:05:99:f9 (80:4b:50:ff:fe:05:99:f9)]
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -1287,7 +1287,7 @@ export const NET2_REQUEST_KEY_TC_FROM_DEVICE = Buffer.from([
  *       Message Integrity Code: c1559100
  *       [Key: 01030507090b0d0f00020406080a0c0d]
  *
- * ZigBee Application Support Layer Command
+ * Zigbee Application Support Layer Command
  *   Frame Control Field: Command (0x21)
  *       .... ..01 = Frame Type: Command (0x1)
  *       .... 00.. = Delivery Mode: Unicast (0x0)
@@ -1295,7 +1295,7 @@ export const NET2_REQUEST_KEY_TC_FROM_DEVICE = Buffer.from([
  *       .0.. .... = Acknowledgement Request: False
  *       0... .... = Extended Header: False
  *   Counter: 114
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x38, Key Id: Key-Load Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...1 1... = Key Id: Key-Load Key (0x3)
@@ -1340,7 +1340,7 @@ export const NET2_TRANSPORT_KEY_TC_FROM_COORD = Buffer.from([
  *   Source: 0xa18f
  *   [Extended Source: TelinkSemico_6d:9b:28:0f:df (a4:c1:38:6d:9b:28:0f:df)]
  *
- * ZigBee Network Layer Data, Dst: 0x0000, Src: 0xa18f
+ * Zigbee Network Layer Data, Dst: 0x0000, Src: 0xa18f
  *   Frame Control Field: 0x0248, Frame Type: Data, Discover Route: Enable, Security Data
  *       .... .... .... ..00 = Frame Type: Data (0x0)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1356,7 +1356,7 @@ export const NET2_TRANSPORT_KEY_TC_FROM_COORD = Buffer.from([
  *   Radius: 30
  *   Sequence Number: 40
  *   [Extended Source: TelinkSemico_6d:9b:28:0f:df (a4:c1:38:6d:9b:28:0f:df)]
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -1368,7 +1368,7 @@ export const NET2_TRANSPORT_KEY_TC_FROM_COORD = Buffer.from([
  *       Message Integrity Code: 8290b7ec
  *       [Key: 01030507090b0d0f00020406080a0c0d]
  *
- * ZigBee Application Support Layer Command
+ * Zigbee Application Support Layer Command
  *   Frame Control Field: Command (0x01)
  *       .... ..01 = Frame Type: Command (0x1)
  *       .... 00.. = Delivery Mode: Unicast (0x0)
@@ -1410,7 +1410,7 @@ export const NET2_VERIFY_KEY_TC_FROM_DEVICE = Buffer.from([
  *   Source: 0x0000
  *   [Extended Source: SiliconLabor_ff:fe:05:99:f9 (80:4b:50:ff:fe:05:99:f9)]
  *
- * ZigBee Network Layer Data, Dst: 0xa18f, Src: 0x0000
+ * Zigbee Network Layer Data, Dst: 0xa18f, Src: 0x0000
  *   Frame Control Field: 0x0208, Frame Type: Data, Discover Route: Suppress, Security Data
  *       .... .... .... ..00 = Frame Type: Data (0x0)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1426,7 +1426,7 @@ export const NET2_VERIFY_KEY_TC_FROM_DEVICE = Buffer.from([
  *   Radius: 30
  *   Sequence Number: 186
  *   [Extended Source: SiliconLabor_ff:fe:05:99:f9 (80:4b:50:ff:fe:05:99:f9)]
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -1438,7 +1438,7 @@ export const NET2_VERIFY_KEY_TC_FROM_DEVICE = Buffer.from([
  *       Message Integrity Code: e466e305
  *       [Key: 01030507090b0d0f00020406080a0c0d]
  *
- * ZigBee Application Support Layer Command
+ * Zigbee Application Support Layer Command
  *   Frame Control Field: Command (0x61)
  *       .... ..01 = Frame Type: Command (0x1)
  *       .... 00.. = Delivery Mode: Unicast (0x0)
@@ -1446,7 +1446,7 @@ export const NET2_VERIFY_KEY_TC_FROM_DEVICE = Buffer.from([
  *       .1.. .... = Acknowledgement Request: True
  *       0... .... = Extended Header: False
  *   Counter: 115
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x20, Key Id: Link Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 0... = Key Id: Link Key (0x0)
@@ -1505,7 +1505,7 @@ export const NET3_TC_VERIFY_HASHED = makeKeyedHash(NETDEF_TC_KEY, 0x03); //Buffe
  *   Source: 0x0000
  *   [Extended Source: TexasInstrum_00:26:d1:5e:0e (00:12:4b:00:26:d1:5e:0e)]
  *
- * ZigBee Network Layer Command, Dst: Broadcast, Src: 0x0000
+ * Zigbee Network Layer Command, Dst: Broadcast, Src: 0x0000
  *   Frame Control Field: 0x1209, Frame Type: Command, Discover Route: Suppress, Security, Extended Source Command
  *       .... .... .... ..01 = Frame Type: Command (0x1)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1521,7 +1521,7 @@ export const NET3_TC_VERIFY_HASHED = makeKeyedHash(NETDEF_TC_KEY, 0x03); //Buffe
  *   Radius: 1
  *   Sequence Number: 138
  *   Extended Source: TexasInstrum_00:26:d1:5e:0e (00:12:4b:00:26:d1:5e:0e)
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -1568,7 +1568,7 @@ export const NET3_LINK_STATUS = Buffer.from([
  *   Source: 0x0000
  *   [Extended Source: TexasInstrum_00:26:d1:5e:0e (00:12:4b:00:26:d1:5e:0e)]
  *
- * ZigBee Network Layer Command, Dst: Broadcast, Src: 0x0000
+ * Zigbee Network Layer Command, Dst: Broadcast, Src: 0x0000
  *   Frame Control Field: 0x1209, Frame Type: Command, Discover Route: Suppress, Security, Extended Source Command
  *       .... .... .... ..01 = Frame Type: Command (0x1)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1584,7 +1584,7 @@ export const NET3_LINK_STATUS = Buffer.from([
  *   Radius: 10
  *   Sequence Number: 145
  *   Extended Source: TexasInstrum_00:26:d1:5e:0e (00:12:4b:00:26:d1:5e:0e)
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -1631,7 +1631,7 @@ export const NET3_MTORR = Buffer.from([
  *   Source: 0x3ab1
  *   [Extended Source: SiliconLabor_ff:fe:5e:70:ea (5c:c7:c1:ff:fe:5e:70:ea)]
  *
- * ZigBee Network Layer Command, Dst: 0x0000, Src: 0x3ab1
+ * Zigbee Network Layer Command, Dst: 0x0000, Src: 0x3ab1
  *   Frame Control Field: 0x1a09, Frame Type: Command, Discover Route: Suppress, Security, Destination, Extended Source Command
  *       .... .... .... ..01 = Frame Type: Command (0x1)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1648,7 +1648,7 @@ export const NET3_MTORR = Buffer.from([
  *   Sequence Number: 247
  *   Destination: TexasInstrum_00:26:d1:5e:0e (00:12:4b:00:26:d1:5e:0e)
  *   Extended Source: SiliconLabor_ff:fe:5e:70:ea (5c:c7:c1:ff:fe:5e:70:ea)
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -1700,7 +1700,7 @@ export const NET4_COORD_EUI64_BIGINT = 16175115667303284240n;
  *   [Extended Source: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)]
  *   FCS: 0xb82a (Correct)
  *
- * ZigBee Network Layer Command, Dst: Broadcast, Src: 0x0000
+ * Zigbee Network Layer Command, Dst: Broadcast, Src: 0x0000
  *   Frame Control Field: 0x1209, Frame Type: Command, Discover Route: Suppress, Security, Extended Source Command
  *       .... .... .... ..01 = Frame Type: Command (0x1)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1716,7 +1716,7 @@ export const NET4_COORD_EUI64_BIGINT = 16175115667303284240n;
  *   Radius: 30
  *   Sequence Number: 96
  *   Extended Source: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -1764,7 +1764,7 @@ export const NET4_MTORR_FROM_COORD = Buffer.from([
  *   [Extended Source: SiliconLabor_ff:fe:a4:b9:73 (80:4b:50:ff:fe:a4:b9:73)]
  *   FCS: 0x703e (Correct)
  *
- * ZigBee Network Layer Command, Dst: 0x0000, Src: 0x96ba
+ * Zigbee Network Layer Command, Dst: 0x0000, Src: 0x96ba
  *   Frame Control Field: 0x1a09, Frame Type: Command, Discover Route: Suppress, Security, Destination, Extended Source Command
  *       .... .... .... ..01 = Frame Type: Command (0x1)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1781,7 +1781,7 @@ export const NET4_MTORR_FROM_COORD = Buffer.from([
  *   Sequence Number: 142
  *   Destination: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)
  *   Extended Source: SiliconLabor_ff:fe:a4:b9:73 (80:4b:50:ff:fe:a4:b9:73)
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -1823,7 +1823,7 @@ export const NET4_ROUTE_RECORD_FROM_96BA_NO_RELAY = Buffer.from([
  *   [Extended Source: SiliconLabor_ff:fe:d0:4a:58 (70:ac:08:ff:fe:d0:4a:58)]
  *   FCS: 0xb06f (Correct)
  *
- * ZigBee Network Layer Command, Dst: 0x0000, Src: 0x91d2
+ * Zigbee Network Layer Command, Dst: 0x0000, Src: 0x91d2
  *   Frame Control Field: 0x1a09, Frame Type: Command, Discover Route: Suppress, Security, Destination, Extended Source Command
  *       .... .... .... ..01 = Frame Type: Command (0x1)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1840,7 +1840,7 @@ export const NET4_ROUTE_RECORD_FROM_96BA_NO_RELAY = Buffer.from([
  *   Sequence Number: 43
  *   Destination: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)
  *   Extended Source: SiliconLabor_ff:fe:d0:4a:58 (70:ac:08:ff:fe:d0:4a:58)
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -1882,7 +1882,7 @@ export const NET4_ROUTE_RECORD_FROM_91D2_NO_RELAY = Buffer.from([
  *   [Extended Source: SiliconLabor_ff:fe:a4:b9:73 (80:4b:50:ff:fe:a4:b9:73)]
  *   FCS: 0xe286 (Correct)
  *
- * ZigBee Network Layer Command, Dst: 0x0000, Src: 0x6887
+ * Zigbee Network Layer Command, Dst: 0x0000, Src: 0x6887
  *   Frame Control Field: 0x1a09, Frame Type: Command, Discover Route: Suppress, Security, Destination, Extended Source Command
  *       .... .... .... ..01 = Frame Type: Command (0x1)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1899,7 +1899,7 @@ export const NET4_ROUTE_RECORD_FROM_91D2_NO_RELAY = Buffer.from([
  *   Sequence Number: 109
  *   Destination: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)
  *   Extended Source: TexasInstrum_00:29:27:fd:8c (00:12:4b:00:29:27:fd:8c)
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -1942,7 +1942,7 @@ export const NET4_ROUTE_RECORD_FROM_6887_RELAY_96BA = Buffer.from([
  *   [Extended Source: SiliconLabor_ff:fe:d0:4a:58 (70:ac:08:ff:fe:d0:4a:58)]
  *   FCS: 0x5950 (Correct)
  *
- * ZigBee Network Layer Command, Dst: 0x0000, Src: 0x9ed5
+ * Zigbee Network Layer Command, Dst: 0x0000, Src: 0x9ed5
  *   Frame Control Field: 0x1a09, Frame Type: Command, Discover Route: Suppress, Security, Destination, Extended Source Command
  *       .... .... .... ..01 = Frame Type: Command (0x1)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -1959,7 +1959,7 @@ export const NET4_ROUTE_RECORD_FROM_6887_RELAY_96BA = Buffer.from([
  *   Sequence Number: 80
  *   Destination: SiliconLabor_ff:fe:77:be:10 (e0:79:8d:ff:fe:77:be:10)
  *   Extended Source: TexasInstrum_00:25:49:f4:42 (00:12:4b:00:25:49:f4:42)
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)
@@ -2002,7 +2002,7 @@ export const NET4_ROUTE_RECORD_FROM_9ED5_RELAY_91D2 = Buffer.from([
  *   [Extended Source: TexasInstrum_00:24:c2:e1:e1 (00:12:4b:00:24:c2:e1:e1)]
  *   FCS: 0x2403 (Correct)
  *
- * ZigBee Network Layer Command, Dst: 0x0000, Src: 0x4b8e
+ * Zigbee Network Layer Command, Dst: 0x0000, Src: 0x4b8e
  *   Frame Control Field: 0x1209, Frame Type: Command, Discover Route: Suppress, Security, Extended Source Command
  *       .... .... .... ..01 = Frame Type: Command (0x1)
  *       .... .... ..00 10.. = Protocol Version: 2
@@ -2018,7 +2018,7 @@ export const NET4_ROUTE_RECORD_FROM_9ED5_RELAY_91D2 = Buffer.from([
  *   Radius: 30
  *   Sequence Number: 175
  *   Extended Source: TexasInstrum_00:25:02:d0:3b (00:12:4b:00:25:02:d0:3b)
- *   ZigBee Security Header
+ *   Zigbee Security Header
  *       Security Control Field: 0x28, Key Id: Network Key, Extended Nonce
  *           .... .000 = Security Level: 0x0
  *           ...0 1... = Key Id: Network Key (0x1)

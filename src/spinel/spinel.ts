@@ -138,8 +138,11 @@ export const SPINEL_RCP_API_VERSION = 11;
 
 /**
  * Decode HDLC frame into Spinel frame
+ * HOT PATH: Called for every incoming frame from RCP.
  */
+/* @__INLINE__ */
 export function decodeSpinelFrame(hdlcFrame: HdlcFrame): SpinelFrame {
+    // HOT PATH: Extract header fields with bitwise operations
     const header = hdlcFrame.data[0];
     const tid = header & SPINEL_HEADER_TID_MASK;
     const nli = (header & SPINEL_HEADER_NLI_MASK) >> SPINEL_HEADER_NLI_SHIFT;
@@ -156,7 +159,9 @@ export function decodeSpinelFrame(hdlcFrame: HdlcFrame): SpinelFrame {
 
 /**
  * Encode Spinel frame into HDLC frame
+ * HOT PATH: Called for every outgoing frame to RCP.
  */
+/* @__INLINE__ */
 export function encodeSpinelFrame(frame: SpinelFrame): HdlcFrame {
     const cmdIdSize = getPackedUIntSize(frame.commandId);
     const buffer = Buffer.alloc(frame.payload.byteLength + 1 + cmdIdSize);
@@ -174,6 +179,11 @@ export function encodeSpinelFrame(frame: SpinelFrame): HdlcFrame {
 const SPINEL_PACKED_UINT_MASK = 0x80;
 const SPINEL_PACKED_UINT_MSO_MASK = 0x7f;
 
+/**
+ * Calculate size needed for packed unsigned integer encoding.
+ * HOT PATH: Called during frame encoding.
+ */
+/* @__INLINE__ */
 export function getPackedUIntSize(value: number): number {
     if (value < 1 << 7) {
         return 1;
@@ -194,6 +204,11 @@ export function getPackedUIntSize(value: number): number {
     return 5;
 }
 
+/**
+ * Encode packed unsigned integer into buffer.
+ * HOT PATH: Called during frame encoding.
+ */
+/* @__INLINE__ */
 export function setPackedUInt(data: Buffer, offset: number, value: number, size?: number): number {
     if (!size) {
         size = getPackedUIntSize(value);
@@ -212,10 +227,16 @@ export function setPackedUInt(data: Buffer, offset: number, value: number, size?
     return offset;
 }
 
+/**
+ * Decode packed unsigned integer from buffer.
+ * HOT PATH: Called for every incoming frame.
+ */
+/* @__INLINE__ */
 export function getPackedUInt(data: Buffer, offset: number): [value: number, outOffset: number] {
     let value = 0;
     let i = 0;
 
+    // HOT PATH: Decode variable-length integer
     do {
         if (i >= 40) {
             throw new Error(`Invalid Packed UInt, got ${i}, expected < 40`);

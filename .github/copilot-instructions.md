@@ -18,7 +18,7 @@ This project uses the following exact technology versions:
 
 - **Node.js**: `^20.19.0 || >=22.12.0` (prefer 22.12.0+)
 - **TypeScript**: `^5.9.2`
-  - Target: ES2022
+  - Target: esnext
   - Module: NodeNext
   - Module Resolution: NodeNext
   - Strict mode enabled
@@ -34,7 +34,6 @@ This project uses the following exact technology versions:
 
 ### Critical Version Constraints
 
-- **ES2022 features only**: Never use ES2023+ features (no array `findLast`, `findLastIndex`, hashbang grammar, etc.)
 - **NodeNext modules**: Always use `.js` extensions in imports (e.g., `from "./spinel.js"` not `from "./spinel"`)
 - **Strict TypeScript**: All strict type-checking options enabled
 - **No external production dependencies**: Use only Node.js built-in modules for production code
@@ -55,11 +54,20 @@ This project follows a strict layered architecture:
 └─────────────────────────────────────────────────┘
                       ↓
 ┌─────────────────────────────────────────────────┐
-│      ZigBee Protocol Layers (src/zigbee/)       │
-│  - APS (Application Support)                    │
+│      Zigbee Stack Handlers (src/zigbee-stack/)  │
+│  - MACHandler (MAC layer operations)            │
+│  - NWKHandler (Network layer operations)        │
+│  - NWKGPHandler (Green Power operations)        │
+│  - APSHandler (Application Support layer)       │
+│  - StackContext (shared state)                  │
+└─────────────────────────────────────────────────┘
+                      ↓
+┌─────────────────────────────────────────────────┐
+│   Zigbee Protocol Utilities (src/zigbee/)       │
+│  - MAC (IEEE 802.15.4)                          │
 │  - NWK (Network Layer)                          │
 │  - NWK GP (Green Power)                         │
-│  - MAC (IEEE 802.15.4)                          │
+│  - APS (Application Support)                    │
 │  - Core utilities (zigbee.ts)                   │
 └─────────────────────────────────────────────────┘
                       ↓
@@ -80,8 +88,9 @@ This project follows a strict layered architecture:
 ### Directory Structure Rules
 
 - **src/drivers/**: RCP communication and main adapter logic
+- **src/zigbee-stack/**: Zigbee stack handlers (MAC, NWK, APS, GP, context)
 - **src/spinel/**: Spinel protocol implementation (OpenThread RCP)
-- **src/zigbee/**: ZigBee protocol stack (MAC, NWK, APS, GP)
+- **src/zigbee/**: Zigbee protocol utilities (frame encoding/decoding)
 - **src/utils/**: Shared utilities (minimal)
 - **src/dev/**: Development tools (excluded from production builds)
 - **test/**: Test files matching source structure
@@ -281,7 +290,7 @@ nli: number;
 
 ### Critical Performance Rules
 
-This is a performance-critical ZigBee stack. Always follow these patterns:
+This is a performance-critical Zigbee stack. Always follow these patterns:
 
 #### 1. No Expensive Operations in Hot Paths
 
@@ -453,22 +462,16 @@ export const NETDEF_NETWORK_KEY = Buffer.from("...");
 ### Assertions
 
 ```typescript
-// Use toStrictEqual for deep equality
+// Always use toStrictEqual for deep equality, primitive values or boolean checks
 expect(decodedValue).toStrictEqual(expectedValue);
-
-// Use toBe for primitive values
-expect(count).toBe(5);
-
-// Use toBeTruthy/toBeFalsy for boolean checks
-expect(result).toBeTruthy();
 ```
 
 ### Coverage Requirements
 
-- Statements: 70%+
-- Functions: 75%+
-- Branches: 75%+
-- Lines: 70%+
+- Statements: 85%+
+- Functions: 85%+
+- Branches: 80%+
+- Lines: 85%+
 
 ## Biome Linter Rules
 
@@ -553,7 +556,7 @@ const buffer = Buffer.allocUnsafe(size); // for temporary buffers
 const buffer = Buffer.alloc(size); // for zero-initialized buffers
 const buffer = Buffer.from(array); // from existing data
 
-// Read operations (little-endian default in ZigBee)
+// Read operations (little-endian default in Zigbee)
 const uint8 = buffer.readUInt8(offset);
 const uint16 = buffer.readUInt16LE(offset);
 const uint32 = buffer.readUInt32LE(offset);
@@ -607,32 +610,46 @@ const commandId = 0x05;
 throw new Error(`Invalid frame type: 0x${frameType.toString(16).padStart(2, "0")}`);
 ```
 
-## Event Handling Patterns
+## Callback Pattern for Handlers
 
-### EventEmitter Usage
+Handlers use callback interfaces to communicate with the driver instead of emitting events. This provides better type safety and clearer dependencies.
+
+**Handler callback interfaces:**
+- `MACHandlerCallbacks` - MAC layer to driver
+- `NWKHandlerCallbacks` - NWK layer to driver
+- `NWKGPHandlerCallbacks` - Green Power to driver
+- `APSHandlerCallbacks` - APS layer to driver
+- `StackContextCallbacks` - Stack context to driver
+
+### Driver Callbacks (External Communication)
+
+The driver communicates with external consumers (e.g., Zigbee2MQTT) through the `StackCallbacks` interface:
 
 ```typescript
-// Define event map interface
-interface AdapterDriverEventMap {
-    macFrame: [payload: Buffer, rssi?: number];
-    fatalError: [message: string];
-    frame: [sender16: number | undefined, sender64: bigint | undefined, apsHeader: ZigbeeAPSHeader, apsPayload: ZigbeeAPSPayload, lqa: number];
-    deviceJoined: [source16: number, source64: bigint, capabilities: MACCapabilities];
+// StackCallbacks interface
+interface StackCallbacks {
+    onFatalError: (message: string) => void;
+    /** Only triggered if MAC `emitFrames===true` */
+    onMACFrame: (payload: Buffer, rssi?: number) => void;
+    onFrame: (sender16: number | undefined, sender64: bigint | undefined, apsHeader: ZigbeeAPSHeader, apsPayload: Buffer, lqa: number) => void;
+    onGPFrame: (cmdId: number, payload: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, lqa: number) => void;
+    onDeviceJoined: (source16: number, source64: bigint, capabilities: MACCapabilities) => void;
+    onDeviceRejoined: (source16: number, source64: bigint, capabilities: MACCapabilities) => void;
+    onDeviceLeft: (source16: number, source64: bigint) => void;
+    onDeviceAuthorized: (source16: number, source64: bigint) => void;
 }
 
-// Extend EventEmitter with typed events
-class OTRCPDriver extends EventEmitter {
-    public emit<K extends keyof AdapterDriverEventMap>(event: K, ...args: AdapterDriverEventMap[K]): boolean {
-        return super.emit(event, ...args);
-    }
-    
-    public on<K extends keyof AdapterDriverEventMap>(event: K, listener: (...args: AdapterDriverEventMap[K]) => void): this {
-        return super.on(event, listener);
-    }
+// Usage in OTRCPDriver constructor
+constructor(callbacks: StackCallbacks, streamRawConfig: StreamRawConfig, netParams: NetworkParameters, saveDir: string, emitMACFrames = false) {
+    this.#callbacks = callbacks;
+    // ...
 }
+
+// Calling external consumer
+this.#callbacks.onDeviceJoined(source16, source64, capabilities);
 ```
 
-## ZigBee-Specific Patterns
+## Zigbee-Specific Patterns
 
 ### Address Handling
 
@@ -805,7 +822,7 @@ const enum SaveConsts {
 - Can have relaxed performance requirements
 - Used for CLI tools, testing utilities, data conversion
 
-### Production Code (src/drivers/, src/spinel/, src/zigbee/, src/utils/)
+### Production Code (src/drivers/, src/zigbee-stack/, src/spinel/, src/zigbee/, src/utils/)
 
 - Must work with zero external dependencies
 - Must meet strict performance requirements
@@ -818,7 +835,7 @@ const enum SaveConsts {
 
 ```bash
 npm run check           # Auto-fix linting issues
-npm test                # Run tests
+npm test:cov            # Run tests with coverage check
 npm run build:prod      # Verify production build
 ```
 
@@ -835,15 +852,14 @@ All code must pass:
 
 When generating code for this project:
 
-1. **Respect ES2022 limits** - no newer features
-2. **Use `.js` extensions** in all imports (NodeNext modules)
-3. **Follow naming conventions** - PascalCase types, CONSTANT_CASE enums, camelCase functions
-4. **No external dependencies** in production code
-5. **Performance first** - no expensive operations in hot paths, early bail-outs
-6. **Use const enums** for protocol constants
-7. **Throw new Error()** with descriptive messages
-8. **4-space indentation**, 150-char lines, double quotes
-9. **Match architectural layers** - respect boundaries between drivers, protocols, utilities
-10. **Prioritize consistency** with existing code over external "best practices"
+1. **Use `.js` extensions** in all imports (NodeNext modules)
+2. **Follow naming conventions** - PascalCase types, CONSTANT_CASE enums, camelCase functions
+3. **No external dependencies** in production code
+4. **Performance first** - no expensive operations in hot paths, early bail-outs
+5. **Use const enums** for protocol constants
+6. **Throw new Error()** with descriptive messages
+7. **4-space indentation**, 150-char lines, double quotes
+8. **Match architectural layers** - respect boundaries between drivers, protocols, utilities
+9. **Prioritize consistency** with existing code over external "best practices"
 
 Before generating any code, scan similar files in the codebase to understand existing patterns and follow them exactly.
