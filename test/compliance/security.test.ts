@@ -434,6 +434,7 @@ describe("Zigbee 3.0 Security Compliance", () => {
     describe("Frame Counters (Zigbee §4.3.2)", () => {
         const device16 = 0x4c4d;
         const device64 = 0x00124b00ffee0001n;
+        const frameCounterJumpOffset = 1024;
 
         beforeEach(() => {
             registerNeighborDevice(context, device16, device64);
@@ -515,6 +516,29 @@ describe("Zigbee 3.0 Security Compliance", () => {
             await apsHandler.onZigbeeAPSFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackAPSHeader, 0x70);
         }
 
+        async function reloadContextWithHandlers(): Promise<void> {
+            const reloaded = new StackContext(mockStackContextCallbacks, join(saveDir, "zoh.save"), cloneNetworkParameters(netParams));
+            await reloaded.loadState();
+
+            const reloadedMacHandler = new MACHandler(reloaded, mockMACHandlerCallbacks, NO_ACK_CODE);
+            const reloadedNWKHandler = new NWKHandler(reloaded, reloadedMacHandler, mockNWKHandlerCallbacks);
+            const reloadedAPSHandler = new APSHandler(reloaded, reloadedMacHandler, reloadedNWKHandler, mockAPSHandlerCallbacks);
+
+            context = reloaded;
+            netParams = reloaded.netParams;
+            macHandler = reloadedMacHandler;
+            nwkHandler = reloadedNWKHandler;
+            apsHandler = reloadedAPSHandler;
+
+            const reloadedDevice = context.deviceTable.get(device64);
+            expect(reloadedDevice).not.toBeUndefined();
+            if (reloadedDevice?.capabilities !== undefined) {
+                reloadedDevice.capabilities.rxOnWhenIdle = true;
+            }
+
+            mockMACHandlerCallbacks.onSendFrame = vi.fn();
+        }
+
         it("increments the NWK security frame counter for each secured transmission", async () => {
             const first = await sendSecuredData();
             const firstCounter = first.decoded.nwkHeader.securityHeader?.frameCounter;
@@ -552,9 +576,68 @@ describe("Zigbee 3.0 Security Compliance", () => {
             expect(context.updateIncomingNWKFrameCounter(device64, 0)).toStrictEqual(true);
         });
 
-        // TODO: Test frame counter persistence across reboots
-        // TODO: Test frame counter jumps on boot to avoid replay
-        // TODO: Test separate counters for NWK key and TC link key
+        it("persists secured NWK frame counters across saves and reloads", async () => {
+            const first = await sendSecuredData();
+            const firstCounter = first.decoded.nwkHeader.securityHeader?.frameCounter;
+            expect(firstCounter).not.toBeUndefined();
+
+            await acknowledgeDelivery(first.apsCounter, first.macFrame, first.decoded);
+            mockMACHandlerCallbacks.onSendFrame = vi.fn();
+
+            await context.saveState();
+
+            const reloadedContext = new StackContext(mockStackContextCallbacks, join(saveDir, "zoh.save"), cloneNetworkParameters(netParams));
+            await reloadedContext.loadState();
+
+            expect(reloadedContext.netParams.networkKeyFrameCounter).toStrictEqual(((firstCounter! + frameCounterJumpOffset) & 0xffffffff) >>> 0);
+            expect(reloadedContext.netParams.tcKeyFrameCounter).toStrictEqual(frameCounterJumpOffset);
+
+            reloadedContext.disallowJoins();
+        });
+
+        it("resumes secured transmissions with advanced frame counters after reboot", async () => {
+            const first = await sendSecuredData();
+            const firstCounter = first.decoded.nwkHeader.securityHeader?.frameCounter ?? 0;
+            await acknowledgeDelivery(first.apsCounter, first.macFrame, first.decoded);
+            mockMACHandlerCallbacks.onSendFrame = vi.fn();
+
+            await context.saveState();
+            await reloadContextWithHandlers();
+
+            const baseCounter = context.netParams.networkKeyFrameCounter;
+            expect(baseCounter).toStrictEqual(((firstCounter + frameCounterJumpOffset) & 0xffffffff) >>> 0);
+
+            const reloadedSend = await sendSecuredData();
+            const reloadedCounter = reloadedSend.decoded.nwkHeader.securityHeader?.frameCounter;
+            expect(reloadedCounter).toStrictEqual(((baseCounter + 1) & 0xffffffff) >>> 0);
+            expect(reloadedCounter).toBeGreaterThan(firstCounter + frameCounterJumpOffset);
+
+            await acknowledgeDelivery(reloadedSend.apsCounter, reloadedSend.macFrame, reloadedSend.decoded);
+            mockMACHandlerCallbacks.onSendFrame = vi.fn();
+        });
+
+        it("maintains independent NWK and TC key frame counters", async () => {
+            const secured = await sendSecuredData();
+            await acknowledgeDelivery(secured.apsCounter, secured.macFrame, secured.decoded);
+            mockMACHandlerCallbacks.onSendFrame = vi.fn();
+
+            const nwkCounterAfterData = context.netParams.networkKeyFrameCounter;
+            expect(nwkCounterAfterData).toBeGreaterThan(0);
+            expect(context.netParams.tcKeyFrameCounter).toStrictEqual(0);
+
+            const capturedTransport = await captureApsSecurityFrame(device16, device64);
+            const tcCounterAfterTransport = context.netParams.tcKeyFrameCounter;
+            expect(tcCounterAfterTransport).toStrictEqual(1);
+            expect(capturedTransport.securityHeader.frameCounter).toStrictEqual(tcCounterAfterTransport);
+            expect(context.netParams.networkKeyFrameCounter).toStrictEqual(nwkCounterAfterData);
+
+            const second = await sendSecuredData();
+            await acknowledgeDelivery(second.apsCounter, second.macFrame, second.decoded);
+            mockMACHandlerCallbacks.onSendFrame = vi.fn();
+
+            expect(context.netParams.networkKeyFrameCounter).toStrictEqual(((nwkCounterAfterData + 1) & 0xffffffff) >>> 0);
+            expect(context.netParams.tcKeyFrameCounter).toStrictEqual(tcCounterAfterTransport);
+        });
     });
 
     /**
@@ -830,7 +913,6 @@ describe("Zigbee 3.0 Security Compliance", () => {
     describe.skip("Well-Known Keys (Zigbee §4.6.3.2)", () => {
         // TODO: Test ZigBeeAlliance09 TC link key (5a 69 67 42 65 65 41 6c 6c 69 61 6e 63 65 30 39)
         // TODO: Test install code-derived keys use correct MMOHASH algorithm
-        // TODO: Test distributed security network key is random
     });
 
     /**

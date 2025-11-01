@@ -959,7 +959,53 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
                 vi.useRealTimers();
             }
         });
-        // TODO: Test maximum retransmissions (apsMaxFrameRetries) is enforced
+        it("stops retransmissions once apsMaxFrameRetries is reached", async () => {
+            vi.useFakeTimers();
+
+            try {
+                const device16 = 0x4a5c;
+                const device64 = 0x00124b00eeff0004n;
+                registerNeighborDevice(context, device16, device64);
+                context.deviceTable.get(device64)!.capabilities!.rxOnWhenIdle = true;
+
+                const sentFrames: Buffer[] = [];
+                mockMACHandlerCallbacks.onSendFrame = vi.fn((payload: Buffer) => {
+                    sentFrames.push(Buffer.from(payload));
+
+                    return Promise.resolve();
+                });
+
+                await apsHandler.sendData(
+                    Buffer.from([0xba, 0xdc]),
+                    ZigbeeNWKRouteDiscovery.SUPPRESS,
+                    device16,
+                    device64,
+                    ZigbeeAPSDeliveryMode.UNICAST,
+                    0x0202,
+                    ZigbeeConsts.HA_PROFILE_ID,
+                    0x26,
+                    0x33,
+                    undefined,
+                );
+
+                expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(1);
+
+                for (let attempt = 1; attempt <= 3; attempt += 1) {
+                    await vi.runOnlyPendingTimersAsync();
+                    expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(1 + attempt);
+                }
+
+                await vi.runOnlyPendingTimersAsync();
+                expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(4);
+
+                await vi.advanceTimersByTimeAsync(60000);
+                expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(4);
+                expect(sentFrames).toHaveLength(4);
+            } finally {
+                mockMACHandlerCallbacks.onSendFrame = vi.fn();
+                vi.useRealTimers();
+            }
+        });
     });
 
     /**
@@ -2723,10 +2769,180 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
      * Zigbee Spec 05-3474-23 §2.4: APS Constants
      * APS layer SHALL enforce specified constants.
      */
-    describe.skip("APS Constants (Zigbee §2.4)", () => {
-        // TODO: Test apsMaxFrameRetries default value
-        // TODO: Test apsAckWaitDuration calculation
-        // TODO: Test apscMaxDescriptorSize constraint
-        // TODO: Test apscMaxFrameSize constraint
+    describe("APS Constants (Zigbee §2.4)", () => {
+        it("waits apsAckWaitDuration before retrying pending unicast data", async () => {
+            vi.useFakeTimers();
+
+            try {
+                const device16 = 0x4a5d;
+                const device64 = 0x00124b00eeff0005n;
+                registerNeighborDevice(context, device16, device64);
+                context.deviceTable.get(device64)!.capabilities!.rxOnWhenIdle = true;
+
+                const sentFrames: Buffer[] = [];
+                mockMACHandlerCallbacks.onSendFrame = vi.fn((payload: Buffer) => {
+                    sentFrames.push(Buffer.from(payload));
+                    return Promise.resolve();
+                });
+
+                const apsCounter = await apsHandler.sendData(
+                    Buffer.from([0xaa, 0xbb]),
+                    ZigbeeNWKRouteDiscovery.SUPPRESS,
+                    device16,
+                    device64,
+                    ZigbeeAPSDeliveryMode.UNICAST,
+                    0x0303,
+                    ZigbeeConsts.HA_PROFILE_ID,
+                    0x10,
+                    0x20,
+                    undefined,
+                );
+
+                expect(sentFrames).toHaveLength(1);
+
+                await vi.advanceTimersByTimeAsync(1499);
+                expect(sentFrames).toHaveLength(1);
+
+                await vi.advanceTimersByTimeAsync(1);
+                expect(sentFrames).toHaveLength(2);
+
+                const firstTx = decodeAPSFrame(decodeMACFramePayload(sentFrames[0]!));
+
+                const ackMacHeader: MACHeader = {
+                    frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
+                    sequenceNumber: 0x90,
+                    destinationPANId: netParams.panId,
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    source16: device16,
+                    commandId: undefined,
+                    fcs: 0,
+                };
+                const ackNwkHeader: ZigbeeNWKHeader = {
+                    frameControl: {
+                        frameType: ZigbeeNWKFrameType.DATA,
+                        protocolVersion: ZigbeeNWKConsts.VERSION_2007,
+                        discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
+                        multicast: false,
+                        security: false,
+                        sourceRoute: false,
+                        extendedDestination: false,
+                        extendedSource: true,
+                        endDeviceInitiator: false,
+                    },
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    source16: device16,
+                    source64: device64,
+                    radius: 5,
+                    seqNum: firstTx.nwkHeader.seqNum,
+                };
+                const ackAPSHeader: ZigbeeAPSHeader = {
+                    frameControl: {
+                        frameType: ZigbeeAPSFrameType.ACK,
+                        deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                        ackFormat: false,
+                        security: false,
+                        ackRequest: false,
+                        extendedHeader: false,
+                    },
+                    destEndpoint: firstTx.apsHeader.sourceEndpoint,
+                    clusterId: firstTx.apsHeader.clusterId,
+                    profileId: firstTx.apsHeader.profileId,
+                    sourceEndpoint: firstTx.apsHeader.destEndpoint,
+                    counter: apsCounter,
+                };
+
+                await apsHandler.onZigbeeAPSFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackAPSHeader, 0x60);
+
+                await vi.runOnlyPendingTimersAsync();
+                expect(sentFrames).toHaveLength(2);
+            } finally {
+                mockMACHandlerCallbacks.onSendFrame = vi.fn();
+                vi.useRealTimers();
+            }
+        });
+
+        it("caps retransmissions at apsMaxFrameRetries attempts", async () => {
+            vi.useFakeTimers();
+
+            try {
+                const device16 = 0x4a5e;
+                const device64 = 0x00124b00eeff0006n;
+                registerNeighborDevice(context, device16, device64);
+                context.deviceTable.get(device64)!.capabilities!.rxOnWhenIdle = true;
+
+                const sentFrames: Buffer[] = [];
+                mockMACHandlerCallbacks.onSendFrame = vi.fn((payload: Buffer) => {
+                    sentFrames.push(Buffer.from(payload));
+                    return Promise.resolve();
+                });
+
+                await apsHandler.sendData(
+                    Buffer.from([0xcc, 0xdd]),
+                    ZigbeeNWKRouteDiscovery.SUPPRESS,
+                    device16,
+                    device64,
+                    ZigbeeAPSDeliveryMode.UNICAST,
+                    0x0404,
+                    ZigbeeConsts.HA_PROFILE_ID,
+                    0x33,
+                    0x44,
+                    undefined,
+                );
+
+                expect(sentFrames).toHaveLength(1);
+
+                for (let attempt = 1; attempt <= 3; attempt += 1) {
+                    await vi.advanceTimersByTimeAsync(1500);
+                    expect(sentFrames).toHaveLength(1 + attempt);
+                }
+
+                await vi.advanceTimersByTimeAsync(1500);
+                expect(sentFrames).toHaveLength(4);
+            } finally {
+                mockMACHandlerCallbacks.onSendFrame = vi.fn();
+                vi.useRealTimers();
+            }
+        });
+
+        it("keeps simple descriptor responses within apscMaxDescriptorSize", () => {
+            const seqNum = 0x52;
+            const request = Buffer.alloc(4);
+            request.writeUInt8(seqNum, 0);
+            request.writeUInt16LE(ZigbeeConsts.COORDINATOR_ADDRESS, 1);
+            request.writeUInt8(ZigbeeConsts.HA_ENDPOINT, 3);
+
+            const response = apsHandler.getCoordinatorZDOResponse(ZigbeeConsts.SIMPLE_DESCRIPTOR_REQUEST, request);
+
+            expect(response).toBeDefined();
+            const payload = response!;
+
+            expect(payload.length).toBeLessThanOrEqual(80);
+            const descriptorLength = payload.readUInt8(4);
+            expect(descriptorLength).toBeLessThanOrEqual(75);
+            expect(payload.length - 5).toStrictEqual(descriptorLength);
+        });
+
+        it("limits unfragmented APS frames to apscMaxFrameSize", () => {
+            const payload = Buffer.alloc(ZigbeeAPSConsts.PAYLOAD_MAX_SIZE, 0x5a);
+            const header: ZigbeeAPSHeader = {
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: true,
+                    extendedHeader: false,
+                },
+                destEndpoint: 0x22,
+                clusterId: 0x0606,
+                profileId: ZigbeeConsts.HA_PROFILE_ID,
+                sourceEndpoint: 0x11,
+                counter: 0x5c,
+            };
+
+            const encoded = encodeZigbeeAPSFrame(header, payload);
+
+            expect(encoded.length).toBeLessThanOrEqual(ZigbeeAPSConsts.FRAME_MAX_SIZE);
+        });
     });
 });
