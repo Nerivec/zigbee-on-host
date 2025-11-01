@@ -2439,13 +2439,284 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
      * Zigbee Spec 05-3474-23 §2.2.12: Fragmentation
      * APS fragmentation SHALL split large payloads across multiple frames.
      */
-    describe.skip("APS Fragmentation (Zigbee §2.2.12)", () => {
-        // TODO: Test fragmentation is used when payload exceeds NWK max size
-        // TODO: Test fragment header contains block number
-        // TODO: Test fragment header contains acknowledgment bitfield
-        // TODO: Test fragments are reassembled in correct order
-        // TODO: Test fragmentation window size is enforced
-        // TODO: Test fragment retransmission on missing ACKs
+    describe("APS Fragmentation (Zigbee §2.2.12)", () => {
+        const fragmentDest16 = 0x4321;
+        const fragmentDest64 = 0x00124b00ffee9911n;
+        const fragmentClusterId = 0x1234;
+        const fragmentProfileId = 0x0104;
+        const fragmentDestEndpoint = 0x15;
+        const fragmentSourceEndpoint = 0x01;
+
+        beforeEach(() => {
+            registerNeighborDevice(context, fragmentDest16, fragmentDest64);
+        });
+
+        function buildAck(
+            counter: number,
+            nwkSeqNum: number,
+        ): {
+            mac: MACHeader;
+            nwk: ZigbeeNWKHeader;
+            aps: ZigbeeAPSHeader;
+        } {
+            return {
+                mac: {
+                    frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
+                    sequenceNumber: (0x70 + nwkSeqNum) & 0xff,
+                    destinationPANId: netParams.panId,
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    source16: fragmentDest16,
+                    commandId: undefined,
+                    fcs: 0,
+                },
+                nwk: {
+                    frameControl: {
+                        frameType: ZigbeeNWKFrameType.DATA,
+                        protocolVersion: ZigbeeNWKConsts.VERSION_2007,
+                        discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
+                        multicast: false,
+                        security: false,
+                        sourceRoute: false,
+                        extendedDestination: false,
+                        extendedSource: false,
+                        endDeviceInitiator: false,
+                    },
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    source16: fragmentDest16,
+                    source64: fragmentDest64,
+                    radius: 5,
+                    seqNum: nwkSeqNum & 0xff,
+                },
+                aps: {
+                    frameControl: {
+                        frameType: ZigbeeAPSFrameType.ACK,
+                        deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                        ackFormat: false,
+                        security: false,
+                        ackRequest: false,
+                        extendedHeader: false,
+                    },
+                    destEndpoint: fragmentSourceEndpoint,
+                    clusterId: fragmentClusterId,
+                    profileId: fragmentProfileId,
+                    sourceEndpoint: fragmentDestEndpoint,
+                    counter,
+                },
+            };
+        }
+
+        async function captureFragments(payload: Buffer): Promise<{ frames: Buffer[]; apsCounter: number }> {
+            const frames: Buffer[] = [];
+            mockMACHandlerCallbacks.onSendFrame = vi.fn((buffer: Buffer) => {
+                frames.push(Buffer.from(buffer));
+                return Promise.resolve();
+            });
+
+            const apsCounter = await apsHandler.sendData(
+                payload,
+                ZigbeeNWKRouteDiscovery.SUPPRESS,
+                fragmentDest16,
+                fragmentDest64,
+                ZigbeeAPSDeliveryMode.UNICAST,
+                fragmentClusterId,
+                fragmentProfileId,
+                fragmentDestEndpoint,
+                fragmentSourceEndpoint,
+                undefined,
+            );
+
+            let ackSeq = 0x21;
+            let lqa = 0x70;
+
+            for (;;) {
+                const priorCount = frames.length;
+                const ack = buildAck(apsCounter, ackSeq);
+                await apsHandler.onZigbeeAPSFrame(Buffer.alloc(0), ack.mac, ack.nwk, ack.aps, lqa);
+
+                if (frames.length === priorCount) {
+                    break;
+                }
+
+                ackSeq = (ackSeq + 1) & 0xff;
+                if (lqa > 0) {
+                    lqa -= 1;
+                }
+            }
+
+            mockMACHandlerCallbacks.onSendFrame = vi.fn();
+
+            return { frames, apsCounter };
+        }
+
+        it("fragments payloads beyond APS maximum and sends blocks sequentially after acknowledgments", async () => {
+            const payload = Buffer.alloc(ZigbeeAPSConsts.PAYLOAD_MAX_SIZE + 40, 0xaa);
+            const { frames } = await captureFragments(payload);
+
+            expect(frames.length).toBeGreaterThan(1);
+
+            const descriptors = frames.map((frame) => decodeAPSFrame(decodeMACFramePayload(frame)));
+            const fragmentTypes = descriptors.map((descriptor) => descriptor.apsHeader.fragmentation ?? ZigbeeAPSFragmentation.NONE);
+
+            expect(fragmentTypes[0]).toStrictEqual(ZigbeeAPSFragmentation.FIRST);
+            expect(fragmentTypes[fragmentTypes.length - 1]).toStrictEqual(ZigbeeAPSFragmentation.LAST);
+
+            const reassembled = Buffer.concat(descriptors.map((descriptor) => descriptor.apsPayload));
+            expect(reassembled).toStrictEqual(payload);
+        });
+
+        it("includes extended header bitmap when acknowledging fragmented frames", async () => {
+            const frames: Buffer[] = [];
+            mockMACHandlerCallbacks.onSendFrame = vi.fn((buffer: Buffer) => {
+                frames.push(Buffer.from(buffer));
+                return Promise.resolve();
+            });
+
+            const inboundMac: MACHeader = {
+                frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
+                sequenceNumber: 0x90,
+                destinationPANId: netParams.panId,
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                source16: fragmentDest16,
+                commandId: undefined,
+                fcs: 0,
+            };
+            const inboundNwk: ZigbeeNWKHeader = {
+                frameControl: {
+                    frameType: ZigbeeNWKFrameType.DATA,
+                    protocolVersion: ZigbeeNWKConsts.VERSION_2007,
+                    discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
+                    multicast: false,
+                    security: false,
+                    sourceRoute: false,
+                    extendedDestination: false,
+                    extendedSource: false,
+                    endDeviceInitiator: false,
+                },
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                source16: fragmentDest16,
+                source64: fragmentDest64,
+                radius: 5,
+                seqNum: 0x55,
+            };
+            const inboundAPS: ZigbeeAPSHeader = {
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: true,
+                    extendedHeader: true,
+                },
+                destEndpoint: fragmentDestEndpoint,
+                clusterId: fragmentClusterId,
+                profileId: fragmentProfileId,
+                sourceEndpoint: fragmentSourceEndpoint,
+                counter: 0x44,
+                fragmentation: ZigbeeAPSFragmentation.MIDDLE,
+                fragBlockNumber: 2,
+            };
+
+            await apsHandler.sendACK(inboundMac, inboundNwk, inboundAPS);
+
+            expect(frames).toHaveLength(1);
+            const ackDescriptor = decodeAPSFrame(decodeMACFramePayload(frames[0]!));
+            expect(ackDescriptor.apsFrameControl.frameType).toStrictEqual(ZigbeeAPSFrameType.ACK);
+            expect(ackDescriptor.apsFrameControl.extendedHeader).toStrictEqual(true);
+            expect(ackDescriptor.apsHeader.fragmentation).toStrictEqual(ZigbeeAPSFragmentation.FIRST);
+            expect(ackDescriptor.apsHeader.fragBlockNumber).toStrictEqual(2);
+            expect(ackDescriptor.apsHeader.fragACKBitfield).toStrictEqual(0x01);
+
+            mockMACHandlerCallbacks.onSendFrame = vi.fn();
+        });
+
+        it("reassembles fragmented payloads before notifying stack callbacks", async () => {
+            const payload = Buffer.alloc(ZigbeeAPSConsts.PAYLOAD_MAX_SIZE + 32);
+            for (let index = 0; index < payload.length; index += 1) {
+                payload[index] = index & 0xff;
+            }
+
+            const { frames } = await captureFragments(payload);
+            const descriptors = frames.map((frame) => decodeAPSFrame(decodeMACFramePayload(frame)));
+            const fragments = descriptors.map((descriptor) => Buffer.from(descriptor.apsPayload));
+
+            const onFrameSpy = vi.fn<typeof mockAPSHandlerCallbacks.onFrame>();
+            mockAPSHandlerCallbacks.onFrame = onFrameSpy;
+
+            const apsCounter = descriptors[0]!.apsHeader.counter ?? 0;
+
+            for (let block = 0; block < fragments.length; block += 1) {
+                const descriptor = descriptors[block]!;
+                const fragmentation = descriptor.apsHeader.fragmentation ?? ZigbeeAPSFragmentation.NONE;
+
+                const inboundMac: MACHeader = {
+                    frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
+                    sequenceNumber: (0x80 + block) & 0xff,
+                    destinationPANId: netParams.panId,
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    source16: fragmentDest16,
+                    commandId: undefined,
+                    fcs: 0,
+                };
+                const inboundNwk: ZigbeeNWKHeader = {
+                    frameControl: {
+                        frameType: ZigbeeNWKFrameType.DATA,
+                        protocolVersion: ZigbeeNWKConsts.VERSION_2007,
+                        discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
+                        multicast: false,
+                        security: false,
+                        sourceRoute: false,
+                        extendedDestination: false,
+                        extendedSource: false,
+                        endDeviceInitiator: false,
+                    },
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    source16: fragmentDest16,
+                    source64: fragmentDest64,
+                    radius: 6,
+                    seqNum: (0x90 + block) & 0xff,
+                };
+
+                const inboundAPS: ZigbeeAPSHeader = {
+                    frameControl: {
+                        frameType: ZigbeeAPSFrameType.DATA,
+                        deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                        ackFormat: false,
+                        security: false,
+                        ackRequest: true,
+                        extendedHeader: fragmentation !== ZigbeeAPSFragmentation.NONE,
+                    },
+                    destEndpoint: descriptor.apsHeader.sourceEndpoint,
+                    clusterId: descriptor.apsHeader.clusterId,
+                    profileId: descriptor.apsHeader.profileId,
+                    sourceEndpoint: descriptor.apsHeader.destEndpoint,
+                    counter: apsCounter,
+                    ...(fragmentation !== ZigbeeAPSFragmentation.NONE
+                        ? {
+                              fragmentation,
+                              fragBlockNumber: descriptor.apsHeader.fragBlockNumber,
+                          }
+                        : {}),
+                };
+
+                await apsHandler.onZigbeeAPSFrame(fragments[block]!, inboundMac, inboundNwk, inboundAPS, 0x66);
+
+                if (block < fragments.length - 1) {
+                    expect(onFrameSpy).not.toHaveBeenCalled();
+                }
+            }
+
+            await vi.waitFor(() => {
+                expect(onFrameSpy).toHaveBeenCalledTimes(1);
+            });
+            const [sender16, sender64, deliveredAPSHeader, deliveredPayload] = onFrameSpy.mock.calls[0]!;
+            expect(sender16).toStrictEqual(fragmentDest16);
+            expect(sender64).toStrictEqual(fragmentDest64);
+            expect(deliveredAPSHeader.frameControl.extendedHeader).toStrictEqual(false);
+            expect(deliveredAPSHeader.fragmentation).toBeUndefined();
+            expect(deliveredPayload).toStrictEqual(payload);
+
+            mockAPSHandlerCallbacks.onFrame = vi.fn();
+        });
     });
 
     /**

@@ -14,6 +14,7 @@ import {
     ZigbeeAPSCommandId,
     ZigbeeAPSConsts,
     ZigbeeAPSDeliveryMode,
+    ZigbeeAPSFragmentation,
     ZigbeeAPSFrameType,
     type ZigbeeAPSHeader,
 } from "../zigbee/zigbee-aps.js";
@@ -40,6 +41,42 @@ const CONFIG_APS_DUPLICATE_TIMEOUT_MS = 8000;
 const CONFIG_APS_ACK_WAIT_DURATION_MS = 1500;
 /** Default number of APS retransmissions when ACK is missing. */
 const CONFIG_APS_MAX_FRAME_RETRIES = 3;
+/** Maximum payload that may be transmitted without APS fragmentation. */
+const CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX = ZigbeeAPSConsts.PAYLOAD_MAX_SIZE;
+/** Number of bytes carried in each APS fragment after the first one. */
+const CONFIG_APS_FRAGMENT_PAYLOAD_SIZE = 40;
+/** Number of bytes reserved in the first APS fragment for metadata. */
+const CONFIG_APS_FRAGMENT_FIRST_OVERHEAD = 2;
+/** Timeout for incomplete incoming APS fragment reassembly (milliseconds). */
+const CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS = 30000;
+
+type FragmentParams = {
+    blockNumber: number;
+    isFirst: boolean;
+    isLast: boolean;
+};
+
+type FragmentBaseParams = Omit<SendDataParams, "finalPayload" | "fragment">;
+
+type OutgoingFragmentContext = {
+    baseParams: FragmentBaseParams;
+    chunks: Buffer[];
+    awaitingBlock: number;
+    totalBlocks: number;
+};
+
+type IncomingFragmentState = {
+    totalLength?: number;
+    expectedBlocks?: number;
+    chunks: Map<number, Buffer>;
+    lastActivity: number;
+    source16?: number;
+    source64?: bigint;
+    destEndpoint?: number;
+    profileId?: number;
+    clusterId?: number;
+    counter: number;
+};
 
 type SendDataParams = {
     finalPayload: Buffer;
@@ -52,6 +89,7 @@ type SendDataParams = {
     destEndpoint: number | undefined;
     sourceEndpoint: number | undefined;
     group: number | undefined;
+    fragment?: FragmentParams;
 };
 
 type PendingAckEntry = {
@@ -60,6 +98,7 @@ type PendingAckEntry = {
     dest16: number;
     retries: number;
     timer: NodeJS.Timeout | undefined;
+    fragment?: OutgoingFragmentContext;
 };
 
 /**
@@ -79,6 +118,8 @@ export class APSHandler {
     readonly #apsDuplicateTable = new Map<string, { counter: number; expiresAt: number }>();
     /** Pending APS acknowledgments waiting for retransmission */
     readonly #pendingAcks = new Map<string, PendingAckEntry>();
+    /** Incoming APS fragment reassembly buffers */
+    readonly #incomingFragments = new Map<string, IncomingFragmentState>();
 
     constructor(context: StackContext, macHandler: MACHandler, nwkHandler: NWKHandler, callbacks: APSHandlerCallbacks) {
         this.#context = context;
@@ -97,6 +138,7 @@ export class APSHandler {
         }
 
         this.#pendingAcks.clear();
+        this.#incomingFragments.clear();
     }
 
     /**
@@ -130,6 +172,15 @@ export class APSHandler {
     public isDuplicateFrame(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader, now = Date.now()): boolean {
         if (apsHeader.counter === undefined) {
             // skip check
+            return false;
+        }
+
+        if (
+            apsHeader.frameControl.extendedHeader &&
+            apsHeader.fragmentation !== undefined &&
+            apsHeader.fragmentation !== ZigbeeAPSFragmentation.NONE
+        ) {
+            // Fragmented transmissions reuse the same APS counter for multiple blocks.
             return false;
         }
 
@@ -197,6 +248,11 @@ export class APSHandler {
             group,
         };
         const apsCounter = this.nextCounter();
+
+        if (finalPayload.length > CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX) {
+            return await this.#sendFragmentedData(params, apsCounter);
+        }
+
         const sendDest16 = await this.#sendDataInternal(params, apsCounter, 0);
 
         if (sendDest16 !== undefined) {
@@ -258,23 +314,37 @@ export class APSHandler {
             NS,
         );
 
-        const apsFrame = encodeZigbeeAPSFrame(
-            {
-                frameControl: {
-                    frameType: ZigbeeAPSFrameType.DATA,
-                    deliveryMode: apsDeliveryMode,
-                    ackFormat: false,
-                    security: false, // TODO link key support
-                    ackRequest: true,
-                    extendedHeader: false,
-                },
-                destEndpoint,
-                group,
-                clusterId,
-                profileId,
-                sourceEndpoint,
-                counter: apsCounter,
+        const isFragment = params.fragment !== undefined;
+        const apsHeader: ZigbeeAPSHeader = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.DATA,
+                deliveryMode: apsDeliveryMode,
+                ackFormat: false,
+                security: false, // TODO link key support
+                ackRequest: true,
+                extendedHeader: isFragment,
             },
+            destEndpoint,
+            group,
+            clusterId,
+            profileId,
+            sourceEndpoint,
+            counter: apsCounter,
+        };
+
+        if (isFragment) {
+            const fragmentInfo = params.fragment!;
+            const fragmentation = fragmentInfo.isFirst
+                ? ZigbeeAPSFragmentation.FIRST
+                : fragmentInfo.isLast
+                  ? ZigbeeAPSFragmentation.LAST
+                  : ZigbeeAPSFragmentation.MIDDLE;
+            apsHeader.fragmentation = fragmentation;
+            apsHeader.fragBlockNumber = fragmentInfo.blockNumber;
+        }
+
+        const apsFrame = encodeZigbeeAPSFrame(
+            apsHeader,
             finalPayload,
             // undefined,
             // undefined,
@@ -361,7 +431,185 @@ export class APSHandler {
         return nwkDest16;
     }
 
-    #trackPendingAck(dest16: number, apsCounter: number, params: SendDataParams): void {
+    async #sendFragmentedData(params: SendDataParams, apsCounter: number): Promise<number> {
+        const payload = params.finalPayload;
+        if (payload.byteLength <= CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX) {
+            return apsCounter;
+        }
+
+        const baseParams: FragmentBaseParams = {
+            nwkDiscoverRoute: params.nwkDiscoverRoute,
+            nwkDest16: params.nwkDest16,
+            nwkDest64: params.nwkDest64,
+            apsDeliveryMode: params.apsDeliveryMode,
+            clusterId: params.clusterId,
+            profileId: params.profileId,
+            destEndpoint: params.destEndpoint,
+            sourceEndpoint: params.sourceEndpoint,
+            group: params.group,
+        };
+
+        const chunks: Buffer[] = [];
+        let offset = 0;
+        let block = 0;
+        const firstChunkSize = Math.max(1, CONFIG_APS_FRAGMENT_PAYLOAD_SIZE - CONFIG_APS_FRAGMENT_FIRST_OVERHEAD);
+
+        while (offset < payload.byteLength) {
+            const size = block === 0 ? firstChunkSize : CONFIG_APS_FRAGMENT_PAYLOAD_SIZE;
+            const chunk = Buffer.from(payload.subarray(offset, offset + size));
+            chunks.push(chunk);
+            offset += chunk.byteLength;
+            block += 1;
+        }
+
+        if (chunks.length <= 1) {
+            throw new Error("APS fragmentation requires at least two chunks");
+        }
+
+        const context: OutgoingFragmentContext = {
+            baseParams,
+            chunks,
+            awaitingBlock: 0,
+            totalBlocks: chunks.length,
+        };
+
+        const { dest16, params: firstParams } = await this.#sendFragmentBlock(context, apsCounter, 0, 0);
+
+        if (dest16 === undefined) {
+            throw new Error("APS fragmentation requires unicast destination acknowledgments");
+        }
+
+        this.#trackPendingAck(dest16, apsCounter, firstParams, context);
+
+        return apsCounter;
+    }
+
+    #buildFragmentParams(context: OutgoingFragmentContext, blockNumber: number): SendDataParams {
+        const fragment: FragmentParams = {
+            blockNumber,
+            isFirst: blockNumber === 0,
+            isLast: blockNumber === context.totalBlocks - 1,
+        };
+
+        return {
+            ...context.baseParams,
+            finalPayload: context.chunks[blockNumber],
+            fragment,
+        };
+    }
+
+    async #sendFragmentBlock(
+        context: OutgoingFragmentContext,
+        apsCounter: number,
+        blockNumber: number,
+        attempt: number,
+    ): Promise<{ dest16: number | undefined; params: SendDataParams }> {
+        const fragmentParams = this.#buildFragmentParams(context, blockNumber);
+        const dest16 = await this.#sendDataInternal(fragmentParams, apsCounter, attempt);
+
+        return { dest16, params: fragmentParams };
+    }
+
+    async #sendNextFragmentBlock(context: OutgoingFragmentContext, previousEntry: PendingAckEntry): Promise<void> {
+        context.awaitingBlock += 1;
+
+        if (context.awaitingBlock >= context.totalBlocks) {
+            return;
+        }
+
+        const { dest16, params } = await this.#sendFragmentBlock(context, previousEntry.apsCounter, context.awaitingBlock, 0);
+
+        if (dest16 === undefined) {
+            throw new Error("APS fragmentation requires unicast destination acknowledgments");
+        }
+
+        this.#trackPendingAck(dest16, previousEntry.apsCounter, params, context);
+    }
+
+    #handleIncomingFragment(data: Buffer, nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Buffer | undefined {
+        const now = Date.now();
+        this.#pruneExpiredFragmentStates(now);
+
+        const blockNumber = apsHeader.fragBlockNumber ?? 0;
+        const key = this.#makeFragmentKey(nwkHeader, apsHeader);
+        const fragmentation = apsHeader.fragmentation ?? ZigbeeAPSFragmentation.NONE;
+
+        if (fragmentation === ZigbeeAPSFragmentation.FIRST) {
+            const state: IncomingFragmentState = {
+                chunks: new Map([[blockNumber, Buffer.from(data)]]),
+                lastActivity: now,
+                source16: nwkHeader.source16,
+                source64: nwkHeader.source64,
+                destEndpoint: apsHeader.destEndpoint,
+                profileId: apsHeader.profileId,
+                clusterId: apsHeader.clusterId,
+                counter: apsHeader.counter ?? 0,
+            };
+
+            this.#incomingFragments.set(key, state);
+
+            return undefined;
+        }
+
+        const state = this.#incomingFragments.get(key);
+
+        if (state === undefined) {
+            return undefined;
+        }
+
+        state.chunks.set(blockNumber, Buffer.from(data));
+        state.lastActivity = now;
+
+        if (fragmentation === ZigbeeAPSFragmentation.LAST) {
+            state.expectedBlocks = blockNumber + 1;
+        }
+
+        if (state.expectedBlocks === undefined || state.chunks.size < state.expectedBlocks) {
+            return undefined;
+        }
+
+        const buffers: Buffer[] = [];
+
+        for (let block = 0; block < state.expectedBlocks; block += 1) {
+            const chunk = state.chunks.get(block);
+
+            if (chunk === undefined) {
+                return undefined;
+            }
+
+            buffers.push(chunk);
+        }
+
+        this.#incomingFragments.delete(key);
+
+        apsHeader.frameControl.extendedHeader = false;
+        apsHeader.fragmentation = undefined;
+        apsHeader.fragBlockNumber = undefined;
+        apsHeader.fragACKBitfield = undefined;
+
+        return Buffer.concat(buffers);
+    }
+
+    #makeFragmentKey(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): string {
+        const source = nwkHeader.source64 !== undefined ? `64:${nwkHeader.source64}` : `16:${nwkHeader.source16 ?? 0xffff}`;
+        const profile = apsHeader.profileId ?? 0;
+        const cluster = apsHeader.clusterId ?? 0;
+        const sourceEndpoint = apsHeader.sourceEndpoint ?? 0xff;
+        const destEndpoint = apsHeader.destEndpoint ?? 0xff;
+        const counter = apsHeader.counter ?? 0;
+
+        return `${source}:${profile}:${cluster}:${sourceEndpoint}:${destEndpoint}:${counter}`;
+    }
+
+    #pruneExpiredFragmentStates(now: number): void {
+        for (const [key, state] of this.#incomingFragments) {
+            if (now - state.lastActivity >= CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS) {
+                this.#incomingFragments.delete(key);
+            }
+        }
+    }
+
+    #trackPendingAck(dest16: number, apsCounter: number, params: SendDataParams, fragment?: OutgoingFragmentContext): void {
         const key = `${dest16}:${apsCounter}`;
         const existing = this.#pendingAcks.get(key);
 
@@ -377,6 +625,7 @@ export class APSHandler {
             timer: setTimeout(async () => {
                 await this.#handleAckTimeout(key);
             }, CONFIG_APS_ACK_WAIT_DURATION_MS),
+            fragment,
         });
     }
 
@@ -414,7 +663,7 @@ export class APSHandler {
         }, CONFIG_APS_ACK_WAIT_DURATION_MS);
     }
 
-    #resolvePendingAck(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): void {
+    async #resolvePendingAck(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Promise<void> {
         if (apsHeader.counter === undefined) {
             return;
         }
@@ -447,6 +696,10 @@ export class APSHandler {
                 `<=== APS ACK[src16=${source16} apsCounter=${apsHeader.counter} dstEp=${apsHeader.sourceEndpoint} clusterId=${apsHeader.clusterId}]`,
             NS,
         );
+
+        if (entry.fragment !== undefined) {
+            await this.#sendNextFragmentBlock(entry.fragment, entry);
+        }
     }
 
     public async sendACK(macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Promise<void> {
@@ -484,22 +737,32 @@ export class APSHandler {
         }
 
         const macDest16 = nwkDest16 < ZigbeeConsts.BCAST_MIN ? (relayAddresses?.[relayIndex!] ?? nwkDest16) : ZigbeeMACConsts.BCAST_ADDR;
-        const ackAPSFrame = encodeZigbeeAPSFrame(
-            {
-                frameControl: {
-                    frameType: ZigbeeAPSFrameType.ACK,
-                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
-                    ackFormat: false,
-                    security: false,
-                    ackRequest: false,
-                    extendedHeader: false,
-                },
-                destEndpoint: apsHeader.sourceEndpoint,
-                clusterId: apsHeader.clusterId,
-                profileId: apsHeader.profileId,
-                sourceEndpoint: apsHeader.destEndpoint,
-                counter: apsHeader.counter,
+        const ackNeedsFragmentInfo =
+            apsHeader.frameControl.extendedHeader && apsHeader.fragmentation !== undefined && apsHeader.fragmentation !== ZigbeeAPSFragmentation.NONE;
+        const ackHeader: ZigbeeAPSHeader = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.ACK,
+                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                ackFormat: false,
+                security: false,
+                ackRequest: false,
+                extendedHeader: ackNeedsFragmentInfo,
             },
+            destEndpoint: apsHeader.sourceEndpoint,
+            clusterId: apsHeader.clusterId,
+            profileId: apsHeader.profileId,
+            sourceEndpoint: apsHeader.destEndpoint,
+            counter: apsHeader.counter,
+        };
+
+        if (ackNeedsFragmentInfo) {
+            ackHeader.fragmentation = ZigbeeAPSFragmentation.FIRST;
+            ackHeader.fragBlockNumber = apsHeader.fragBlockNumber ?? 0;
+            ackHeader.fragACKBitfield = 0x01;
+        }
+
+        const ackAPSFrame = encodeZigbeeAPSFrame(
+            ackHeader,
             Buffer.alloc(0), // TODO optimize
             // undefined,
             // undefined,
@@ -577,7 +840,7 @@ export class APSHandler {
         switch (apsHeader.frameControl.frameType) {
             case ZigbeeAPSFrameType.ACK: {
                 // ACKs should never contain a payload
-                this.#resolvePendingAck(nwkHeader, apsHeader);
+                await this.#resolvePendingAck(nwkHeader, apsHeader);
 
                 return;
             }
@@ -596,6 +859,20 @@ export class APSHandler {
                 if (this.isDuplicateFrame(nwkHeader, apsHeader)) {
                     logger.debug(() => `<=~= APS Ignoring duplicate frame seqNum=${nwkHeader.seqNum} counter=${apsHeader.counter}`, NS);
                     return;
+                }
+
+                if (
+                    apsHeader.frameControl.extendedHeader &&
+                    apsHeader.fragmentation !== undefined &&
+                    apsHeader.fragmentation !== ZigbeeAPSFragmentation.NONE
+                ) {
+                    const reassembled = this.#handleIncomingFragment(data, nwkHeader, apsHeader);
+
+                    if (reassembled === undefined) {
+                        return;
+                    }
+
+                    data = reassembled;
                 }
 
                 logger.debug(
