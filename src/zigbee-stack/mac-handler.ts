@@ -389,10 +389,8 @@ export class MACHandler {
 
         const finalPayload = Buffer.alloc(3);
         let offset = 0;
-        finalPayload.writeUInt16LE(newAddress16, offset);
-        offset += 2;
-        finalPayload.writeUInt8(status, offset);
-        offset += 1;
+        offset = finalPayload.writeUInt16LE(newAddress16, offset);
+        offset = finalPayload.writeUInt8(status, offset);
 
         return await this.sendCommand(
             MACCommandId.ASSOC_RSP,

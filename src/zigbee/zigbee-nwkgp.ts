@@ -213,14 +213,13 @@ export function decodeZigbeeNWKGPFrameControl(data: Buffer, offset: number): [Zi
 }
 
 function encodeZigbeeNWKGPFrameControl(data: Buffer, offset: number, fcf: ZigbeeNWKGPFrameControl): number {
-    data.writeUInt8(
+    offset = data.writeUInt8(
         (fcf.frameType & ZigbeeNWKGPConsts.FCF_FRAME_TYPE) |
             ((fcf.protocolVersion << 2) & ZigbeeNWKGPConsts.FCF_VERSION) |
             (((fcf.autoCommissioning ? 1 : 0) << 6) & ZigbeeNWKGPConsts.FCF_AUTO_COMMISSIONING) |
             (((fcf.nwkFrameControlExtension ? 1 : 0) << 7) & ZigbeeNWKGPConsts.FCF_CONTROL_EXTENSION),
         offset,
     );
-    offset += 1;
 
     return offset;
 }
@@ -242,7 +241,7 @@ function decodeZigbeeNWKGPFrameControlExt(data: Buffer, offset: number): [Zigbee
 }
 
 function encodeZigbeeNWKGPFrameControlExt(data: Buffer, offset: number, fcExt: ZigbeeNWKGPFrameControlExt): number {
-    data.writeUInt8(
+    offset = data.writeUInt8(
         (fcExt.appId & ZigbeeNWKGPConsts.FCF_EXT_APP_ID) |
             ((fcExt.securityLevel << 3) & ZigbeeNWKGPConsts.FCF_EXT_SECURITY_LEVEL) |
             (((fcExt.securityKey ? 1 : 0) << 5) & ZigbeeNWKGPConsts.FCF_EXT_SECURITY_KEY) |
@@ -250,7 +249,6 @@ function encodeZigbeeNWKGPFrameControlExt(data: Buffer, offset: number, fcExt: Z
             ((fcExt.direction << 7) & ZigbeeNWKGPConsts.FCF_EXT_DIRECTION),
         offset,
     );
-    offset += 1;
 
     return offset;
 }
@@ -355,15 +353,12 @@ function encodeZigbeeNWKGPHeader(data: Buffer, offset: number, header: ZigbeeNWK
             header.frameControlExt!.appId === ZigbeeNWKGPAppId.DEFAULT &&
             data.readUInt8(offset) !== ZigbeeNWKGPCommandId.CHANNEL_CONFIGURATION)
     ) {
-        data.writeUInt32LE(header.sourceId!, offset);
-        offset += 4;
+        offset = data.writeUInt32LE(header.sourceId!, offset);
     }
 
     if (header.frameControl.nwkFrameControlExtension && header.frameControlExt!.appId === ZigbeeNWKGPAppId.ZGP) {
-        data.writeBigUInt64LE(header.source64!, offset);
-        offset += 8;
-        data.writeUInt8(header.endpoint!, offset);
-        offset += 1;
+        offset = data.writeBigUInt64LE(header.source64!, offset);
+        offset = data.writeUInt8(header.endpoint!, offset);
     }
 
     if (
@@ -376,8 +371,7 @@ function encodeZigbeeNWKGPHeader(data: Buffer, offset: number, header: ZigbeeNWK
             header.frameControlExt!.securityLevel === ZigbeeNWKGPSecurityLevel.FULL ||
             header.frameControlExt!.securityLevel === ZigbeeNWKGPSecurityLevel.FULLENCR
         ) {
-            data.writeUInt32LE(header.securityFrameCounter!, offset);
-            offset += 4;
+            offset = data.writeUInt32LE(header.securityFrameCounter!, offset);
         }
     }
 
@@ -392,12 +386,10 @@ function makeGPNonce(header: ZigbeeNWKGPHeader, macSource64: bigint | undefined)
 
     if (header.frameControlExt!.appId === ZigbeeNWKGPAppId.DEFAULT) {
         if (header.frameControlExt!.direction === ZigbeeNWKGPDirection.DIRECTION_FROM_ZGPD) {
-            nonce.writeUInt32LE(header.sourceId!, offset);
-            offset += 4;
+            offset = nonce.writeUInt32LE(header.sourceId!, offset);
         }
 
-        nonce.writeUInt32LE(header.sourceId!, offset);
-        offset += 4;
+        offset = nonce.writeUInt32LE(header.sourceId!, offset);
     } else if (header.frameControlExt!.appId === ZigbeeNWKGPAppId.ZGP) {
         const ieeeSource = header.source64 ?? macSource64;
 
@@ -405,21 +397,17 @@ function makeGPNonce(header: ZigbeeNWKGPHeader, macSource64: bigint | undefined)
             throw new Error("Zigbee NWK GP frame missing IEEE source for AppId=ZGP");
         }
 
-        nonce.writeBigUInt64LE(ieeeSource, offset);
-        offset += 8;
+        offset = nonce.writeBigUInt64LE(ieeeSource, offset);
     }
 
-    nonce.writeUInt32LE(header.securityFrameCounter!, offset);
-    offset += 4;
+    offset = nonce.writeUInt32LE(header.securityFrameCounter!, offset);
 
     if (header.frameControlExt!.appId === ZigbeeNWKGPAppId.ZGP && header.frameControlExt!.direction === ZigbeeNWKGPDirection.DIRECTION_FROM_ZGPD) {
         // Security level = 0b101, Key Identifier = 0x00, Extended nonce = 0b0, Reserved = 0b00
-        nonce.writeUInt8(0xc5, offset);
-        offset += 1;
+        offset = nonce.writeUInt8(0xc5, offset);
     } else {
         // Security level = 0b101, Key Identifier = 0x00, Extended nonce = 0b0, Reserved = 0b11
-        nonce.writeUInt8(0x05, offset);
-        offset += 1;
+        offset = nonce.writeUInt8(0x05, offset);
     }
 
     return nonce;
@@ -483,36 +471,37 @@ export function encodeZigbeeNWKGPFrame(
     if (header.frameControlExt?.securityLevel === ZigbeeNWKGPSecurityLevel.FULLENCR) {
         const nonce = makeGPNonce(header, macSource64);
         const decryptedData = Buffer.alloc(payload.byteLength + header.micSize!); // payload + auth tag
-        decryptedData.set(payload, 0);
+
+        payload.copy(decryptedData, 0);
 
         const computedAuthTag = computeAuthTag(data.subarray(0, offset), header.micSize!, decryptKey, nonce, payload);
-        decryptedData.set(computedAuthTag, payload.byteLength);
+        computedAuthTag.copy(decryptedData, payload.byteLength);
 
         const [authTag, encryptedPayload] = aes128CcmStar(header.micSize!, decryptKey, nonce, decryptedData);
+        offset += encryptedPayload.copy(data, offset);
 
-        data.set(encryptedPayload, offset);
-        offset += encryptedPayload.byteLength;
+        authTag.copy(data, offset); // at end
 
-        data.set(authTag, offset); // at end
         offset += header.micSize!;
     } else if (header.frameControlExt?.securityLevel === ZigbeeNWKGPSecurityLevel.FULL) {
         const nonce = makeGPNonce(header, macSource64);
         const decryptedData = Buffer.alloc(payload.byteLength + header.micSize!); // payload + auth tag
-        decryptedData.set(payload, 0);
 
-        data.set(payload, offset);
-        offset += payload.byteLength;
+        payload.copy(decryptedData, 0);
+
+        offset += payload.copy(data, offset);
 
         const computedAuthTag = computeAuthTag(data.subarray(0, offset), header.micSize!, decryptKey, nonce, Buffer.alloc(0));
-        decryptedData.set(computedAuthTag, payload.byteLength);
+
+        computedAuthTag.copy(decryptedData, payload.byteLength);
 
         const [authTag] = aes128CcmStar(header.micSize!, decryptKey, nonce, decryptedData);
 
-        data.set(authTag, offset); // at end
+        authTag.copy(data, offset); // at end
+
         offset += header.micSize!;
     } else {
-        data.set(payload, offset);
-        offset += payload.byteLength;
+        offset += payload.copy(data, offset);
     }
 
     return data.subarray(0, offset);

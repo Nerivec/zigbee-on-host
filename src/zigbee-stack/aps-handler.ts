@@ -1293,16 +1293,11 @@ export class APSHandler {
 
         const finalPayload = Buffer.alloc(18 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
         let offset = 0;
-        finalPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
-        offset += 1;
-        finalPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_TC_LINK, offset);
-        offset += 1;
-        finalPayload.set(key, offset);
-        offset += ZigbeeAPSConsts.CMD_KEY_LENGTH;
-        finalPayload.writeBigUInt64LE(destination64, offset);
-        offset += 8;
-        finalPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset);
-        offset += 8;
+        offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
+        offset = finalPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_TC_LINK, offset);
+        offset += key.copy(finalPayload, offset);
+        offset = finalPayload.writeBigUInt64LE(destination64, offset);
+        offset = finalPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset);
 
         // TODO
         // const [tlvs, tlvsOutOffset] = encodeZigbeeAPSTLVs();
@@ -1362,18 +1357,12 @@ export class APSHandler {
         const isBroadcast = nwkDest16 >= ZigbeeConsts.BCAST_MIN;
         const finalPayload = Buffer.alloc(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
         let offset = 0;
-        finalPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
-        offset += 1;
-        finalPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK, offset);
-        offset += 1;
-        finalPayload.set(key, offset);
-        offset += ZigbeeAPSConsts.CMD_KEY_LENGTH;
-        finalPayload.writeUInt8(seqNum, offset);
-        offset += 1;
-        finalPayload.writeBigUInt64LE(isBroadcast ? 0n : destination64, offset);
-        offset += 8;
-        finalPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
-        offset += 8;
+        offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
+        offset = finalPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK, offset);
+        offset += key.copy(finalPayload, offset);
+        offset = finalPayload.writeUInt8(seqNum, offset);
+        offset = finalPayload.writeBigUInt64LE(isBroadcast ? 0n : destination64, offset);
+        offset = finalPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
 
         // see 05-3474-23 #4.4.1.5
         // Conversely, a device receiving an APS transport key command MAY choose whether or not APS encryption is required.
@@ -1433,16 +1422,11 @@ export class APSHandler {
 
         const finalPayload = Buffer.alloc(11 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
         let offset = 0;
-        finalPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
-        offset += 1;
-        finalPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_APP_LINK, offset);
-        offset += 1;
-        finalPayload.set(key, offset);
-        offset += ZigbeeAPSConsts.CMD_KEY_LENGTH;
-        finalPayload.writeBigUInt64LE(partner, offset);
-        offset += 8;
-        finalPayload.writeUInt8(initiatorFlag ? 1 : 0, offset);
-        offset += 1;
+        offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
+        offset = finalPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_APP_LINK, offset);
+        offset += key.copy(finalPayload, offset);
+        offset = finalPayload.writeBigUInt64LE(partner, offset);
+        offset = finalPayload.writeUInt8(initiatorFlag ? 1 : 0, offset);
 
         // TODO
         // const [tlvs, tlvsOutOffset] = encodeZigbeeAPSTLVs();
@@ -1555,18 +1539,12 @@ export class APSHandler {
 
             const tApsCmdPayload = Buffer.alloc(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
             let offset = 0;
-            tApsCmdPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
-            offset += 1;
-            tApsCmdPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK, offset);
-            offset += 1;
-            tApsCmdPayload.set(this.#context.netParams.networkKey, offset);
-            offset += ZigbeeAPSConsts.CMD_KEY_LENGTH;
-            tApsCmdPayload.writeUInt8(this.#context.netParams.networkKeySequenceNumber, offset);
-            offset += 1;
-            tApsCmdPayload.writeBigUInt64LE(device64, offset);
-            offset += 8;
-            tApsCmdPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
-            offset += 8;
+            offset = tApsCmdPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
+            offset = tApsCmdPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK, offset);
+            offset += this.#context.netParams.networkKey.copy(tApsCmdPayload, offset);
+            offset = tApsCmdPayload.writeUInt8(this.#context.netParams.networkKeySequenceNumber, offset);
+            offset = tApsCmdPayload.writeBigUInt64LE(device64, offset);
+            offset = tApsCmdPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
 
             const tApsCmdFrame = encodeZigbeeAPSFrame(
                 {
@@ -1641,14 +1619,10 @@ export class APSHandler {
 
         const finalPayload = Buffer.alloc(12 /* + TLVs */);
         let offset = 0;
-        finalPayload.writeUInt8(ZigbeeAPSCommandId.UPDATE_DEVICE, offset);
-        offset += 1;
-        finalPayload.writeBigUInt64LE(device64, offset);
-        offset += 8;
-        finalPayload.writeUInt16LE(device16, offset);
-        offset += 2;
-        finalPayload.writeUInt8(status, offset);
-        offset += 1;
+        offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.UPDATE_DEVICE, offset);
+        offset = finalPayload.writeBigUInt64LE(device64, offset);
+        offset = finalPayload.writeUInt16LE(device16, offset);
+        offset = finalPayload.writeUInt8(status, offset);
 
         // TODO TLVs
 
@@ -1725,10 +1699,8 @@ export class APSHandler {
 
         const finalPayload = Buffer.alloc(9);
         let offset = 0;
-        finalPayload.writeUInt8(ZigbeeAPSCommandId.REMOVE_DEVICE, offset);
-        offset += 1;
-        finalPayload.writeBigUInt64LE(target64, offset);
-        offset += 8;
+        offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.REMOVE_DEVICE, offset);
+        offset = finalPayload.writeBigUInt64LE(target64, offset);
 
         return await this.sendCommand(
             ZigbeeAPSCommandId.REMOVE_DEVICE,
@@ -1858,14 +1830,11 @@ export class APSHandler {
         const hasPartner64 = keyType === ZigbeeAPSConsts.CMD_KEY_APP_MASTER;
         const finalPayload = Buffer.alloc(2 + (hasPartner64 ? 8 : 0));
         let offset = 0;
-        finalPayload.writeUInt8(ZigbeeAPSCommandId.REQUEST_KEY, offset);
-        offset += 1;
-        finalPayload.writeUInt8(keyType, offset);
-        offset += 1;
+        offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.REQUEST_KEY, offset);
+        offset = finalPayload.writeUInt8(keyType, offset);
 
         if (hasPartner64) {
-            finalPayload.writeBigUInt64LE(partner64!, offset);
-            offset += 8;
+            offset = finalPayload.writeBigUInt64LE(partner64!, offset);
         }
 
         return await this.sendCommand(
@@ -1985,12 +1954,9 @@ export class APSHandler {
 
         const finalPayload = Buffer.alloc(9 + tApsCmdFrame.byteLength);
         let offset = 0;
-        finalPayload.writeUInt8(ZigbeeAPSCommandId.TUNNEL, offset);
-        offset += 1;
-        finalPayload.writeBigUInt64LE(destination64, offset);
-        offset += 8;
-        finalPayload.set(tApsCmdFrame, offset);
-        offset += tApsCmdFrame.byteLength;
+        offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.TUNNEL, offset);
+        offset = finalPayload.writeBigUInt64LE(destination64, offset);
+        offset += tApsCmdFrame.copy(finalPayload, offset);
 
         return await this.sendCommand(
             ZigbeeAPSCommandId.TUNNEL,
@@ -2077,16 +2043,12 @@ export class APSHandler {
     public async sendVerifyKey(nwkDest16: number, keyType: number, source64: bigint, hash: Buffer): Promise<boolean> {
         logger.debug(() => `===> APS VERIFY_KEY[type=${keyType} src64=${source64} hash=${hash.toString("hex")}]`, NS);
 
-        const finalPayload = Buffer.alloc(26);
+        const finalPayload = Buffer.alloc(10 + ZigbeeConsts.SEC_KEYSIZE);
         let offset = 0;
-        finalPayload.writeUInt8(ZigbeeAPSCommandId.VERIFY_KEY, offset);
-        offset += 1;
-        finalPayload.writeUInt8(keyType, offset);
-        offset += 1;
-        finalPayload.writeBigUInt64LE(source64, offset);
-        offset += 8;
-        finalPayload.set(hash, offset);
-        offset += hash.byteLength; // 16
+        offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.VERIFY_KEY, offset);
+        offset = finalPayload.writeUInt8(keyType, offset);
+        offset = finalPayload.writeBigUInt64LE(source64, offset);
+        offset += hash.copy(finalPayload, offset);
 
         return await this.sendCommand(
             ZigbeeAPSCommandId.VERIFY_KEY,
@@ -2154,14 +2116,10 @@ export class APSHandler {
 
         const finalPayload = Buffer.alloc(11);
         let offset = 0;
-        finalPayload.writeUInt8(ZigbeeAPSCommandId.CONFIRM_KEY, offset);
-        offset += 1;
-        finalPayload.writeUInt8(status, offset);
-        offset += 1;
-        finalPayload.writeUInt8(keyType, offset);
-        offset += 1;
-        finalPayload.writeBigUInt64LE(destination64, offset);
-        offset += 8;
+        offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.CONFIRM_KEY, offset);
+        offset = finalPayload.writeUInt8(status, offset);
+        offset = finalPayload.writeUInt8(keyType, offset);
+        offset = finalPayload.writeBigUInt64LE(destination64, offset);
 
         const result = await this.sendCommand(
             ZigbeeAPSCommandId.CONFIRM_KEY,
@@ -2349,34 +2307,22 @@ export class APSHandler {
             logger.debug(() => `LQI table clipped at 255 entries to fit ZDO response (actual=${neighborTableEntries})`, NS);
         }
 
-        lqiTable.writeUInt8(0 /* seq num */, offset);
-        offset += 1;
-        lqiTable.writeUInt8(0 /* SUCCESS */, offset);
-        offset += 1;
-        lqiTable.writeUInt8(neighborTableEntries, offset);
-        offset += 1;
-        lqiTable.writeUInt8(startIndex, offset);
-        offset += 1;
-        lqiTable.writeUInt8(entryCount, offset);
-        offset += 1;
+        offset = lqiTable.writeUInt8(0 /* seq num */, offset);
+        offset = lqiTable.writeUInt8(0 /* SUCCESS */, offset);
+        offset = lqiTable.writeUInt8(neighborTableEntries, offset);
+        offset = lqiTable.writeUInt8(startIndex, offset);
+        offset = lqiTable.writeUInt8(entryCount, offset);
 
         let entryIndex = 0;
 
         for (let i = 0; i < entryCount; i++) {
-            lqiTable.writeBigUInt64LE(lqiTableArr[entryIndex] as bigint /* extendedPanId */, offset);
-            offset += 8;
-            lqiTable.writeBigUInt64LE(lqiTableArr[entryIndex + 1] as bigint /* eui64 */, offset);
-            offset += 8;
-            lqiTable.writeUInt16LE(lqiTableArr[entryIndex + 2] as number /* nwkAddress */, offset);
-            offset += 2;
-            lqiTable.writeUInt8(lqiTableArr[entryIndex + 3] as number /* deviceTypeByte */, offset);
-            offset += 1;
-            lqiTable.writeUInt8(lqiTableArr[entryIndex + 4] as number /* permitJoiningByte */, offset);
-            offset += 1;
-            lqiTable.writeUInt8(lqiTableArr[entryIndex + 5] as number /* depth */, offset);
-            offset += 1;
-            lqiTable.writeUInt8(lqiTableArr[entryIndex + 6] as number /* lqa */, offset);
-            offset += 1;
+            offset = lqiTable.writeBigUInt64LE(lqiTableArr[entryIndex] as bigint /* extendedPanId */, offset);
+            offset = lqiTable.writeBigUInt64LE(lqiTableArr[entryIndex + 1] as bigint /* eui64 */, offset);
+            offset = lqiTable.writeUInt16LE(lqiTableArr[entryIndex + 2] as number /* nwkAddress */, offset);
+            offset = lqiTable.writeUInt8(lqiTableArr[entryIndex + 3] as number /* deviceTypeByte */, offset);
+            offset = lqiTable.writeUInt8(lqiTableArr[entryIndex + 4] as number /* permitJoiningByte */, offset);
+            offset = lqiTable.writeUInt8(lqiTableArr[entryIndex + 5] as number /* depth */, offset);
+            offset = lqiTable.writeUInt8(lqiTableArr[entryIndex + 6] as number /* lqa */, offset);
 
             entryIndex += 7;
         }
@@ -2456,26 +2402,18 @@ export class APSHandler {
             logger.debug(() => `Routing table clipped at 255 entries to fit ZDO response (actual=${routingTableEntries})`, NS);
         }
 
-        routingTable.writeUInt8(0 /* seq num */, offset);
-        offset += 1;
-        routingTable.writeUInt8(0 /* SUCCESS */, offset);
-        offset += 1;
-        routingTable.writeUInt8(clipped ? 0xff : routingTableEntries, offset);
-        offset += 1;
-        routingTable.writeUInt8(startIndex, offset);
-        offset += 1;
-        routingTable.writeUInt8(entryCount, offset);
-        offset += 1;
+        offset = routingTable.writeUInt8(0 /* seq num */, offset);
+        offset = routingTable.writeUInt8(0 /* SUCCESS */, offset);
+        offset = routingTable.writeUInt8(clipped ? 0xff : routingTableEntries, offset);
+        offset = routingTable.writeUInt8(startIndex, offset);
+        offset = routingTable.writeUInt8(entryCount, offset);
 
         let entryIndex = 0;
 
         for (let i = 0; i < entryCount; i++) {
-            routingTable.writeUInt16LE(routingTableArr[entryIndex] /* destination16 */, offset);
-            offset += 2;
-            routingTable.writeUInt8(routingTableArr[entryIndex + 1] /* statusByte */, offset);
-            offset += 1;
-            routingTable.writeUInt16LE(routingTableArr[entryIndex + 2] /* nextHopAddress */, offset);
-            offset += 2;
+            offset = routingTable.writeUInt16LE(routingTableArr[entryIndex] /* destination16 */, offset);
+            offset = routingTable.writeUInt8(routingTableArr[entryIndex + 1] /* statusByte */, offset);
+            offset = routingTable.writeUInt16LE(routingTableArr[entryIndex + 2] /* nextHopAddress */, offset);
 
             entryIndex += 3;
         }

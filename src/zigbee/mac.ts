@@ -409,7 +409,7 @@ function encodeMACFrameControl(data: Buffer, offset: number, fcf: MACFrameContro
         throw new Error(`Unsupported MAC frame type MULTIPURPOSE (${fcf.frameType})`);
     }
 
-    data.writeUInt16LE(
+    offset = data.writeUInt16LE(
         (fcf.frameType & ZigbeeMACConsts.FCF_TYPE_MASK) |
             (((fcf.securityEnabled ? 1 : 0) << 3) & ZigbeeMACConsts.FCF_SEC_EN) |
             (((fcf.framePending ? 1 : 0) << 4) & ZigbeeMACConsts.FCF_FRAME_PND) |
@@ -423,7 +423,6 @@ function encodeMACFrameControl(data: Buffer, offset: number, fcf: MACFrameContro
             ((fcf.sourceAddrMode << 14) & ZigbeeMACConsts.FCF_SADDR_MASK),
         offset,
     );
-    offset += 2;
 
     return offset;
 }
@@ -507,7 +506,7 @@ function decodeMACSuperframeSpec(data: Buffer, offset: number): [MACSuperframeSp
 
 function encodeMACSuperframeSpec(data: Buffer, offset: number, header: MACHeader): number {
     const spec = header.superframeSpec!;
-    data.writeUInt16LE(
+    offset = data.writeUInt16LE(
         (spec.beaconOrder & ZigbeeMACConsts.SUPERFRAME_BEACON_ORDER_MASK) |
             ((spec.superframeOrder << ZigbeeMACConsts.SUPERFRAME_ORDER_SHIFT) & ZigbeeMACConsts.SUPERFRAME_ORDER_MASK) |
             ((spec.finalCAPSlot << ZigbeeMACConsts.SUPERFRAME_CAP_SHIFT) & ZigbeeMACConsts.SUPERFRAME_CAP_MASK) |
@@ -516,7 +515,6 @@ function encodeMACSuperframeSpec(data: Buffer, offset: number, header: MACHeader
             (((spec.associationPermit ? 1 : 0) << ZigbeeMACConsts.SUPERFRAME_ASSOC_PERMIT_SHIFT) & ZigbeeMACConsts.SUPERFRAME_ASSOC_PERMIT_MASK),
         offset,
     );
-    offset += 2;
 
     return offset;
 }
@@ -572,24 +570,20 @@ function decodeMACGtsInfo(data: Buffer, offset: number): [MACGtsInfo, offset: nu
 function encodeMACGtsInfo(data: Buffer, offset: number, header: MACHeader): number {
     const info = header.gtsInfo!;
     const count = info.directions ? info.directions.length : 0;
-    data.writeUInt8((count & ZigbeeMACConsts.GTS_COUNT_MASK) | ((info.permit ? 1 : 0) & ZigbeeMACConsts.GTS_PERMIT_MASK), offset);
-    offset += 1;
+    offset = data.writeUInt8((count & ZigbeeMACConsts.GTS_COUNT_MASK) | ((info.permit ? 1 : 0) & ZigbeeMACConsts.GTS_PERMIT_MASK), offset);
 
     if (count > 0) {
         // assert(info.directionByte !== undefined);
-        data.writeUInt8(info.directionByte!, offset);
-        offset += 1;
+        offset = data.writeUInt8(info.directionByte!, offset);
 
         for (let i = 0; i < count; i++) {
-            data.writeUInt16LE(info.addresses![i], offset);
-            offset += 2;
+            offset = data.writeUInt16LE(info.addresses![i], offset);
             const timeLength = info.timeLengths![i];
             const slot = info.slots![i];
-            data.writeUInt8(
+            offset = data.writeUInt8(
                 ((timeLength << ZigbeeMACConsts.GTS_LENGTH_SHIFT) & ZigbeeMACConsts.GTS_LENGTH_MASK) | (slot & ZigbeeMACConsts.GTS_SLOT_MASK),
                 offset,
             );
-            offset += 1;
         }
     }
 
@@ -637,22 +631,17 @@ function encodeMACPendAddr(data: Buffer, offset: number, header: MACHeader): num
     const pendAddr = header.pendAddr!;
     const num16 = pendAddr.addr16List ? pendAddr.addr16List.length : 0;
     const num64 = pendAddr.addr64List ? pendAddr.addr64List.length : 0;
-    data.writeUInt8(
+    offset = data.writeUInt8(
         (num16 & ZigbeeMACConsts.PENDADDR_SHORT_MASK) | ((num64 << ZigbeeMACConsts.PENDADDR_LONG_SHIFT) & ZigbeeMACConsts.PENDADDR_LONG_MASK),
         offset,
     );
-    offset += 1;
 
     for (let i = 0; i < num16; i++) {
-        data.writeUInt16LE(pendAddr.addr16List![i], offset);
-
-        offset += 2;
+        offset = data.writeUInt16LE(pendAddr.addr16List![i], offset);
     }
 
     for (let i = 0; i < num64; i++) {
-        data.writeBigUInt64LE(pendAddr.addr64List![i], offset);
-
-        offset += 8;
+        offset = data.writeBigUInt64LE(pendAddr.addr64List![i], offset);
     }
 
     return offset;
@@ -1049,29 +1038,21 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
     offset = encodeMACFrameControl(data, offset, header.frameControl);
 
     if (zigbee) {
-        data.writeUInt8(header.sequenceNumber!, offset);
-        offset += 1;
-
-        data.writeUInt16LE(header.destinationPANId!, offset);
-        offset += 2;
-
-        data.writeUInt16LE(header.destination16!, offset);
-        offset += 2;
+        offset = data.writeUInt8(header.sequenceNumber!, offset);
+        offset = data.writeUInt16LE(header.destinationPANId!, offset);
+        offset = data.writeUInt16LE(header.destination16!, offset);
 
         if (header.sourcePANId !== undefined) {
-            data.writeUInt16LE(header.sourcePANId, offset);
-            offset += 2;
+            offset = data.writeUInt16LE(header.sourcePANId, offset);
         }
 
         // NWK GP can be NONE
         if (header.frameControl.sourceAddrMode === MACFrameAddressMode.SHORT) {
-            data.writeUInt16LE(header.source16!, offset);
-            offset += 2;
+            offset = data.writeUInt16LE(header.source16!, offset);
         }
     } else {
         if (!header.frameControl.seqNumSuppress) {
-            data.writeUInt8(header.sequenceNumber!, offset);
-            offset += 1;
+            offset = data.writeUInt8(header.sequenceNumber!, offset);
         }
 
         if (header.frameControl.destAddrMode === MACFrameAddressMode.RESERVED) {
@@ -1247,29 +1228,23 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
         }
 
         if (destPANPresent) {
-            data.writeUInt16LE(header.destinationPANId!, offset);
-            offset += 2;
+            offset = data.writeUInt16LE(header.destinationPANId!, offset);
         }
 
         if (header.frameControl.destAddrMode === MACFrameAddressMode.SHORT) {
-            data.writeUInt16LE(header.destination16!, offset);
-            offset += 2;
+            offset = data.writeUInt16LE(header.destination16!, offset);
         } else if (header.frameControl.destAddrMode === MACFrameAddressMode.EXT) {
-            data.writeBigUInt64LE(header.destination64!, offset);
-            offset += 8;
+            offset = data.writeBigUInt64LE(header.destination64!, offset);
         }
 
         if (sourcePANPresent) {
-            data.writeUInt16LE(header.sourcePANId!, offset);
-            offset += 2;
+            offset = data.writeUInt16LE(header.sourcePANId!, offset);
         }
 
         if (header.frameControl.sourceAddrMode === MACFrameAddressMode.SHORT) {
-            data.writeUInt16LE(header.source16!, offset);
-            offset += 2;
+            offset = data.writeUInt16LE(header.source16!, offset);
         } else if (header.frameControl.sourceAddrMode === MACFrameAddressMode.EXT) {
-            data.writeBigUInt64LE(header.source64!, offset);
-            offset += 8;
+            offset = data.writeBigUInt64LE(header.source64!, offset);
         }
 
         let auxSecHeader: MACAuxSecHeader | undefined;
@@ -1292,8 +1267,7 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
                 offset = encodeMACGtsInfo(data, offset, header);
                 offset = encodeMACPendAddr(data, offset, header);
             } else if (header.frameControl.frameType === MACFrameType.CMD) {
-                data.writeUInt8(header.commandId!, offset);
-                offset += 1;
+                offset = data.writeUInt8(header.commandId!, offset);
             }
         } else {
             if (header.frameControl.iePresent) {
@@ -1311,10 +1285,8 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
             const isEncrypted = auxSecHeader!.securityLevel! & 0x04;
 
             if (isEncrypted) {
-                data.writeUInt32LE(header.frameCounter!, offset);
-                offset += 4;
-                data.writeUInt8(header.keySeqCounter!, offset);
-                offset += 1;
+                offset = data.writeUInt32LE(header.frameCounter!, offset);
+                offset = data.writeUInt8(header.keySeqCounter!, offset);
             }
         }
     }
@@ -1363,14 +1335,9 @@ export function decodeMACPayload(data: Buffer, offset: number, frameControl: MAC
 export function encodeMACFrame(header: MACHeader, payload: Buffer): Buffer {
     let offset = 0;
     const data = Buffer.alloc(ZigbeeMACConsts.PAYLOAD_MAX_SAFE_SIZE);
-
     offset = encodeMACHeader(data, offset, header, false);
-
-    data.set(payload, offset);
-    offset += payload.byteLength;
-
-    data.writeUInt16LE(crc16CCITT(data.subarray(0, offset)), offset);
-    offset += 2;
+    offset += payload.copy(data, offset);
+    offset = data.writeUInt16LE(crc16CCITT(data.subarray(0, offset)), offset);
 
     return data.subarray(0, offset);
 }
@@ -1404,12 +1371,8 @@ export function encodeMACFrameZigbee(header: MACHeaderZigbee, payload: Buffer): 
     header.frameControl.frameVersion = MACFrameVersion.V2003;
 
     offset = encodeMACHeader(data, offset, header, true); // zigbee hotpath
-
-    data.set(payload, offset);
-    offset += payload.byteLength;
-
-    data.writeUInt16LE(crc16CCITT(data.subarray(0, offset)), offset);
-    offset += 2;
+    offset += payload.copy(data, offset);
+    offset = data.writeUInt16LE(crc16CCITT(data.subarray(0, offset)), offset);
 
     return data.subarray(0, offset);
 }
@@ -1466,9 +1429,8 @@ export function decodeMACZigbeeBeacon(data: Buffer, offset: number): MACZigbeeBe
 export function encodeMACZigbeeBeacon(beacon: MACZigbeeBeacon): Buffer {
     const payload = Buffer.alloc(ZigbeeMACConsts.ZIGBEE_BEACON_LENGTH);
     let offset = 0;
-    payload.writeUInt8(0, offset); // protocol ID always 0 on Zigbee beacons
-    offset += 1;
-    payload.writeUInt16LE(
+    offset = payload.writeUInt8(0, offset); // protocol ID always 0 on Zigbee beacons
+    offset = payload.writeUInt16LE(
         (beacon.profile & ZigbeeMACConsts.ZIGBEE_BEACON_STACK_PROFILE_MASK) |
             ((beacon.version << ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_VERSION_SHIFT) & ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_VERSION_MASK) |
             (((beacon.routerCapacity ? 1 : 0) << ZigbeeMACConsts.ZIGBEE_BEACON_ROUTER_CAPACITY_SHIFT) &
@@ -1478,10 +1440,8 @@ export function encodeMACZigbeeBeacon(beacon: MACZigbeeBeacon): Buffer {
                 ZigbeeMACConsts.ZIGBEE_BEACON_END_DEVICE_CAPACITY_MASK),
         offset,
     );
-    offset += 2;
-    payload.writeBigUInt64LE(beacon.extendedPANId, offset);
-    offset += 8;
-    payload.writeUInt32LE(
+    offset = payload.writeBigUInt64LE(beacon.extendedPANId, offset);
+    offset = payload.writeUInt32LE(
         (beacon.txOffset & ZigbeeMACConsts.ZIGBEE_BEACON_TX_OFFSET_MASK) |
             ((beacon.updateId << ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_SHIFT) & ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_MASK),
         offset,

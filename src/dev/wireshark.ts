@@ -71,45 +71,34 @@ export const createWiresharkZEPFrame = (
     data[data.length - 1] = 0x80 | ((lqi >> 1) & 0x7f);
 
     // Protocol ID String | Character string | 2.0.3 to 4.2.5
-    payload.writeUInt16LE(ZEP_PREAMBLE_NUM, offset);
-    offset += 2;
+    offset = payload.writeUInt16LE(ZEP_PREAMBLE_NUM, offset);
     // Protocol Version | Unsigned integer (8 bits) | 1.2.0 to 4.2.5
-    payload.writeUInt8(ZEP_PROTOCOL_VERSION, offset);
-    offset += 1;
+    offset = payload.writeUInt8(ZEP_PROTOCOL_VERSION, offset);
     // Type | Unsigned integer (8 bits) | 1.2.0 to 1.8.15, 1.12.0 to 4.2.5
-    payload.writeUInt8(ZEP_PROTOCOL_TYPE, offset);
-    offset += 1;
+    offset = payload.writeUInt8(ZEP_PROTOCOL_TYPE, offset);
     // Channel ID | Unsigned integer (8 bits) | 1.2.0 to 4.2.5
-    payload.writeUInt8(channelId, offset);
-    offset += 1;
+    offset = payload.writeUInt8(channelId, offset);
     // Device ID | Unsigned integer (16 bits) | 1.2.0 to 4.2.5
-    payload.writeUint16BE(deviceId, offset);
-    offset += 2;
+    offset = payload.writeUint16BE(deviceId, offset);
 
     // LQI/CRC Mode | Boolean | 1.2.0 to 4.2.5
-    payload.writeUInt8(lqiMode ? 1 : 0, offset);
-    offset += 1;
+    offset = payload.writeUInt8(lqiMode ? 1 : 0, offset);
     // Link Quality Indication | Unsigned integer (8 bits) | 1.2.0 to 4.2.5
-    payload.writeUInt8(lqi, offset);
-    offset += 1;
+    offset = payload.writeUInt8(lqi, offset);
 
     // Timestamp | Date and time | 1.2.0 to 4.2.5
-    payload.writeBigInt64BE(getZepTimestamp(), offset);
-    offset += 8;
+    offset = payload.writeBigInt64BE(getZepTimestamp(), offset);
 
     // Sequence Number | Unsigned integer (32 bits) | 1.2.0 to 4.2.5
-    payload.writeUInt32BE(sequence, offset);
-    offset += 4;
+    offset = payload.writeUInt32BE(sequence, offset);
 
     // Reserved Fields | Byte sequence | 2.0.0 to 4.2.5
     offset += 10;
 
     // Length | Unsigned integer (8 bits) | 1.2.0 to 4.2.5
-    payload.writeUInt8(data.byteLength, offset);
-    offset += 1;
+    offset = payload.writeUInt8(data.byteLength, offset);
 
-    payload.set(data, offset);
-    offset += data.length;
+    offset += data.copy(payload, offset);
 
     return payload;
 };

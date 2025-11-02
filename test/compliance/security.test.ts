@@ -947,7 +947,8 @@ describe("Zigbee 3.0 Security Compliance", () => {
         function makeInstallCodeBuffer(data: Buffer): Buffer {
             const buffer = Buffer.allocUnsafe(data.length + 2);
             const crc = computeInstallCodeCRC(data);
-            buffer.set(data, 0);
+
+            data.copy(buffer, 0);
             buffer.writeUInt16LE(crc, data.length);
 
             return buffer;

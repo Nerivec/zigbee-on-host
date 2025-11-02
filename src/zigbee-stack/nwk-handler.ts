@@ -786,20 +786,14 @@ export class NWKHandler {
             (((hasDestination64 ? 1 : 0) << 5) & ZigbeeNWKConsts.CMD_ROUTE_OPTION_DEST_EXT);
         const finalPayload = Buffer.alloc(1 + 1 + 1 + 2 + 1 + (hasDestination64 ? 8 : 0));
         let offset = 0;
-        finalPayload.writeUInt8(ZigbeeNWKCommandId.ROUTE_REQ, offset);
-        offset += 1;
-        finalPayload.writeUInt8(options, offset);
-        offset += 1;
-        finalPayload.writeUInt8(this.nextRouteRequestId(), offset);
-        offset += 1;
-        finalPayload.writeUInt16LE(destination16, offset);
-        offset += 2;
-        finalPayload.writeUInt8(0, offset); // pathCost
-        offset += 1;
+        offset = finalPayload.writeUInt8(ZigbeeNWKCommandId.ROUTE_REQ, offset);
+        offset = finalPayload.writeUInt8(options, offset);
+        offset = finalPayload.writeUInt8(this.nextRouteRequestId(), offset);
+        offset = finalPayload.writeUInt16LE(destination16, offset);
+        offset = finalPayload.writeUInt8(0, offset); // pathCost
 
         if (hasDestination64) {
-            finalPayload.writeBigUInt64LE(destination64!, offset);
-            offset += 8;
+            offset = finalPayload.writeBigUInt64LE(destination64!, offset);
         }
 
         return await this.sendCommand(
@@ -933,27 +927,19 @@ export class NWKHandler {
             (((hasResponder64 ? 1 : 0) << 5) & ZigbeeNWKConsts.CMD_ROUTE_OPTION_RESP_EXT);
         const finalPayload = Buffer.alloc(1 + 1 + 1 + 2 + 2 + 1 + (hasOriginator64 ? 8 : 0) + (hasResponder64 ? 8 : 0));
         let offset = 0;
-        finalPayload.writeUInt8(ZigbeeNWKCommandId.ROUTE_REPLY, offset);
-        offset += 1;
-        finalPayload.writeUInt8(options, offset);
-        offset += 1;
-        finalPayload.writeUInt8(requestId, offset);
-        offset += 1;
-        finalPayload.writeUInt16LE(originator16, offset);
-        offset += 2;
-        finalPayload.writeUInt16LE(responder16, offset);
-        offset += 2;
-        finalPayload.writeUInt8(1, offset); // pathCost TODO: init to 0 or 1?
-        offset += 1;
+        offset = finalPayload.writeUInt8(ZigbeeNWKCommandId.ROUTE_REPLY, offset);
+        offset = finalPayload.writeUInt8(options, offset);
+        offset = finalPayload.writeUInt8(requestId, offset);
+        offset = finalPayload.writeUInt16LE(originator16, offset);
+        offset = finalPayload.writeUInt16LE(responder16, offset);
+        offset = finalPayload.writeUInt8(1, offset); // pathCost TODO: init to 0 or 1?
 
         if (hasOriginator64) {
-            finalPayload.writeBigUInt64LE(originator64!, offset);
-            offset += 8;
+            offset = finalPayload.writeBigUInt64LE(originator64!, offset);
         }
 
         if (hasResponder64) {
-            finalPayload.writeBigUInt64LE(responder64!, offset);
-            offset += 8;
+            offset = finalPayload.writeBigUInt64LE(responder64!, offset);
         }
 
         // TODO

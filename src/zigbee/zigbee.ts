@@ -139,8 +139,8 @@ function aes128MmoHashUpdate(result: Buffer, data: Buffer, dataSize: number): vo
         const f = cipher.final();
         const encryptedBlock = Buffer.alloc(u.byteLength + f.byteLength);
 
-        encryptedBlock.set(u, 0);
-        encryptedBlock.set(f, u.byteLength);
+        u.copy(encryptedBlock, 0);
+        f.copy(encryptedBlock, u.byteLength);
 
         // XOR encrypted and plaintext
         for (let i = 0; i < ZigbeeConsts.SEC_BLOCKSIZE; i++) {
@@ -175,7 +175,7 @@ export function aes128MmoHash(data: Buffer): Buffer {
 
     const temp = Buffer.alloc(ZigbeeConsts.SEC_BLOCKSIZE);
 
-    temp.set(data.subarray(position, position + remainingLength), 0);
+    data.subarray(position, position + remainingLength).copy(temp, 0);
 
     // per the spec, concatenate a 1 bit followed by all zero bits
     temp[remainingLength] = 0x80;
@@ -204,15 +204,15 @@ export function aes128CcmStar(M: 0 | 2 | 4 | 8 | 16, key: Buffer, nonce: Buffer,
     const blockCount = 1 + Math.ceil(payloadLengthNoM / ZigbeeConsts.SEC_BLOCKSIZE);
     const plaintext = Buffer.alloc(blockCount * ZigbeeConsts.SEC_BLOCKSIZE);
 
-    plaintext.set(data.subarray(-M), 0);
-    plaintext.set(data.subarray(0, -M), ZigbeeConsts.SEC_BLOCKSIZE);
+    data.subarray(-M).copy(plaintext, 0);
+    data.subarray(0, -M).copy(plaintext, ZigbeeConsts.SEC_BLOCKSIZE);
 
     const cipher = createCipheriv("aes-128-ecb", key, null);
     const buffer = Buffer.alloc(blockCount * ZigbeeConsts.SEC_BLOCKSIZE);
     const counter = Buffer.alloc(ZigbeeConsts.SEC_BLOCKSIZE);
     counter[0] = ZigbeeConsts.SEC_CCM_FLAG_L;
 
-    counter.set(nonce, 1);
+    nonce.copy(counter, 1);
 
     for (let blockNum = 0; blockNum < blockCount; blockNum++) {
         // big endian of size ZigbeeConsts.SEC_L
@@ -226,7 +226,7 @@ export function aes128CcmStar(M: 0 | 2 | 4 | 8 | 16, key: Buffer, nonce: Buffer,
             cipherU[i] ^= plaintextBlock[i];
         }
 
-        buffer.set(cipherU, ZigbeeConsts.SEC_BLOCKSIZE * blockNum);
+        cipherU.copy(buffer, ZigbeeConsts.SEC_BLOCKSIZE * blockNum);
     }
 
     cipher.final();
@@ -251,8 +251,7 @@ export function computeAuthTag(authData: Buffer, M: number, key: Buffer, nonce: 
     prependAuthData[offset] = ((((M - 2) / 2) & 0x7) << 3) | (authData.byteLength > 0 ? 0x40 : 0x00) | ZigbeeConsts.SEC_CCM_FLAG_L;
     offset += 1;
 
-    prependAuthData.set(nonce, offset);
-    offset += nonce.byteLength;
+    offset += nonce.copy(prependAuthData, offset);
 
     // big endian of size ZigbeeConsts.SEC_L
     prependAuthData[offset] = (data.byteLength >> 8) & 0xff;
@@ -265,11 +264,11 @@ export function computeAuthTag(authData: Buffer, M: number, key: Buffer, nonce: 
     prependAuthData[offset + 1] = prepend & 0xff;
     offset += 2;
 
-    prependAuthData.set(authData, offset);
-    offset += authData.byteLength;
+    offset += authData.copy(prependAuthData, offset);
 
     const dataOffset = Math.ceil(offset / ZigbeeConsts.SEC_BLOCKSIZE) * ZigbeeConsts.SEC_BLOCKSIZE;
-    prependAuthData.set(data, dataOffset);
+
+    data.copy(prependAuthData, dataOffset);
 
     const cipher = createCipheriv("aes-128-cbc", key, Buffer.alloc(ZigbeeConsts.SEC_BLOCKSIZE, 0));
     const cipherU = cipher.update(prependAuthData);
@@ -336,9 +335,9 @@ export function makeKeyedHash(key: Buffer, inputByte: number): Buffer {
     // append the input byte to form: (Key XOR ipad) || text.
     hashOut[ZigbeeConsts.SEC_BLOCKSIZE] = inputByte;
     // hash the contents of hashOut and append the contents to hashIn to form: (Key XOR opad) || H((Key XOR ipad) || text)
-    hashIn.set(aes128MmoHash(hashOut), ZigbeeConsts.SEC_BLOCKSIZE);
+    aes128MmoHash(hashOut).copy(hashIn, ZigbeeConsts.SEC_BLOCKSIZE);
     // hash the contents of hashIn to get the final result
-    hashOut.set(aes128MmoHash(hashIn), 0);
+    aes128MmoHash(hashIn).copy(hashOut, 0);
 
     return hashOut.subarray(0, ZigbeeConsts.SEC_BLOCKSIZE);
 }
@@ -432,20 +431,16 @@ export function decodeZigbeeSecurityHeader(data: Buffer, offset: number, source6
 }
 
 export function encodeZigbeeSecurityHeader(data: Buffer, offset: number, header: ZigbeeSecurityHeader): number {
-    data.writeUInt8(combineSecurityControl(header.control), offset);
-    offset += 1;
+    offset = data.writeUInt8(combineSecurityControl(header.control), offset);
 
-    data.writeUInt32LE(header.frameCounter, offset);
-    offset += 4;
+    offset = data.writeUInt32LE(header.frameCounter, offset);
 
     if (header.control.nonce) {
-        data.writeBigUInt64LE(header.source64!, offset);
-        offset += 8;
+        offset = data.writeBigUInt64LE(header.source64!, offset);
     }
 
     if (header.control.keyId === ZigbeeKeyType.NWK) {
-        data.writeUInt8(header.keySeqNum!, offset);
-        offset += 1;
+        offset = data.writeUInt8(header.keySeqNum!, offset);
     }
 
     return offset;
@@ -516,10 +511,13 @@ export function encryptZigbeePayload(
         adjustedAuthData[controlOffset] |= ZigbeeConsts.SEC_CONTROL_LEVEL & ZigbeeSecurityLevel.ENC_MIC32;
 
         const decryptedData = Buffer.alloc(payload.byteLength + header.micLen!); // payload + auth tag
-        decryptedData.set(payload, 0);
+
+        payload.copy(decryptedData, 0);
+
         // take nwkHeader + securityHeader for auth tag computation
         const computedAuthTag = computeAuthTag(adjustedAuthData, header.micLen!, hashedKey, nonce, payload);
-        decryptedData.set(computedAuthTag, payload.byteLength);
+
+        computedAuthTag.copy(decryptedData, payload.byteLength);
 
         // restore security level
         adjustedAuthData[controlOffset] = origControl;
