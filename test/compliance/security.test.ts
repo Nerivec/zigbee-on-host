@@ -517,7 +517,7 @@ describe("Zigbee 3.0 Security Compliance", () => {
                 counter: apsCounter,
             };
 
-            await apsHandler.onZigbeeAPSFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackAPSHeader, 0x70);
+            await apsHandler.processFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackAPSHeader, 0x70);
         }
 
         async function reloadContextWithHandlers(): Promise<void> {

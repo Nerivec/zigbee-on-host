@@ -15,7 +15,7 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MACFrameAddressMode, MACFrameType, type MACHeader, ZigbeeMACConsts } from "../../src/zigbee/mac.js";
+import { encodeMACFrameZigbee, MACFrameAddressMode, MACFrameType, type MACHeader, ZigbeeMACConsts } from "../../src/zigbee/mac.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType, ZigbeeSecurityLevel } from "../../src/zigbee/zigbee.js";
 import {
     decodeZigbeeAPSFrameControl,
@@ -33,6 +33,7 @@ import {
     decodeZigbeeNWKFrameControl,
     decodeZigbeeNWKHeader,
     decodeZigbeeNWKPayload,
+    encodeZigbeeNWKFrame,
     ZigbeeNWKCommandId,
     ZigbeeNWKConsts,
     ZigbeeNWKFrameType,
@@ -40,6 +41,7 @@ import {
     ZigbeeNWKRouteDiscovery,
 } from "../../src/zigbee/zigbee-nwk.js";
 import { APSHandler, type APSHandlerCallbacks } from "../../src/zigbee-stack/aps-handler.js";
+import { processFrame } from "../../src/zigbee-stack/frame.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
 import { NWKGPHandler, type NWKGPHandlerCallbacks } from "../../src/zigbee-stack/nwk-gp-handler.js";
 import { NWKHandler, type NWKHandlerCallbacks } from "../../src/zigbee-stack/nwk-handler.js";
@@ -496,22 +498,32 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
                 destinationPANId: netParams.panId,
                 destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
                 source16: device16,
+                sourcePANId: netParams.panId,
+                source64: device64,
                 commandId: undefined,
                 fcs: 0,
             };
             const payload = Buffer.from([0x01, 0x03, 0x05]);
 
-            await apsHandler.onZigbeeAPSFrame(payload, macHeader, nwkHeader, baseHeader, 0x5a);
+            const buildFrame = (apsHeader: ZigbeeAPSHeader): Buffer => {
+                const apsPayload = encodeZigbeeAPSFrame(apsHeader, payload);
+                const nwkPayload = encodeZigbeeNWKFrame(nwkHeader, apsPayload);
+                return encodeMACFrameZigbee(macHeader, nwkPayload);
+            };
+
+            const frame = buildFrame(baseHeader);
+            await processFrame(frame, context, macHandler, nwkHandler, nwkGPHandler, apsHandler, 0x5a);
             await new Promise((resolve) => setImmediate(resolve));
             expect(mockAPSHandlerCallbacks.onFrame).toHaveBeenCalledTimes(1);
 
-            const duplicateHeader: ZigbeeAPSHeader = { ...baseHeader };
-            await apsHandler.onZigbeeAPSFrame(payload, macHeader, nwkHeader, duplicateHeader, 0x5a);
+            const duplicateFrame = buildFrame({ ...baseHeader });
+            await processFrame(duplicateFrame, context, macHandler, nwkHandler, nwkGPHandler, apsHandler, 0x5a);
             await new Promise((resolve) => setImmediate(resolve));
             expect(mockAPSHandlerCallbacks.onFrame).toHaveBeenCalledTimes(1);
 
             const newCounterHeader: ZigbeeAPSHeader = { ...baseHeader, counter: (baseHeader.counter! + 1) & 0xff };
-            await apsHandler.onZigbeeAPSFrame(payload, macHeader, nwkHeader, newCounterHeader, 0x5a);
+            const newFrame = buildFrame(newCounterHeader);
+            await processFrame(newFrame, context, macHandler, nwkHandler, nwkGPHandler, apsHandler, 0x5a);
             await new Promise((resolve) => setImmediate(resolve));
             expect(mockAPSHandlerCallbacks.onFrame).toHaveBeenCalledTimes(2);
         });
@@ -948,7 +960,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
                     counter: apsCounter,
                 };
 
-                await apsHandler.onZigbeeAPSFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackAPSHeader, 0x70);
+                await apsHandler.processFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackAPSHeader, 0x70);
 
                 await vi.runOnlyPendingTimersAsync();
 
@@ -2577,7 +2589,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             for (;;) {
                 const priorCount = frames.length;
                 const ack = buildAck(apsCounter, ackSeq);
-                await apsHandler.onZigbeeAPSFrame(Buffer.alloc(0), ack.mac, ack.nwk, ack.aps, lqa);
+                await apsHandler.processFrame(Buffer.alloc(0), ack.mac, ack.nwk, ack.aps, lqa);
 
                 if (frames.length === priorCount) {
                     break;
@@ -2744,7 +2756,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
                         : {}),
                 };
 
-                await apsHandler.onZigbeeAPSFrame(fragments[block]!, inboundMac, inboundNwk, inboundAPS, 0x66);
+                await apsHandler.processFrame(fragments[block]!, inboundMac, inboundNwk, inboundAPS, 0x66);
 
                 if (block < fragments.length - 1) {
                     expect(onFrameSpy).not.toHaveBeenCalled();
@@ -2851,7 +2863,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
                     counter: apsCounter,
                 };
 
-                await apsHandler.onZigbeeAPSFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackAPSHeader, 0x60);
+                await apsHandler.processFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackAPSHeader, 0x60);
 
                 await vi.runOnlyPendingTimersAsync();
                 expect(sentFrames).toHaveLength(2);

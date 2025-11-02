@@ -362,7 +362,7 @@ describe("Integration and End-to-End Compliance", () => {
                 counter: 0x34,
             };
 
-            await apsHandler.onZigbeeAPSFrame(announcePayload, announceMacHeader, announceNwkHeader, announceApsHeader, 96);
+            await apsHandler.processFrame(announcePayload, announceMacHeader, announceNwkHeader, announceApsHeader, 96);
             await new Promise((resolve) => setImmediate(resolve));
 
             expect(mockAPSHandlerCallbacks.onDeviceJoined).toHaveBeenCalledWith(assigned16, device64, deviceCapabilities);
@@ -425,7 +425,7 @@ describe("Integration and End-to-End Compliance", () => {
                 counter,
             };
 
-            return apsHandler.onZigbeeAPSFrame(Buffer.alloc(0), macHeader, nwkHeader, apsHeader, 105);
+            return apsHandler.processFrame(Buffer.alloc(0), macHeader, nwkHeader, apsHeader, 105);
         }
 
         it("transmits unicast application data through APS, NWK, and MAC with NWK security applied", async () => {

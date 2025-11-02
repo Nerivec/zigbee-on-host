@@ -1039,7 +1039,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                     counter: 0x21,
                 };
 
-                await apsHandler.onZigbeeAPSFrame(data, macHeader, nwkHeader, apsHeader, 140);
+                await apsHandler.processFrame(data, macHeader, nwkHeader, apsHeader, 140);
                 await vi.runAllTimersAsync();
 
                 expect(mockAPSHandlerCallbacks.onDeviceJoined).toHaveBeenCalledWith(device16, device64, {

@@ -517,7 +517,7 @@ docker compose -f docker-dev/compose.yaml down
 
 ### Testing Status
 
-- **CI:** ~70% coverage
+- **CI:** ~90% coverage
 - **Stress-testing:** Pending
 - **Firmware stability:** Silicon Labs and TI ongoing, Nordic pending
 - **Test networks:** Ongoing validation

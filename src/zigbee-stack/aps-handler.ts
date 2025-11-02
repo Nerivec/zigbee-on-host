@@ -781,7 +781,7 @@ export class APSHandler {
         if (nwkDest16 === undefined) {
             logger.debug(
                 () =>
-                    `=x=> APS ACK[dst16=${nwkHeader.source16} seqNum=${nwkHeader.seqNum} dstEp=${apsHeader.sourceEndpoint} clusterId=${apsHeader.clusterId}]`,
+                    `=x=> APS ACK[dst16=${nwkHeader.source16} seqNum=${nwkHeader.seqNum} dstEp=${apsHeader.sourceEndpoint} clusterId=${apsHeader.clusterId}] Unknown destination`,
                 NS,
             );
 
@@ -882,7 +882,7 @@ export class APSHandler {
         await this.#macHandler.sendFrame(macHeader.sequenceNumber!, ackMACFrame, macHeader.source16, undefined);
     }
 
-    public async onZigbeeAPSFrame(
+    public async processFrame(
         data: Buffer,
         macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
@@ -899,17 +899,6 @@ export class APSHandler {
             case ZigbeeAPSFrameType.DATA:
             case ZigbeeAPSFrameType.INTERPAN: {
                 if (data.byteLength < 1) {
-                    return;
-                }
-
-                if (nwkHeader.source16 === undefined && nwkHeader.source64 === undefined) {
-                    logger.debug(() => `<=~= APS Ignoring frame with no sender info seqNum=${nwkHeader.seqNum}`, NS);
-                    return;
-                }
-
-                // Delegate APS duplicate check to APS handler
-                if (this.isDuplicateFrame(nwkHeader, apsHeader)) {
-                    logger.debug(() => `<=~= APS Ignoring duplicate frame seqNum=${nwkHeader.seqNum} counter=${apsHeader.counter}`, NS);
                     return;
                 }
 

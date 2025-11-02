@@ -14,7 +14,8 @@ This report provides a meticulous analysis of the zigbee-on-host implementation'
 1. **Trust Center policy enforcement & APS interoperability** — TRANSPORT_KEY keyId usage still needs cross-vendor validation; ONLY_PROVISIONAL/ONLY_APPROVED policies remain TODO.
 2. **Neighbor intelligence & distributed guardrails** — separate neighbor table, distributed-mode checks, and parent verification are still pending.
 3. **R23/TLV feature set** — TLVs and advanced commissioning paths remain largely unimplemented.
-4. **Automated key rotation & telemetry** — manual TRANSPORT_KEY + SWITCH_KEY workflow exists, but scheduling and counter telemetry need to be implemented.
+4. **Application link key lifecycle** — install-code provisioning derives link keys, but rotation, audit trails, and policy gating remain incomplete.
+5. **Automated key rotation & telemetry** — manual TRANSPORT_KEY + SWITCH_KEY workflow exists, but scheduling and counter telemetry need to be implemented.
 
 **Architectural Note:** Recent refactoring centralized association/disassociation logic, Trust Center policies, and device management in StackContext for better encapsulation. This improves code organization and separation of concerns.
 
@@ -31,7 +32,535 @@ This report provides a meticulous analysis of the zigbee-on-host implementation'
 
 ---
 
-## 1. APS Handler (Application Support Layer)
+## Frame Handler (`frame.ts`)
+
+### MAC Filtering & Dispatch (IEEE 802.15.4-2015 §§6.2, 6.3)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Frame Class Filtering**
+   - Processes only MAC CMD/DATA frames; beacons and GTS frames ignored per design ✅
+2. **PAN Identification**
+   - Accepts frames when destination PAN is broadcast (0xffff) or matches coordinator PAN ✅
+3. **Short-Address Target Validation**
+   - Filters out unicast frames not addressed to coordinator (0x0000) or broadcast range ✅
+4. **Command Delegation**
+   - Forwards MAC command payloads straight to `MACHandler.processCommand` ✅
+
+#### ⚠️ FOLLOW-UP:
+
+1. **Extended Destination Validation**
+   - Frames using 64-bit destination addressing are not checked against the coordinator EUI64
+   - Should validate per IEEE 802.15.4 §6.7 when extended mode is used
+2. **Beacon Handling**
+   - Beacons are still ignored (TODO for PAN ID conflict detection)
+
+### Green Power Path (Zigbee NWK-GP §4)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Addressing Checks**
+   - Accepts GP frames only when MAC destination is broadcast or extended addressing ✅
+2. **Duplicate Protection**
+   - Delegates duplicate detection to `NWKGPHandler.isDuplicateFrame` ✅
+3. **Frame Dispatch**
+   - Hands decoded payloads to `NWKGPHandler.processFrame` with computed LQA ✅
+
+#### ⚠️ FOLLOW-UP:
+
+1. **MAINTENANCE Command Coverage**
+   - Non DATA/MAINTENANCE frames dropped; confirm spec coverage for commissioning flows
+
+### NWK Frame Handling (Zigbee PRO §3.3)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Broadcast Loopback Guard**
+   - Drops coordinator-originated broadcasts received from the RCP ✅
+2. **Security Header Validation**
+   - Calls `StackContext.updateIncomingNWKFrameCounter` before accepting secured payloads ✅
+   - Rejects and logs replays (<= previous counter) ✅
+3. **Source Mapping**
+   - Resolves IEEE address using NWK header or context map before payload decryption ✅
+
+#### ⚠️ FOLLOW-UP:
+
+1. **Unknown IEEE Addresses**
+   - Frames from devices lacking IEEE mappings cannot be tracked for replay (counter check bypassed)
+   - Consider proactive address resolution or temporary quarantine
+
+### APS Processing (Zigbee PRO §2.2)
+
+#### ✅ COMPLIANT Areas:
+
+1. **APS ACK Generation**
+   - Issues APS acknowledgements prior to duplicate filtering, satisfying apsAckWaitDuration ✅
+2. **Duplicate Filtering**
+   - Uses `APSHandler.isDuplicateFrame` for all non-ACK frames, with per-block tracking for fragments ✅
+3. **LQA Computation**
+   - Supplies per-device LQA derived from RSSI via `StackContext.computeDeviceLQA` ✅
+
+#### ⚠️ FOLLOW-UP:
+
+1. **Extended Destination Group Validation**
+   - Does not differentiate group vs broadcast destinations when MAC dest mode is extended
+   - Documented behaviour acceptable but should be verified against mixed addressing scenarios
+
+---
+
+## MAC Handler (IEEE 802.15.4 Layer)
+
+### 2.1 Association Request Processing (IEEE 802.15.4-2015 #6.3.1)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Frame Processing**
+   - Extracts capabilities byte correctly ✅
+   - Validates source64 presence ✅
+   - Decodes capabilities into structured format ✅
+
+2. **Indirect Transmission**
+   - Stores response in `context.pendingAssociations` map ✅
+   - Includes timestamp for timeout management ✅
+   - Response sent via DATA_REQ mechanism ✅
+
+3. **Response Handling**
+   - Sends ASSOC_RSP with address and status ✅
+   - Sends TRANSPORT_KEY_NWK on success ✅
+   - Uses extended source address in response ✅
+
+#### ⚠️ FOLLOW-UP:
+
+1. **Association Permit Telemetry**
+   - Enforcement now returns PAN_ACCESS_DENIED for initial joins when permit=false ✅
+   - Consider emitting metrics/events when joins are blocked
+
+### 2.2 Beacon Request Processing (IEEE 802.15.4-2015 #5.3.3)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Beacon Frame Structure**
+   - frameType=BEACON ✅
+   - securityEnabled=false ✅
+   - framePending=false ✅
+   - ackRequest=false ✅
+   - panIdCompression=false ✅
+   - destAddrMode=NONE ✅
+   - sourceAddrMode=SHORT ✅
+
+2. **Superframe Specification**
+   - beaconOrder=0x0f (non-beacon mode) ✅
+   - superframeOrder=0x0f ✅
+   - panCoordinator=true ✅
+   - Uses `context.associationPermit` flag ✅
+
+3. **Zigbee Beacon Payload**
+   - protocolId=0x00 (Zigbee) ✅
+   - profile=0x02 (Zigbee PRO) ✅
+   - version=VERSION_2007 ✅
+   - Capacity flags set correctly ✅
+   - Extended PAN ID from context ✅
+   - Update ID from context ✅
+
+#### ⚠️ IMPLEMENTATION-SPECIFIC:
+
+1. **txOffset Value**
+   - Set to 0xffffff
+   - Comment: "XXX: value from sniffed frames"
+   - **Meaning:** No time synchronization
+   - **Acceptable** for non-beacon mode Zigbee networks ✅
+
+### 2.3 Data Request Processing (IEEE 802.15.4-2015 #6.3.4)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Pending Data Handling**
+   - Checks pending associations first (correct priority) ✅
+   - Validates timestamps against timeout ✅
+   - Deletes stale associations ✅
+   - Processes indirect transmissions via queue ✅
+
+2. **Queue Management**
+   - FIFO ordering (shift from queue) ✅
+   - Timestamp validation per frame ✅
+   - Skips expired frames ✅
+
+#### ⚠️ POTENTIAL ISSUES:
+
+1. **No Queue Depth Limit**
+   - Could accumulate many expired frames
+   - Should consider periodic cleanup
+   - Should enforce maximum queue size per device
+   - **Impact:** Memory leak risk for sleepy devices
+
+2. **Timestamp Precision**
+   - Uses `Date.now()` (millisecond precision)
+   - MAC timing is typically in symbol periods
+   - **Acceptable** for implementation but not ideal
+
+### 2.4 Disassociation Notification (IEEE 802.15.4-2015 #6.4.3.3)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Reason Handling**
+   - Parses coordinator-initiated (0x01) and device-initiated (0x02) reasons ✅
+   - Logs notifications with source addresses for audit trail ✅
+
+2. **State Update**
+   - Resolves 16-bit address from IEEE address when needed ✅
+   - Invokes `StackContext.disassociate` to purge device state ✅
+
+#### ⚠️ FOLLOW-UP:
+
+1. **Metrics & Telemetry**
+   - No per-reason counters or external callbacks yet
+   - Tracking would aid diagnosing churn
+
+2. **Coordinator Confirmation**
+   - Does not send additional leave confirmations (optional per spec)
+
+---
+
+## NWK Handler (Network Layer)
+
+### 3.1 Route Management
+
+#### ✅ COMPLIANT Areas:
+
+1. **Many-to-One Routing (Concentrator)**
+   - Periodic ROUTE_REQUEST with manyToOne flag ✅
+   - CONFIG_NWK_CONCENTRATOR_DISCOVERY_TIME: 60 seconds ✅
+   - CONFIG_NWK_CONCENTRATOR_RADIUS: 30 hops ✅
+   - Minimum time between requests (flood prevention) ✅
+
+2. **Route Record Processing**
+   - Stores relay addresses correctly ✅
+   - Creates source route entries ✅
+   - Path cost calculation (relay count + 1) ✅
+   - Duplicate detection ✅
+
+3. **Route Aging**
+   - CONFIG_NWK_ROUTE_EXPIRY_TIME: 300 seconds ✅
+   - CONFIG_NWK_ROUTE_STALENESS_TIME: 120 seconds ✅
+   - Expires old routes ✅
+   - Adds staleness penalty to cost calculation ✅
+
+4. **Route Failure Handling**
+   - Tracks consecutive failures ✅
+   - Blacklists after CONFIG_NWK_ROUTE_MAX_FAILURES (3) ✅
+   - Validates relay NO_ACK counts ✅
+   - Triggers immediate MTORR on failure ✅
+   - Purges routes using failed relay ✅
+
+#### ⚠️ SPEC DEVIATIONS:
+
+1. **Route Table Structure**
+   - **Spec #3.6.1.6:** Route table should have single route per destination with status
+   - **Implementation:** Multiple SourceRouteTableEntry per destination
+   - **Justification:** Allows route redundancy and selection
+   - **Impact:** More flexible but deviates from spec structure
+
+2. **Route Selection Algorithm**
+   - **Spec:** Simple next-hop selection
+   - **Implementation:** Multi-criteria (path cost + staleness + failures + recency)
+   - **Impact:** Better performance but more complex than spec requires
+
+3. **Source Route from Link Status**
+   ```typescript
+   // In processLinkStatus:
+   const entry = this.createSourceRouteEntry([address], pathCost + 1);
+   ```
+   - **Spec #3.4.8:** Link status for neighbor table, not routing
+   - **Implementation:** Uses link status to build source routes
+   - **Justification:** Optimization for concentrator
+   - **Impact:** Works but not strictly per spec
+
+### 3.2 Link Status Command (05-3474-23 #3.4.8)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Frame Structure**
+   - Options byte with first/last/count ✅
+   - Link entries with address and costs ✅
+   - Multi-frame support ✅
+   - Repeated link at frame boundaries ✅
+
+2. **Cost Reporting**
+   - Incoming cost (device's estimate) ✅
+   - Outgoing cost (from neighbor table) ✅
+   - LQA-based cost calculation ✅
+
+#### ❌ CRITICAL MISSING FEATURES:
+
+**Neighbor Table Management:**
+
+```typescript
+// TODO: NeighborTableEntry.age = 0 // max 0xff
+// TODO: NeighborTableEntry.routerAge += 1 // max 0xffff
+// TODO: NeighborTableEntry.routerConnectivity = formula
+// TODO: NeighborTableEntry.routerNeighborSetDiversity = formula
+// TODO: if NeighborTableEntry does not exist, create one...
+```
+
+- **Spec #3.6.1.5:** Neighbor table is MANDATORY for routers
+- **Current:** Only deviceTable with neighbor flag
+- **Missing:**
+  - Age tracking
+  - Router age tracking
+  - Router connectivity calculation
+  - Router neighbor set diversity calculation
+  - Proper neighbor table structure
+- **Severity:** HIGH - this is a significant spec deviation
+- **Impact:** Route quality may be suboptimal
+
+### 3.3 Rejoin Request Processing (05-3474-23 #3.4.6)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Rejoin Type Detection**
+   - Checks frameControl.security to determine type ✅
+   - Unsecured = Trust Center Rejoin ✅
+   - Secured = NWK Rejoin ✅
+
+2. **Security Validation**
+   - Checks if device is known and authorized ✅
+   - Denies unknown/unauthorized devices ✅
+   - Includes security warning about neighbor table attacks ✅
+
+3. **Response Handling**
+   - Sends REJOIN_RESP with status ✅
+   - Triggers onDeviceRejoined on success ✅
+   - No VERIFY_KEY required after rejoin (per spec) ✅
+
+#### ❌ MISSING SECURITY CHECKS:
+
+```typescript
+// if apsTrustCenterAddress is all FF (distributed) / all 00 (pre-TRANSPORT_KEY),
+// reject with PAN_ACCESS_DENIED
+```
+
+- **Not implemented**
+- **Security gap:** Could accept rejoins in invalid network states
+- **Severity:** MEDIUM-HIGH for security-critical deployments
+
+### 3.4 Network Commissioning (05-3474-23 #3.4.14)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Association Type**
+   - 0x00 = Initial Join ✅
+   - 0x01 = Rejoin ✅
+
+2. **Response**
+   - Sends COMMISSIONING_RESPONSE ✅
+   - Includes newAddress16 and status ✅
+   - Sends TRANSPORT_KEY on success ✅
+
+#### ❌ MISSING:
+
+1. **TLV Processing**
+   - TLVs may contain critical commissioning parameters
+   - Not decoded or validated
+   - Required for full R23 compliance
+
+2. **Rejoin NWK Key Update**
+   - Comment: "TODO also for rejoin in case of nwk key change?"
+   - Should send updated network key if changed
+   - Not implemented
+
+### 3.5 Route Request/Reply (05-3474-23 #3.4.1, #3.4.2)
+
+#### ✅ COMPLIANT Areas:
+
+1. **ROUTE_REQUEST Processing**
+   - Decodes options, ID, destination, path cost ✅
+   - Extracts manyToOne flag ✅
+   - Conditionally parses destination64 ✅
+   - Sends ROUTE_REPLY for unicast destinations ✅
+
+2. **ROUTE_REPLY Sending**
+   - Includes originator and responder addresses ✅
+   - Optional 64-bit addresses ✅
+   - Normalizes zero path cost to hop-derived value ✅
+   - Uses request radius for TTL ✅
+
+3. **Coordinator Route Caching**
+   - Reconstructs relay path (including final MAC hop) on replies addressed to coordinator ✅
+   - Updates source-route table and resets failure counts ✅
+
+
+#### ⚠️ FOLLOW-UP:
+
+1. **Route Discovery Table**
+   - Should track recent ROUTE_REQs to avoid loops
+   - Not implemented (less critical for concentrator)
+
+2. **TLV Support in ROUTE_REPLY**
+   - TODO comment present
+   - Not implemented
+
+### 3.6 Network Status Command (05-3474-23 #3.4.3)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Status Code Processing**
+   - Correctly decodes status code ✅
+   - Logs network status issues ✅
+   - Handles destination16 parameter ✅
+
+2. **Status Sending**
+   - Sends to appropriate destination (broadcast or unicast) ✅
+   - Includes error codes (NO_ROUTE_AVAILABLE, etc.) ✅
+   - No security applied (per spec) ✅
+
+#### ⚠️ INCOMPLETE:
+
+1. **Route Repair Triggering**
+   - Receives status but minimal action taken
+   - Should trigger route discovery on NO_ROUTE_AVAILABLE
+   - Marked as WIP in AGENTS.md
+
+### 3.7 Leave Command (05-3474-23 #3.4.4)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Leave Request Processing**
+   - Decodes options (request, rejoin, removeChildren) ✅
+   - Calls context.disassociate() for device removal ✅
+   - Handles leave without rejoin correctly ✅
+
+2. **Leave Command Sending**
+   - Sets rejoin flag appropriately ✅
+   - Unicast delivery ✅
+   - Applies NWK security ✅
+
+#### ⚠️ MISSING:
+
+1. **Leave Indication (self-leave)**
+   - No handling for coordinator's own leave
+   - removeChildren not implemented
+
+2. **TLV Support**
+   - Not implemented (R23 feature)
+
+### 3.8 Network Report/Update Commands (05-3474-23 #3.4.10, #3.4.11)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Report Processing (0x08)**
+   - Decodes options, EPID, updateID, panID ✅
+   - Logs report information ✅
+
+2. **Update Processing (0x09)**
+   - Decodes options, EPID, updateID, panID ✅
+   - Logs update information ✅
+
+#### ❌ NOT IMPLEMENTED:
+
+1. **Channel Updates**
+   - No action taken on network update
+   - Should update channel if updateID is newer
+   - Coordinator doesn't propagate updates
+
+2. **Network Report Sending**
+   - No sendNetworkReport() function
+   - Required for PAN ID conflict resolution
+
+3. **TLV Support**
+   - Not implemented (R23 feature)
+
+### 3.9 End Device Timeout Request/Response (05-3474-23 #3.4.12, #3.4.13)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Timeout Request Processing**
+   - Decodes requested timeout and configuration fields ✅
+   - Validates timeout index against Table 3-54 ✅
+   - Verifies requester exists and updates stored timeout metadata ✅
+
+2. **Timeout Response Sending**
+   - Returns SUCCESS/INCORRECT_VALUE/UNSUPPORTED_FEATURE statuses ✅
+   - Includes parent info bitmap (keepalive capabilities) ✅
+   - Applies NWK security and unicasts to requester ✅
+
+3. **Timeout Response Processing**
+   - Decodes status and timeout ✅
+   - Logs timeout information ✅
+
+#### ⚠️ INCOMPLETE:
+
+1. **Timeout Policy Enforcement**
+   - No policy to cap timeouts per device class
+   - Parent info bitmap currently static
+
+2. **Keep-Alive Mechanism**
+   - No active polling of end devices / expiry-driven disconnects
+   - Missing timer to act on `expiresAt`
+
+3. **TLV Support**
+   - Not implemented (R23 feature)
+
+### 3.10 Link Power Delta Command (05-3474-23 #3.4.15)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Frame Processing**
+   - Decodes transmit power delta ✅
+   - Logs power delta information ✅
+   - Extracts nested TLVs (if present) ✅
+
+#### ❌ NOT IMPLEMENTED:
+
+1. **Power Adjustment**
+   - No action taken on power delta
+   - Should adjust transmit power accordingly
+   - No feedback mechanism
+
+2. **Link Power Delta Sending**
+   - No sendLinkPowerDelta() function
+   - Should send when detecting power issues
+
+3. **R23 TLV Processing**
+   - TLVs extracted but not processed
+   - No support for R23 power management features
+
+---
+
+## NWK-GP Handler (Green Power)
+
+### 4.1 Green Power Frame Processing
+
+#### ✅ COMPLIANT Areas:
+
+1. **Commissioning Mode**
+   - enterCommissioningMode with timeout ✅
+   - exitCommissioningMode ✅
+   - Configurable window (default 180s) ✅
+
+2. **Duplicate Detection**
+   - Checks securityFrameCounter ✅
+   - Checks MAC sequence number (fallback) ✅
+   - Stores last values ✅
+
+3. **Frame Filtering**
+   - Blocks commissioning commands when not in commissioning mode ✅
+   - Correctly identifies commissioning commands ✅
+
+4. **Frame Dispatch**
+   - Calls onGPFrame callback with all parameters ✅
+   - Uses setImmediate for non-blocking ✅
+
+#### ⚠️ MINIMAL IMPLEMENTATION:
+
+- **This handler is very basic**
+- Processes frames but provides minimal validation
+- No security key management
+- No source ID management
+- Suitable for basic GP support but not advanced features
+
+---
+
+## APS Handler (Application Support Layer)
 
 ### 1.1 Transport Key Command (0x05-3474-23 #4.4.11.1)
 
@@ -429,459 +958,7 @@ device.authorized = true;
 
 ---
 
-## 2. MAC Handler (IEEE 802.15.4 Layer)
-
-### 2.1 Association Request Processing (IEEE 802.15.4-2015 #6.3.1)
-
-#### ✅ COMPLIANT Areas:
-
-1. **Frame Processing**
-   - Extracts capabilities byte correctly ✅
-   - Validates source64 presence ✅
-   - Decodes capabilities into structured format ✅
-
-2. **Indirect Transmission**
-   - Stores response in `context.pendingAssociations` map ✅
-   - Includes timestamp for timeout management ✅
-   - Response sent via DATA_REQ mechanism ✅
-
-3. **Response Handling**
-   - Sends ASSOC_RSP with address and status ✅
-   - Sends TRANSPORT_KEY_NWK on success ✅
-   - Uses extended source address in response ✅
-
-#### ⚠️ FOLLOW-UP:
-
-1. **Association Permit Telemetry**
-   - Enforcement now returns PAN_ACCESS_DENIED for initial joins when permit=false ✅
-   - Consider emitting metrics/events when joins are blocked
-
-### 2.2 Beacon Request Processing (IEEE 802.15.4-2015 #5.3.3)
-
-#### ✅ COMPLIANT Areas:
-
-1. **Beacon Frame Structure**
-   - frameType=BEACON ✅
-   - securityEnabled=false ✅
-   - framePending=false ✅
-   - ackRequest=false ✅
-   - panIdCompression=false ✅
-   - destAddrMode=NONE ✅
-   - sourceAddrMode=SHORT ✅
-
-2. **Superframe Specification**
-   - beaconOrder=0x0f (non-beacon mode) ✅
-   - superframeOrder=0x0f ✅
-   - panCoordinator=true ✅
-   - Uses `context.associationPermit` flag ✅
-
-3. **Zigbee Beacon Payload**
-   - protocolId=0x00 (Zigbee) ✅
-   - profile=0x02 (Zigbee PRO) ✅
-   - version=VERSION_2007 ✅
-   - Capacity flags set correctly ✅
-   - Extended PAN ID from context ✅
-   - Update ID from context ✅
-
-#### ⚠️ IMPLEMENTATION-SPECIFIC:
-
-1. **txOffset Value**
-   - Set to 0xffffff
-   - Comment: "XXX: value from sniffed frames"
-   - **Meaning:** No time synchronization
-   - **Acceptable** for non-beacon mode Zigbee networks ✅
-
-### 2.3 Data Request Processing (IEEE 802.15.4-2015 #6.3.4)
-
-#### ✅ COMPLIANT Areas:
-
-1. **Pending Data Handling**
-   - Checks pending associations first (correct priority) ✅
-   - Validates timestamps against timeout ✅
-   - Deletes stale associations ✅
-   - Processes indirect transmissions via queue ✅
-
-2. **Queue Management**
-   - FIFO ordering (shift from queue) ✅
-   - Timestamp validation per frame ✅
-   - Skips expired frames ✅
-
-#### ⚠️ POTENTIAL ISSUES:
-
-1. **No Queue Depth Limit**
-   - Could accumulate many expired frames
-   - Should consider periodic cleanup
-   - Should enforce maximum queue size per device
-   - **Impact:** Memory leak risk for sleepy devices
-
-2. **Timestamp Precision**
-   - Uses `Date.now()` (millisecond precision)
-   - MAC timing is typically in symbol periods
-   - **Acceptable** for implementation but not ideal
-
-### 2.4 Disassociation Notification (IEEE 802.15.4-2015 #6.4.3.3)
-
-#### ✅ COMPLIANT Areas:
-
-1. **Reason Handling**
-   - Parses coordinator-initiated (0x01) and device-initiated (0x02) reasons ✅
-   - Logs notifications with source addresses for audit trail ✅
-
-2. **State Update**
-   - Resolves 16-bit address from IEEE address when needed ✅
-   - Invokes `StackContext.disassociate` to purge device state ✅
-
-#### ⚠️ FOLLOW-UP:
-
-1. **Metrics & Telemetry**
-   - No per-reason counters or external callbacks yet
-   - Tracking would aid diagnosing churn
-
-2. **Coordinator Confirmation**
-   - Does not send additional leave confirmations (optional per spec)
-
----
-
-## 3. NWK Handler (Network Layer)
-
-### 3.1 Route Management
-
-#### ✅ COMPLIANT Areas:
-
-1. **Many-to-One Routing (Concentrator)**
-   - Periodic ROUTE_REQUEST with manyToOne flag ✅
-   - CONFIG_NWK_CONCENTRATOR_DISCOVERY_TIME: 60 seconds ✅
-   - CONFIG_NWK_CONCENTRATOR_RADIUS: 30 hops ✅
-   - Minimum time between requests (flood prevention) ✅
-
-2. **Route Record Processing**
-   - Stores relay addresses correctly ✅
-   - Creates source route entries ✅
-   - Path cost calculation (relay count + 1) ✅
-   - Duplicate detection ✅
-
-3. **Route Aging**
-   - CONFIG_NWK_ROUTE_EXPIRY_TIME: 300 seconds ✅
-   - CONFIG_NWK_ROUTE_STALENESS_TIME: 120 seconds ✅
-   - Expires old routes ✅
-   - Adds staleness penalty to cost calculation ✅
-
-4. **Route Failure Handling**
-   - Tracks consecutive failures ✅
-   - Blacklists after CONFIG_NWK_ROUTE_MAX_FAILURES (3) ✅
-   - Validates relay NO_ACK counts ✅
-   - Triggers immediate MTORR on failure ✅
-   - Purges routes using failed relay ✅
-
-#### ⚠️ SPEC DEVIATIONS:
-
-1. **Route Table Structure**
-   - **Spec #3.6.1.6:** Route table should have single route per destination with status
-   - **Implementation:** Multiple SourceRouteTableEntry per destination
-   - **Justification:** Allows route redundancy and selection
-   - **Impact:** More flexible but deviates from spec structure
-
-2. **Route Selection Algorithm**
-   - **Spec:** Simple next-hop selection
-   - **Implementation:** Multi-criteria (path cost + staleness + failures + recency)
-   - **Impact:** Better performance but more complex than spec requires
-
-3. **Source Route from Link Status**
-   ```typescript
-   // In processLinkStatus:
-   const entry = this.createSourceRouteEntry([address], pathCost + 1);
-   ```
-   - **Spec #3.4.8:** Link status for neighbor table, not routing
-   - **Implementation:** Uses link status to build source routes
-   - **Justification:** Optimization for concentrator
-   - **Impact:** Works but not strictly per spec
-
-### 3.2 Link Status Command (05-3474-23 #3.4.8)
-
-#### ✅ COMPLIANT Areas:
-
-1. **Frame Structure**
-   - Options byte with first/last/count ✅
-   - Link entries with address and costs ✅
-   - Multi-frame support ✅
-   - Repeated link at frame boundaries ✅
-
-2. **Cost Reporting**
-   - Incoming cost (device's estimate) ✅
-   - Outgoing cost (from neighbor table) ✅
-   - LQA-based cost calculation ✅
-
-#### ❌ CRITICAL MISSING FEATURES:
-
-**Neighbor Table Management:**
-
-```typescript
-// TODO: NeighborTableEntry.age = 0 // max 0xff
-// TODO: NeighborTableEntry.routerAge += 1 // max 0xffff
-// TODO: NeighborTableEntry.routerConnectivity = formula
-// TODO: NeighborTableEntry.routerNeighborSetDiversity = formula
-// TODO: if NeighborTableEntry does not exist, create one...
-```
-
-- **Spec #3.6.1.5:** Neighbor table is MANDATORY for routers
-- **Current:** Only deviceTable with neighbor flag
-- **Missing:**
-  - Age tracking
-  - Router age tracking
-  - Router connectivity calculation
-  - Router neighbor set diversity calculation
-  - Proper neighbor table structure
-- **Severity:** HIGH - this is a significant spec deviation
-- **Impact:** Route quality may be suboptimal
-
-### 3.3 Rejoin Request Processing (05-3474-23 #3.4.6)
-
-#### ✅ COMPLIANT Areas:
-
-1. **Rejoin Type Detection**
-   - Checks frameControl.security to determine type ✅
-   - Unsecured = Trust Center Rejoin ✅
-   - Secured = NWK Rejoin ✅
-
-2. **Security Validation**
-   - Checks if device is known and authorized ✅
-   - Denies unknown/unauthorized devices ✅
-   - Includes security warning about neighbor table attacks ✅
-
-3. **Response Handling**
-   - Sends REJOIN_RESP with status ✅
-   - Triggers onDeviceRejoined on success ✅
-   - No VERIFY_KEY required after rejoin (per spec) ✅
-
-#### ❌ MISSING SECURITY CHECKS:
-
-```typescript
-// if apsTrustCenterAddress is all FF (distributed) / all 00 (pre-TRANSPORT_KEY),
-// reject with PAN_ACCESS_DENIED
-```
-
-- **Not implemented**
-- **Security gap:** Could accept rejoins in invalid network states
-- **Severity:** MEDIUM-HIGH for security-critical deployments
-
-### 3.4 Network Commissioning (05-3474-23 #3.4.14)
-
-#### ✅ COMPLIANT Areas:
-
-1. **Association Type**
-   - 0x00 = Initial Join ✅
-   - 0x01 = Rejoin ✅
-
-2. **Response**
-   - Sends COMMISSIONING_RESPONSE ✅
-   - Includes newAddress16 and status ✅
-   - Sends TRANSPORT_KEY on success ✅
-
-#### ❌ MISSING:
-
-1. **TLV Processing**
-   - TLVs may contain critical commissioning parameters
-   - Not decoded or validated
-   - Required for full R23 compliance
-
-2. **Rejoin NWK Key Update**
-   - Comment: "TODO also for rejoin in case of nwk key change?"
-   - Should send updated network key if changed
-   - Not implemented
-
-### 3.5 Route Request/Reply (05-3474-23 #3.4.1, #3.4.2)
-
-#### ✅ COMPLIANT Areas:
-
-1. **ROUTE_REQUEST Processing**
-   - Decodes options, ID, destination, path cost ✅
-   - Extracts manyToOne flag ✅
-   - Conditionally parses destination64 ✅
-   - Sends ROUTE_REPLY for unicast destinations ✅
-
-2. **ROUTE_REPLY Sending**
-   - Includes originator and responder addresses ✅
-   - Optional 64-bit addresses ✅
-   - Normalizes zero path cost to hop-derived value ✅
-   - Uses request radius for TTL ✅
-
-3. **Coordinator Route Caching**
-   - Reconstructs relay path (including final MAC hop) on replies addressed to coordinator ✅
-   - Updates source-route table and resets failure counts ✅
-
-
-#### ⚠️ FOLLOW-UP:
-
-1. **Route Discovery Table**
-   - Should track recent ROUTE_REQs to avoid loops
-   - Not implemented (less critical for concentrator)
-
-2. **TLV Support in ROUTE_REPLY**
-   - TODO comment present
-   - Not implemented
-
-### 3.6 Network Status Command (05-3474-23 #3.4.3)
-
-#### ✅ COMPLIANT Areas:
-
-1. **Status Code Processing**
-   - Correctly decodes status code ✅
-   - Logs network status issues ✅
-   - Handles destination16 parameter ✅
-
-2. **Status Sending**
-   - Sends to appropriate destination (broadcast or unicast) ✅
-   - Includes error codes (NO_ROUTE_AVAILABLE, etc.) ✅
-   - No security applied (per spec) ✅
-
-#### ⚠️ INCOMPLETE:
-
-1. **Route Repair Triggering**
-   - Receives status but minimal action taken
-   - Should trigger route discovery on NO_ROUTE_AVAILABLE
-   - Marked as WIP in AGENTS.md
-
-### 3.7 Leave Command (05-3474-23 #3.4.4)
-
-#### ✅ COMPLIANT Areas:
-
-1. **Leave Request Processing**
-   - Decodes options (request, rejoin, removeChildren) ✅
-   - Calls context.disassociate() for device removal ✅
-   - Handles leave without rejoin correctly ✅
-
-2. **Leave Command Sending**
-   - Sets rejoin flag appropriately ✅
-   - Unicast delivery ✅
-   - Applies NWK security ✅
-
-#### ⚠️ MISSING:
-
-1. **Leave Indication (self-leave)**
-   - No handling for coordinator's own leave
-   - removeChildren not implemented
-
-2. **TLV Support**
-   - Not implemented (R23 feature)
-
-### 3.8 Network Report/Update Commands (05-3474-23 #3.4.10, #3.4.11)
-
-#### ✅ COMPLIANT Areas:
-
-1. **Report Processing (0x08)**
-   - Decodes options, EPID, updateID, panID ✅
-   - Logs report information ✅
-
-2. **Update Processing (0x09)**
-   - Decodes options, EPID, updateID, panID ✅
-   - Logs update information ✅
-
-#### ❌ NOT IMPLEMENTED:
-
-1. **Channel Updates**
-   - No action taken on network update
-   - Should update channel if updateID is newer
-   - Coordinator doesn't propagate updates
-
-2. **Network Report Sending**
-   - No sendNetworkReport() function
-   - Required for PAN ID conflict resolution
-
-3. **TLV Support**
-   - Not implemented (R23 feature)
-
-### 3.9 End Device Timeout Request/Response (05-3474-23 #3.4.12, #3.4.13)
-
-#### ✅ COMPLIANT Areas:
-
-1. **Timeout Request Processing**
-   - Decodes requested timeout and configuration fields ✅
-   - Validates timeout index against Table 3-54 ✅
-   - Verifies requester exists and updates stored timeout metadata ✅
-
-2. **Timeout Response Sending**
-   - Returns SUCCESS/INCORRECT_VALUE/UNSUPPORTED_FEATURE statuses ✅
-   - Includes parent info bitmap (keepalive capabilities) ✅
-   - Applies NWK security and unicasts to requester ✅
-
-3. **Timeout Response Processing**
-   - Decodes status and timeout ✅
-   - Logs timeout information ✅
-
-#### ⚠️ INCOMPLETE:
-
-1. **Timeout Policy Enforcement**
-   - No policy to cap timeouts per device class
-   - Parent info bitmap currently static
-
-2. **Keep-Alive Mechanism**
-   - No active polling of end devices / expiry-driven disconnects
-   - Missing timer to act on `expiresAt`
-
-3. **TLV Support**
-   - Not implemented (R23 feature)
-
-### 3.10 Link Power Delta Command (05-3474-23 #3.4.15)
-
-#### ✅ COMPLIANT Areas:
-
-1. **Frame Processing**
-   - Decodes transmit power delta ✅
-   - Logs power delta information ✅
-   - Extracts nested TLVs (if present) ✅
-
-#### ❌ NOT IMPLEMENTED:
-
-1. **Power Adjustment**
-   - No action taken on power delta
-   - Should adjust transmit power accordingly
-   - No feedback mechanism
-
-2. **Link Power Delta Sending**
-   - No sendLinkPowerDelta() function
-   - Should send when detecting power issues
-
-3. **R23 TLV Processing**
-   - TLVs extracted but not processed
-   - No support for R23 power management features
-
----
-
-## 4. NWK-GP Handler (Green Power)
-
-### 4.1 Green Power Frame Processing
-
-#### ✅ COMPLIANT Areas:
-
-1. **Commissioning Mode**
-   - enterCommissioningMode with timeout ✅
-   - exitCommissioningMode ✅
-   - Configurable window (default 180s) ✅
-
-2. **Duplicate Detection**
-   - Checks securityFrameCounter ✅
-   - Checks MAC sequence number (fallback) ✅
-   - Stores last values ✅
-
-3. **Frame Filtering**
-   - Blocks commissioning commands when not in commissioning mode ✅
-   - Correctly identifies commissioning commands ✅
-
-4. **Frame Dispatch**
-   - Calls onGPFrame callback with all parameters ✅
-   - Uses setImmediate for non-blocking ✅
-
-#### ⚠️ MINIMAL IMPLEMENTATION:
-
-- **This handler is very basic**
-- Processes frames but provides minimal validation
-- No security key management
-- No source ID management
-- Suitable for basic GP support but not advanced features
-
----
-
-## 5. Stack Context (State Management)
+## Stack Context (State Management)
 
 ### 5.1 Device Table Management
 
@@ -1116,7 +1193,7 @@ device.authorized = true;
 
 ---
 
-## 6. Security Analysis
+## Security Analysis
 
 ### 6.1 ✅ STRONG AREAS:
 
@@ -1166,6 +1243,10 @@ device.authorized = true;
    - No rotation of derived link keys after initial use
    - Removal retains derived link key without audit trail
 
+5. **Replay Tracking Without IEEE Mapping**
+   - Frames from devices lacking IEEE address mapping bypass NWK counter tracking
+   - Consider proactive IEEE discovery or temporary quarantine to maintain replay protection
+
 ### 6.3 ❌ CRITICAL GAPS:
 
 1. **APS Key Type Interoperability**
@@ -1180,7 +1261,7 @@ device.authorized = true;
 
 ---
 
-## 7. R23 Compliance
+## R23 Compliance
 
 ### 7.1 ✅ BASIC SUPPORT:
 
@@ -1218,7 +1299,7 @@ device.authorized = true;
 
 ---
 
-## 8. Configuration Constants Review
+## Configuration Constants Review
 
 ### 8.1 NWK Layer Constants
 
@@ -1248,7 +1329,7 @@ All MAC constants are in zigbee/mac.ts - appear to match IEEE 802.15.4 spec corr
 
 ---
 
-## 9. Code Quality Observations
+## Code Quality Observations
 
 ### 9.1 ✅ EXCELLENT Practices:
 
@@ -1295,7 +1376,7 @@ All MAC constants are in zigbee/mac.ts - appear to match IEEE 802.15.4 spec corr
 
 ---
 
-## 10. Interoperability Considerations
+## Interoperability Considerations
 
 ### 10.1 Known Firmware Compatibility
 
@@ -1314,7 +1395,7 @@ Per AGENTS.md:
 
 ---
 
-## 11. Critical Recommendations
+## Critical Recommendations
 
 ### 11.1 Completed Since Previous Revision
 
@@ -1365,7 +1446,7 @@ Per AGENTS.md:
 
 ---
 
-## 12. Final Assessment
+## Final Assessment
 
 ### Overall Compliance Score
 

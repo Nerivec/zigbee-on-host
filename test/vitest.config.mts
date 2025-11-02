@@ -26,7 +26,7 @@ export default defineConfig({
                 /** current dev status, should maintain above this */
                 statements: 85,
                 functions: 85,
-                branches: 80,
+                branches: 85,
                 lines: 85,
             },
         },

@@ -1,8 +1,8 @@
 # Zigbee on Host - Architecture Documentation
 
-**Document Version:** 1.0  
-**Last Updated:** October 4, 2025  
-**Maintainer:** Nerivec  
+**Document Version:** 1.1
+**Last Updated:** November 2, 2025
+**Maintainer:** Nerivec
 **License:** GPL-3.0-or-later
 
 ## Table of Contents
@@ -127,12 +127,6 @@ src/
 **Responsibility:** Public API and orchestration
 
 **Functions:**
-- Expose public API for external consumers
-- Manage component lifecycle (start, stop, reset)
-- Accept callbacks from external consumers (via StackCallbacks interface)
-- Dispatch incoming frames to appropriate handlers
-- Coordinate state persistence (save/load)
-- Manage network formation and parameters
 
 **Key Methods:**
 ```typescript
@@ -167,6 +161,31 @@ interface StackCallbacks {
     onDeviceLeft: (source16: number, source64: bigint) => void;
     onDeviceAuthorized: (source16: number, source64: bigint) => void;
 }
+```
+
+### Frame Handler (Ingress Pipeline)
+
+**Responsibility:** Decode inbound IEEE 802.15.4 frames and dispatch to the correct stack layer
+
+**Functions:**
+- Parse MAC frame control, header, and payload (CMD vs DATA)
+- Filter frames by PAN ID and destination addressing (broadcast vs coordinator)
+- Route MAC commands to `MACHandler.processCommand`
+- Detect Green Power frames and forward to `NWKGPHandler`
+- Decode Zigbee NWK frames, enforce replay protection, and forward to `NWKHandler`
+- Decode Zigbee APS frames, emit APS ACKs, and delegate to `APSHandler`
+
+**Key Methods:**
+```typescript
+export async function processFrame(
+    payload: Buffer,
+    context: StackContext,
+    macHandler: MACHandler,
+    nwkHandler: NWKHandler,
+    nwkGPHandler: NWKGPHandler,
+    apsHandler: APSHandler,
+    rssi?: number,
+): Promise<void>
 ```
 
 ### MACHandler (MAC Layer)
@@ -290,8 +309,8 @@ interface NWKGPHandlerCallbacks {
 - Apply/verify APS security
 - Process ZDO requests for coordinator
 - Generate ZDO responses (LQI table, routing table, descriptors)
-- Handle APS commands
-- Support fragmentation (future)
+- Handle APS commands (transport, verify/confirm key, etc.)
+- Support APS fragmentation and reassembly with duplicate suppression
 
 **Key Methods:**
 ```typescript
@@ -347,6 +366,7 @@ public computeDeviceLQA(address16: number | undefined, address64: bigint | undef
 public getDevice(address: bigint | number): DeviceTableEntry | undefined
 public getAddress64(address16: number): bigint | undefined
 public getAddress16(address64: bigint): number | undefined
+public updateIncomingNWKFrameCounter(address64: bigint | undefined, frameCounter: number): boolean
 public async saveState(): Promise<void>
 public async readNetworkState(): Promise<NetworkParameters | undefined>
 public async loadState(): Promise<void>
@@ -382,24 +402,35 @@ STREAM_RAW Property Handler
     ↓
 IEEE 802.15.4 MAC Frame + Metadata (RSSI, LQI)
     ↓
-MAC Frame Type Detection
-    ├─ MAC Command → handleMACCommand()
-    │                 ├─ Association Request → emit 'deviceJoined'
-    │                 ├─ Data Request → send pending frame
-    │                 └─ Disassociation → remove from device table
+frame.processFrame()
+    ├─ MAC Frame Type Detection
+    │     ├─ MAC Command → MACHandler.processCommand()
+    │     └─ MAC Data → Validate PAN/destination
     │
-    ├─ MAC Data → Extract MAC header + payload
-    │              ↓
-    │          Determine Payload Type
-    │              ├─ Beacon → Process beacon (future)
-    │              ├─ Zigbee NWK → [NWKHandler.onZigbeeNWKFrame()]
-    │              └─ Zigbee NWKGP → [NWKGPHandler.onZigbeeNWKGPFrame()]
+    ├─ Green Power Frames → NWKGPHandler.processFrame()
+    │     └─ Duplicate filtering via NWKGPHandler.isDuplicateFrame()
     │
-    └─ MAC Beacon → Process beacon (future)
+    └─ Zigbee NWK Frames
+          ↓
+      Broadcast loopback guard (drop coordinator echoes)
+          ↓
+      NWK Security
+          └─ StackContext.updateIncomingNWKFrameCounter()
+          ↓
+      Frame Type Detection
+          ├─ NWK Command → NWKHandler.processCommand()
+          └─ NWK Data → decode APS payload
+                 ↓
+             APS ACK (when requested)
+                 ↓
+             APS Duplicate Filtering → APSHandler.isDuplicateFrame()
+                 ↓
+             APSHandler.processFrame()
+    └─ MAC Beacon → TODO: PAN ID conflict detection / beacon parsing
 
 [NWKHandler.onZigbeeNWKFrame()]
 NWK Frame Type Detection
-    ├─ NWK Command → handleNWKCommand()
+    ├─ NWK Command → NWKHandler.processCommand()
     │                 ├─ Route Request → Send route reply
     │                 ├─ Route Reply → Update routing table
     │                 ├─ Leave → Remove device
@@ -419,10 +450,15 @@ APS Frame Processing
     │
     └─ APS Data → Decrypt if secured
                    ↓
+               Send APS ACK when requested
+                   ↓
+               Duplicate filtering via APSHandler.isDuplicateFrame()
+                   ↓
                Emit 'frame' event to application
 
 [NWKGPHandler.onZigbeeNWKGPFrame()]
 Green Power Frame Processing
+    ├─ Duplicate filtering via NWKGPHandler.isDuplicateFrame()
     └─ Extract GP data
         ↓
     Emit 'gpFrame' event to application
