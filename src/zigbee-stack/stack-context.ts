@@ -34,34 +34,6 @@ import { CONFIG_NWK_MAX_HOPS } from "./nwk-handler.js";
 
 const NS = "stack-context";
 
-export interface StackCallbacks {
-    onFatalError: (message: string) => void;
-
-    /** Only triggered if MAC `emitFrames===true` */
-    onMACFrame: (payload: Buffer, rssi?: number) => void;
-    onFrame: (
-        sender16: number | undefined,
-        sender64: bigint | undefined,
-        apsHeader: ZigbeeAPSHeader,
-        apsPayload: ZigbeeAPSPayload,
-        lqa: number,
-    ) => void;
-    onGPFrame: (cmdId: number, payload: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, lqa: number) => void;
-
-    onDeviceJoined: (source16: number, source64: bigint, capabilities: MACCapabilities) => void;
-    onDeviceRejoined: (source16: number, source64: bigint, capabilities: MACCapabilities) => void;
-    onDeviceLeft: (source16: number, source64: bigint) => void;
-    onDeviceAuthorized: (source16: number, source64: bigint) => void;
-}
-
-/**
- * Callbacks from stack context to parent layer
- */
-export interface StackContextCallbacks {
-    /** Handle post-disassociate */
-    onDeviceLeft: StackCallbacks["onDeviceLeft"];
-}
-
 /**
  * Network parameters for the Zigbee network.
  */
@@ -335,6 +307,34 @@ interface AssociationContext {
 interface IndirectTxContext {
     sendFrame: () => Promise<boolean>;
     timestamp: number;
+}
+
+export interface StackCallbacks {
+    onFatalError: (message: string) => void;
+
+    /** Only triggered if MAC `emitFrames===true` */
+    onMACFrame: (payload: Buffer, rssi?: number) => void;
+    onFrame: (
+        sender16: number | undefined,
+        sender64: bigint | undefined,
+        apsHeader: ZigbeeAPSHeader,
+        apsPayload: ZigbeeAPSPayload,
+        lqa: number,
+    ) => void;
+    onGPFrame: (cmdId: number, payload: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, lqa: number) => void;
+
+    onDeviceJoined: (source16: number, source64: bigint, capabilities: MACCapabilities) => void;
+    onDeviceRejoined: (source16: number, source64: bigint, capabilities: MACCapabilities) => void;
+    onDeviceLeft: (source16: number, source64: bigint) => void;
+    onDeviceAuthorized: (source16: number, source64: bigint) => void;
+}
+
+/**
+ * Callbacks from stack context to parent layer
+ */
+export interface StackContextCallbacks {
+    /** Handle post-disassociate */
+    onDeviceLeft: StackCallbacks["onDeviceLeft"];
 }
 
 /** Table 3-54 */

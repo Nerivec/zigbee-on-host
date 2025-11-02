@@ -27,6 +27,15 @@ import { END_DEVICE_TIMEOUT_TABLE_MS, type SourceRouteTableEntry, type StackCall
 
 const NS = "nwk-handler";
 
+/**
+ * Callbacks for NWK handler to communicate with driver
+ */
+export interface NWKHandlerCallbacks {
+    onDeviceRejoined: StackCallbacks["onDeviceRejoined"];
+    /** Send APS TRANSPORT_KEY for network key */
+    onAPSSendTransportKeyNWK: (destination16: number, networkKey: Buffer, keySequenceNumber: number, destination64: bigint) => Promise<void>;
+}
+
 /** The number of OctetDurations until a route discovery expires. */
 // const CONFIG_NWK_ROUTE_DISCOVERY_TIME = 0x4c4b4; // 0x2710 msec on 2.4GHz
 /** The maximum depth of the network (number of hops) used for various calculations of network timing and limitations. */
@@ -70,15 +79,6 @@ const CONFIG_NWK_CONCENTRATOR_MIN_TIME = 10000;
 // export const CONFIG_NWK_MAX_ROUTERS = 6;
 // export const CONFIG_NWK_MAX_CHILDREN = 20;
 // export const CONFIG_NWK_MAX_SOURCE_ROUTE = 16;
-
-/**
- * Callbacks for NWK handler to communicate with driver
- */
-export interface NWKHandlerCallbacks {
-    onDeviceRejoined: StackCallbacks["onDeviceRejoined"];
-    /** Send APS TRANSPORT_KEY for network key */
-    onAPSSendTransportKeyNWK: (destination16: number, networkKey: Buffer, keySequenceNumber: number, destination64: bigint) => Promise<void>;
-}
 
 /**
  * NWK Handler - Zigbee Network Layer Operations

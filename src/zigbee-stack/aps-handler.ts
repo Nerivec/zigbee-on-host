@@ -25,31 +25,6 @@ import { ApplicationKeyRequestPolicy, type StackCallbacks, type StackContext, Tr
 
 const NS = "aps-handler";
 
-/**
- * Callbacks for APS handler to communicate with driver
- */
-export interface APSHandlerCallbacks {
-    onFrame: StackCallbacks["onFrame"];
-    onDeviceJoined: StackCallbacks["onDeviceJoined"];
-    onDeviceRejoined: StackCallbacks["onDeviceRejoined"];
-    onDeviceAuthorized: StackCallbacks["onDeviceAuthorized"];
-}
-
-/** Duration while APS duplicate table entries remain valid (milliseconds). Spec default ≈ 8s. */
-const CONFIG_APS_DUPLICATE_TIMEOUT_MS = 8000;
-/** Default ack wait duration per Zigbee 3.0 spec (milliseconds). */
-const CONFIG_APS_ACK_WAIT_DURATION_MS = 1500;
-/** Default number of APS retransmissions when ACK is missing. */
-const CONFIG_APS_MAX_FRAME_RETRIES = 3;
-/** Maximum payload that may be transmitted without APS fragmentation. */
-const CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX = ZigbeeAPSConsts.PAYLOAD_MAX_SIZE;
-/** Number of bytes carried in each APS fragment after the first one. */
-const CONFIG_APS_FRAGMENT_PAYLOAD_SIZE = 40;
-/** Number of bytes reserved in the first APS fragment for metadata. */
-const CONFIG_APS_FRAGMENT_FIRST_OVERHEAD = 2;
-/** Timeout for incomplete incoming APS fragment reassembly (milliseconds). */
-const CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS = 30000;
-
 type FragmentParams = {
     blockNumber: number;
     isFirst: boolean;
@@ -100,6 +75,31 @@ type PendingAckEntry = {
     timer: NodeJS.Timeout | undefined;
     fragment?: OutgoingFragmentContext;
 };
+
+/**
+ * Callbacks for APS handler to communicate with driver
+ */
+export interface APSHandlerCallbacks {
+    onFrame: StackCallbacks["onFrame"];
+    onDeviceJoined: StackCallbacks["onDeviceJoined"];
+    onDeviceRejoined: StackCallbacks["onDeviceRejoined"];
+    onDeviceAuthorized: StackCallbacks["onDeviceAuthorized"];
+}
+
+/** Duration while APS duplicate table entries remain valid (milliseconds). Spec default ≈ 8s. */
+const CONFIG_APS_DUPLICATE_TIMEOUT_MS = 8000;
+/** Default ack wait duration per Zigbee 3.0 spec (milliseconds). */
+const CONFIG_APS_ACK_WAIT_DURATION_MS = 1500;
+/** Default number of APS retransmissions when ACK is missing. */
+const CONFIG_APS_MAX_FRAME_RETRIES = 3;
+/** Maximum payload that may be transmitted without APS fragmentation. */
+const CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX = ZigbeeAPSConsts.PAYLOAD_MAX_SIZE;
+/** Number of bytes carried in each APS fragment after the first one. */
+const CONFIG_APS_FRAGMENT_PAYLOAD_SIZE = 40;
+/** Number of bytes reserved in the first APS fragment for metadata. */
+const CONFIG_APS_FRAGMENT_FIRST_OVERHEAD = 2;
+/** Timeout for incomplete incoming APS fragment reassembly (milliseconds). */
+const CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS = 30000;
 
 /**
  * APS Handler - Zigbee Application Support Layer Operations
