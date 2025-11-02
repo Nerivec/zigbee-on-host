@@ -408,7 +408,7 @@ export function readPropertyAi(propertyId: SpinelPropertyId, data: Buffer, offse
 
         caps.push(cap);
 
-        i += cOutOffset;
+        i = cOutOffset;
     }
 
     return caps;
@@ -450,9 +450,10 @@ export function readPropertyE(propertyId: SpinelPropertyId, data: Buffer, offset
 
 /** Write as Buffer of specific length */
 export function writePropertyd(propertyId: SpinelPropertyId, value: Buffer): Buffer {
-    const [buf, offset] = writePropertyId(propertyId, 2 + value.byteLength);
+    const [buf, pOutOffset] = writePropertyId(propertyId, 2 + value.byteLength);
+    let offset = pOutOffset;
+    offset = buf.writeUInt16LE(value.byteLength, offset);
 
-    buf.writeUInt16LE(value.byteLength, offset);
     value.copy(buf, offset);
 
     return buf;
