@@ -1159,7 +1159,7 @@ export class StackContext {
      * - ✅ Returns appropriate status codes per IEEE 802.15.4
      * - ✅ Triggers state save after association
      * - ⚠️ Unknown rejoins succeed if allowOverride=true (potential security risk)
-     * - ❌ NOT IMPLEMENTED: Install code enforcement (policy checked but not enforced)
+     * - ✅ Enforces install code requirement (denies initial join when missing)
      * - ❌ NOT IMPLEMENTED: Network key change detection on rejoin
      * - ❌ NOT IMPLEMENTED: Device announcement tracking
      *

@@ -327,7 +327,11 @@ interface APSHandlerCallbacks {
 - Device table (device entries with capabilities, LQA tracking, authorization)
 - Address mappings (16-bit ↔ 64-bit)
 - Routing tables (source routes)
+- Application link key table (pair-wise TC/app link keys)
+- Install code metadata and derived link keys
 - Key frame counters
+- Pending network key staging (pre-SWITCH_KEY activate)
+- End-device timeout metadata and runtime NWK frame counters
 - Trust center policies (join policies, key policies)
 - Coordinator configuration attributes
 - Pending associations (awaiting DATA_RQ from device)
@@ -467,9 +471,10 @@ Serial Port → RCP Firmware → Radio Transmission
 State is persisted to a `zoh.save` file in TLV (Tag-Length-Value) format, similar to NCP NVRAM.
 
 **State Components Saved:**
-1. Network parameters (PAN ID, extended PAN ID, channel, keys, etc.)
-2. Device table entries (address, capabilities, authorization, LQAs, source routing)
+1. Network parameters (PAN ID, extended PAN ID, channel, keys, pending key staging, etc.)
+2. Device data (capabilities, authorization, neighbor flag, LQA history, source routes, timeout metadata)
 3. Frame counters (NWK key, TC key)
+4. Application link key entries (pair-wise keys between coordinator and devices)
 
 **Save Format:**
 ```
@@ -483,7 +488,7 @@ On driver start:
 2. Register hashed keys for crypto operations
 3. Initialize RCP firmware
 4. Restore network parameters
-5. Rebuild device table and routing tables
+5. Rebuild device table, routing tables, end-device timeout metadata, and app link key cache
 
 ## Performance Characteristics
 

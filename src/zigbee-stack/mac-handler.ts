@@ -273,6 +273,7 @@ export class MACHandler {
      * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.3.1):
      * - ✅ Correctly extracts capabilities byte from payload
      * - ✅ Validates presence of source64 (mandatory per spec)
+     * - ✅ Enforces associationPermit flag for initial joins (PAN access denied when false)
      * - ✅ Calls context associate to handle higher-layer processing
      * - ✅ Determines initial join vs rejoin by checking if device is known
      * - ✅ Stores pending association in map for DATA_REQ retrieval
@@ -307,6 +308,7 @@ export class MACHandler {
                 address16 === undefined /* initial join if unknown device, else rejoin */,
                 decodedCap,
                 true /* neighbor */,
+                address16 === undefined && !this.#context.associationPermit,
             );
 
             this.#context.pendingAssociations.set(macHeader.source64, {
@@ -350,6 +352,15 @@ export class MACHandler {
         return offset;
     }
 
+    /**
+     * IEEE 802.15.4-2015 #6.4.3.3 (Disassociation Notification command)
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Handles both coordinator- and device-initiated reasons
+     * - ✅ Removes device state through StackContext.disassociate
+     * - ⚠️ Does not emit confirmation back to child (not required for coordinator role)
+     * - ❌ TODO: Maintain per-reason metrics for diagnostics
+     */
     public async processDisassocNotify(data: Buffer, offset: number, macHeader: MACHeader): Promise<number> {
         const reason = data.readUInt8(offset);
         offset += 1;

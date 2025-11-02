@@ -1,26 +1,33 @@
 # Zigbee Stack Specification Compliance Report
 
-**Date:** October 6, 2025  
+**Date:** November 2, 2025
 **Project:** zigbee-on-host v0.2.0  
 **Specification Reference:** 05-3474-23 (Zigbee Specification), IEEE 802.15.4-2015  
 **Review Scope:** All Zigbee stack handlers (APS, MAC, NWK, NWK-GP, Stack Context)  
-**Update:** Reflects post-refactoring architecture (association/TC logic moved to StackContext)
 
 ---
 
 ## Executive Summary
 
-This report provides a meticulous analysis of the zigbee-on-host implementation's adherence to the Zigbee specification (05-3474-23) and IEEE 802.15.4 MAC layer specification. The implementation demonstrates **strong foundational compliance** with critical protocol operations, but has notable gaps in:
+This report provides a meticulous analysis of the zigbee-on-host implementation's adherence to the Zigbee specification (05-3474-23) and IEEE 802.15.4 MAC layer specification. The stack now delivers **strong foundational compliance** across MAC/NWK/APS layers, with remaining focus areas clustered around:
 
-1. **Trust Center policies and security features** (partially implemented)
-2. **Neighbor table management** (significant deviation from spec)
-3. **R23 features** (TLVs, enhanced commissioning - minimal support)
-4. **Application link keys** (infrastructure present but incomplete)
-5. **Key rotation mechanisms** (SWITCH_KEY not implemented)
+1. **Trust Center policy enforcement & APS interoperability** — TRANSPORT_KEY keyId usage still needs cross-vendor validation; ONLY_PROVISIONAL/ONLY_APPROVED policies remain TODO.
+2. **Neighbor intelligence & distributed guardrails** — separate neighbor table, distributed-mode checks, and parent verification are still pending.
+3. **R23/TLV feature set** — TLVs and advanced commissioning paths remain largely unimplemented.
+4. **Automated key rotation & telemetry** — manual TRANSPORT_KEY + SWITCH_KEY workflow exists, but scheduling and counter telemetry need to be implemented.
 
 **Architectural Note:** Recent refactoring centralized association/disassociation logic, Trust Center policies, and device management in StackContext for better encapsulation. This improves code organization and separation of concerns.
 
 **Overall Assessment:** ✅ **Production-ready for Zigbee 3.0 PRO centralized networks** with understanding of limitations.
+
+### Updates:
+
+#### November 2, 2025
+- Association permit enforcement now returns PAN_ACCESS_DENIED when joins are closed, aligning with IEEE 802.15.4 #6.3.1.
+- APS fragmentation duplicate tracking now records per-block receptions, restoring reliable reassembly before stack callbacks.
+- CONFIRM_KEY explicitly uses the link key being verified per 05-3474-23 #4.4.11.8; TRANSPORT_KEY_TC still flagged for cross-vendor validation.
+- NWK inbound replay protection updates per-device frame counters and rejects stale packets with warning telemetry.
+- Manual TRANSPORT_KEY + SWITCH_KEY workflow documented; automatic rotation scheduling remains a follow-up item.
 
 ---
 
@@ -43,8 +50,9 @@ This report provides a meticulous analysis of the zigbee-on-host implementation'
    - Handles centralized TC (uses coordinator EUI64) vs distributed (should use 0xFFFFFFFFFFFFFFFF)
 
 3. **TRANSPORT_KEY_APP (Application Link Key)**
-   - Correct structure with partner64 and initiatorFlag
-   - Applies appropriate encryption (NWK + APS LOAD)
+   - Correct structure with partner64 and initiatorFlag ✅
+   - Retrieves link key from StackContext (install code derived or cached) ✅
+   - Applies APS TRANSPORT encryption while suppressing NWK security ✅
 
 #### ⚠️ UNCERTAIN/QUESTIONABLE Areas:
 
@@ -86,14 +94,14 @@ This report provides a meticulous analysis of the zigbee-on-host implementation'
 
 3. **Broadcast TRANSPORT_KEY Handling**
    - Spec: "If network key sent to broadcast, destination64 SHALL be all-zero and ignored"
-   - **Not implemented** - always uses actual destination64
+   - ✅ Handler writes all-zero destination64 when targeting NWK broadcast
 
 ### 1.2 Update Device Command (0x05-3474-23 #4.4.11.2)
 
 #### ✅ COMPLIANT Areas:
 
 1. **Status Code Handling**
-   - 0x00 (Secured Rejoin): ❌ NOT HANDLED AT ALL
+   - 0x00 (Secured Rejoin): ✅ Reuses associate() for rejoin path
    - 0x01 (Unsecured Join): ✅ Fully implemented with nested routing
    - 0x02 (Device Left): ⚠️ Triggers context disassociate (spec says "informative only")
    - 0x03 (TC Rejoin): ✅ Calls context associate correctly
@@ -125,9 +133,8 @@ This report provides a meticulous analysis of the zigbee-on-host implementation'
 
 #### ❌ NON-COMPLIANT/MISSING:
 
-1. **Secured Rejoin (Status 0x00)** - Completely unhandled
-2. **TLV Support** - Not implemented
-3. **Relay verification** - Should confirm parent can relay before establishing route
+1. **TLV Support** - Not implemented
+2. **Relay verification** - Should confirm parent can relay before establishing route
 
 ### 1.3 Verify Key Command (0x05-3474-23 #4.4.11.7)
 
@@ -198,10 +205,19 @@ device.authorized = true;
    - Drops requests not APS encrypted ✅ (critical security requirement)
    - Validates device is known before processing ✅
 
+1. **Security Validation**
+   - Drops requests not APS encrypted ✅ (critical security requirement)
+   - Validates requester device exists before processing ✅
+   - Resolves IEEE address via StackContext for partner lookups ✅
+
 2. **Policy Enforcement**
    - Checks `allowTCKeyRequest` policy ✅
    - Checks `allowAppKeyRequest` policy ✅
    - Returns appropriate keys based on policy
+
+3. **Key Distribution**
+   - Reuses TRANSPORT_KEY helpers for TC/NWK delivery ✅
+   - Derives and caches application link keys via StackContext ✅
 
 #### ❌ INCOMPLETE:
 
@@ -278,27 +294,23 @@ device.authorized = true;
    - Decodes sequence number correctly ✅
    - Validates frame structure ✅
    - Logs switch key reception ✅
+   - Activates staged network key via `StackContext.activatePendingNetworkKey` and resets frame counter ✅
 
 2. **Switch Key Sending**
    - Includes sequence number ✅
    - Applies NWK security only (not APS) ✅
    - Broadcast or unicast delivery ✅
 
-#### ❌ NOT IMPLEMENTED:
+#### ⚠️ INCOMPLETE:
 
-1. **Key Switching Logic**
-   - Receives command but doesn't switch keys
-   - No mechanism to activate new network key
-   - processSwitch Key only logs, no action taken
+1. **Pending Key Staging**
+   - Requires prior call to `setPendingNetworkKey` (from TRANSPORT_KEY)
+   - No automated rotation schedule yet
 
-2. **Frame Counter Reset**
-   - Should reset NWK key frame counter after switch
-   - Not implemented
-
-3. **TLV Support**
+2. **TLV Support**
    - Not implemented (R23 feature)
 
-**Impact:** Network key rotation not functional - CRITICAL for long-term deployments
+**Impact:** Manual network key rotation supported, but automation/TLV extensions still missing
 
 ### 1.8 Remove Device Command (0x05-3474-23 #4.4.11.6)
 
@@ -309,22 +321,24 @@ device.authorized = true;
    - Validates source is Trust Center ✅
    - Logs remove device command ✅
 
-2. **Remove Device Sending**
+2. **Execution**
+   - Issues NWK Leave toward child and removes device from context ✅
+   - Cleans up address maps and indirect queues via StackContext ✅
+
+3. **Remove Device Sending**
    - Includes target IEEE address ✅
    - Applies NWK + APS LOAD encryption ✅
    - Unicast to parent router ✅
 
-#### ❌ INCOMPLETE:
+#### ⚠️ FOLLOW-UP:
 
-1. **Actual Device Removal**
-   - processRemoveDevice() only logs
-   - Should initiate leave sequence to target device
-   - Should notify parent to remove child
+1. **Parent Notification**
+   - Does not emit UPDATE_DEVICE status 0x02 to other routers after removal
+   - Trust Center should confirm parent purged child entry
 
-2. **Parent Router Role**
-   - No handling for receiving REMOVE_DEVICE as parent
-   - Should send LEAVE to child device
-   - Should send UPDATE_DEVICE (status 0x02) back to TC
+2. **Router Role Handling**
+   - Coordinator handles removal; parent router behavior still minimal
+   - Needs explicit path for routers receiving REMOVE_DEVICE from TC
 
 3. **TLV Support**
    - Not implemented (R23 feature)
@@ -348,12 +362,12 @@ device.authorized = true;
    - Used for TRANSPORT_KEY delivery through routers ✅
    - processUpdateDevice builds TUNNEL correctly ✅
 
-#### ⚠️ INCOMPLETE:
+#### ⚠️ FOLLOW-UP:
 
-1. **Tunnel Forwarding**
-   - processTunnel() only logs
-   - Should extract and forward tunneled command to destination
-   - Current implementation doesn't relay tunneled frames
+1. **Forwarding Logic**
+   - Coordinator currently logs but does not relay tunneled frames to destination
+   - Needs decoding + re-enqueue toward end device per spec #4.4.11.6
+   - Should interoperate with parent routers when they forward TC commands
 
 2. **Security Context**
    - No validation that tunneled command is properly secured
@@ -390,6 +404,29 @@ device.authorized = true;
 
 **Note:** These are R23 advanced features, non-critical for Zigbee 3.0 PRO networks
 
+### 1.11 APS Fragmentation (05-3474-23 #2.2.12)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Fragment Transmission/Reassembly**
+   - Splits payloads exceeding apscMaxFrameSize and waits for block-level acknowledgments ✅
+   - Reassembles every block in order before delivering to StackCallbacks.onFrame ✅
+
+2. **Duplicate Suppression**
+   - Maintains per-source APS counter cache ✅
+   - Records per-fragment block numbers to prevent legitimate retransmissions from being dropped ✅
+
+#### ⚠️ FOLLOW-UP:
+
+1. **Fragment ACK Bitmaps**
+   - Extended header encodes bitmap but selective retransmission is not implemented
+   - Consider resending missing blocks when bitmap indicates gaps
+
+2. **TLV Extensions (R23)**
+   - Fragment control TLVs remain unimplemented (low priority for Zigbee 3.0)
+
+**Impact:** Fragmented payloads are now reliable for large messages; selective retry remains future work.
+
 ---
 
 ## 2. MAC Handler (IEEE 802.15.4 Layer)
@@ -413,16 +450,11 @@ device.authorized = true;
    - Sends TRANSPORT_KEY_NWK on success ✅
    - Uses extended source address in response ✅
 
-#### ❌ MISSING:
+#### ⚠️ FOLLOW-UP:
 
-1. **Association Permit Check**
-   ```typescript
-   // NO CHECK FOR: if (!context.associationPermit) { reject(); }
-   ```
-   - **Spec:** SHALL check if association is permitted
-   - **Missing:** No validation of `context.associationPermit` flag before processing
-   - **Impact:** Accepts associations even when disabled
-   - **Severity:** HIGH - violates fundamental MAC association rules
+1. **Association Permit Telemetry**
+   - Enforcement now returns PAN_ACCESS_DENIED for initial joins when permit=false ✅
+   - Consider emitting metrics/events when joins are blocked
 
 ### 2.2 Beacon Request Processing (IEEE 802.15.4-2015 #5.3.3)
 
@@ -486,6 +518,27 @@ device.authorized = true;
    - Uses `Date.now()` (millisecond precision)
    - MAC timing is typically in symbol periods
    - **Acceptable** for implementation but not ideal
+
+### 2.4 Disassociation Notification (IEEE 802.15.4-2015 #6.4.3.3)
+
+#### ✅ COMPLIANT Areas:
+
+1. **Reason Handling**
+   - Parses coordinator-initiated (0x01) and device-initiated (0x02) reasons ✅
+   - Logs notifications with source addresses for audit trail ✅
+
+2. **State Update**
+   - Resolves 16-bit address from IEEE address when needed ✅
+   - Invokes `StackContext.disassociate` to purge device state ✅
+
+#### ⚠️ FOLLOW-UP:
+
+1. **Metrics & Telemetry**
+   - No per-reason counters or external callbacks yet
+   - Tracking would aid diagnosing churn
+
+2. **Coordinator Confirmation**
+   - Does not send additional leave confirmations (optional per spec)
 
 ---
 
@@ -649,20 +702,21 @@ device.authorized = true;
 2. **ROUTE_REPLY Sending**
    - Includes originator and responder addresses ✅
    - Optional 64-bit addresses ✅
-   - Path cost initialization (TODO: 0 or 1?) ⚠️
+   - Normalizes zero path cost to hop-derived value ✅
    - Uses request radius for TTL ✅
 
-#### ⚠️ MISSING:
+3. **Coordinator Route Caching**
+   - Reconstructs relay path (including final MAC hop) on replies addressed to coordinator ✅
+   - Updates source-route table and resets failure counts ✅
 
-1. **Path Cost Accumulation**
-   - Should increment path cost at each hop
-   - Not implemented (coordinator doesn't forward)
 
-2. **Route Discovery Table**
+#### ⚠️ FOLLOW-UP:
+
+1. **Route Discovery Table**
    - Should track recent ROUTE_REQs to avoid loops
    - Not implemented (less critical for concentrator)
 
-3. **TLV Support in ROUTE_REPLY**
+2. **TLV Support in ROUTE_REPLY**
    - TODO comment present
    - Not implemented
 
@@ -741,14 +795,14 @@ device.authorized = true;
 #### ✅ COMPLIANT Areas:
 
 1. **Timeout Request Processing**
-   - Decodes requested timeout ✅
-   - Validates device exists ✅
-   - Returns appropriate status ✅
+   - Decodes requested timeout and configuration fields ✅
+   - Validates timeout index against Table 3-54 ✅
+   - Verifies requester exists and updates stored timeout metadata ✅
 
 2. **Timeout Response Sending**
-   - Includes status and timeout value ✅
-   - Unicast to requester ✅
-   - Applies NWK security ✅
+   - Returns SUCCESS/INCORRECT_VALUE/UNSUPPORTED_FEATURE statuses ✅
+   - Includes parent info bitmap (keepalive capabilities) ✅
+   - Applies NWK security and unicasts to requester ✅
 
 3. **Timeout Response Processing**
    - Decodes status and timeout ✅
@@ -756,14 +810,13 @@ device.authorized = true;
 
 #### ⚠️ INCOMPLETE:
 
-1. **Timeout Negotiation**
-   - Accepts requested timeout without validation
-   - Should apply policy/limits per spec
-   - No timeout table management
+1. **Timeout Policy Enforcement**
+   - No policy to cap timeouts per device class
+   - Parent info bitmap currently static
 
 2. **Keep-Alive Mechanism**
-   - No active polling of end devices
-   - No timeout expiration handling
+   - No active polling of end devices / expiry-driven disconnects
+   - Missing timer to act on `expiresAt`
 
 3. **TLV Support**
    - Not implemented (R23 feature)
@@ -839,6 +892,7 @@ device.authorized = true;
    - Network address ↔ IEEE address bidirectional lookup ✅
    - Capabilities, authorized, neighbor flags ✅
    - Recent LQA tracking for link quality ✅
+   - Runtime metadata (NWK frame counter guard, end-device timeout bookkeeping) ✅
 
 2. **Address Assignment**
    - Random assignment within valid range [0x0001, 0xFFFC) ✅
@@ -879,17 +933,15 @@ device.authorized = true;
    - Prevents counter reuse after restart ✅
    - Jump offset of 1024 is reasonable ✅
 
-#### ⚠️ POTENTIAL ISSUE:
+#### ⚠️ FOLLOW-UP:
 
-```typescript
-// TODO: wrap-to-zero mechanism / APS SWITCH_KEY
-```
+1. **Automated Wrap Protection**
+   - Manual TRANSPORT_KEY + SWITCH_KEY workflow exists
+   - Still needs scheduler/telemetry to trigger rotation before counters reach 0xffffffff
 
-- **Missing:** Counter wrap-to-zero handling
-- **Spec requirement:** Must update keys before counter wraps
-- **Current:** No protection against 0xffffffff → 0x00000000 wrap
-- **Risk:** Security vulnerability if counters wrap
-- **Mitigation needed:** Implement SWITCH_KEY or key rotation
+2. **Counter Telemetry**
+   - Expose current NWK/TC counters for monitoring
+   - Emit warnings when approaching configured threshold
 
 ### 5.3 Trust Center Policies
 
@@ -919,9 +971,10 @@ device.authorized = true;
 
 3. **Network Key Update**
    - networkKeyUpdatePeriod defined (default 0 = disabled)
+   - `setPendingNetworkKey`/`activatePendingNetworkKey` stage new key material ✅
    - TODO comment: "implement ~30-day automatic key rotation?"
    - networkKeyUpdateMethod defined but not used
-   - No actual periodic key update mechanism
+   - No periodic key update trigger (manual SWITCH_KEY still TODO)
 
 4. **Virtual Devices**
    - allowVirtualDevices flag exists
@@ -1003,12 +1056,7 @@ device.authorized = true;
 #### ❌ MISSING:
 
 1. **Install Code Enforcement**
-   - Policy checked but not enforced
-   - installCode policy exists but:
-     ```typescript
-     // TODO: implement install code validation
-     ```
-   - REQUIRED policy not actually required
+   - Policy enforced for initial joins when set to REQUIRED ✅
 
 2. **Device Announcement Tracking**
    - No correlation with device announcements
@@ -1046,11 +1094,15 @@ device.authorized = true;
    - Device entries with nested routes ✅
    - End marker for validation ✅
 
-2. **Periodic Saving**
+2. **Application Link Keys**
+   - Persists app link key TLVs for device pairs ✅
+   - Restores and rehydrates key table on load ✅
+
+3. **Periodic Saving**
    - CONFIG_SAVE_STATE_TIME: 60 seconds ✅
    - Non-blocking saves ✅
 
-3. **Loading**
+4. **Loading**
    - Version check with forward compatibility ✅
    - Validates format ✅
    - Restores all state correctly ✅
@@ -1088,6 +1140,11 @@ device.authorized = true;
    - Validates device is known ✅
    - Policy checks before granting keys ✅
 
+5. **NWK Replay Protection**
+   - Tracks per-device incoming NWK frame counters ✅
+   - Rejects frames with stale counters and logs warning ✅
+   - Updates counters only after successful decrypt ✅
+
 ### 6.2 ⚠️ MODERATE CONCERNS:
 
 1. **Trust in Nested Joins**
@@ -1095,31 +1152,31 @@ device.authorized = true;
    - No validation of claimed capabilities
    - Could allow rogue router to inject false devices
 
-2. **Frame Counter Wrap**
-   - No SWITCH_KEY implementation
-   - No key rotation mechanism
-   - Risk of security failure at counter wrap (unlikely in practice)
+2. **Network Key Rotation Lifecycle**
+   - Manual rotation supported via TRANSPORT_KEY + SWITCH_KEY
+   - Lacks automated scheduling/telemetry for pre-emptive rotation
+   - Should monitor counters approaching 0xffffffff and stage keys proactively
 
 3. **Incomplete TC Policies**
    - ONLY_PROVISIONAL and ONLY_APPROVED not fully implemented
    - appKeyRequestList and apsDeviceKeyPairSet missing
 
+4. **Install Code Lifecycle**
+   - Install codes validated and stored, but provisioning workflow/UI absent
+   - No rotation of derived link keys after initial use
+   - Removal retains derived link key without audit trail
+
 ### 6.3 ❌ CRITICAL GAPS:
 
-1. **APS Key Type Selection Uncertainty**
-   - CONFIRM_KEY uses LINK vs TRANSPORT (marked XXX)
-   - TRANSPORT_KEY_TC uses LOAD vs LINK
-   - **Must verify with spec and testing**
+1. **APS Key Type Interoperability**
+   - CONFIRM_KEY now uses LINK keyId per 05-3474-23 #4.4.11.8 (spec-compliant)
+   - TRANSPORT_KEY_TC continues to use LOAD keyId; verify across vendor captures
+   - Recommend interoperability testing with multiple stacks to confirm expectations
 
 2. **Distributed Network Validation**
    - No check for distributed vs centralized mode
    - VERIFY_KEY should reject in distributed mode
    - REJOIN should check apsTrustCenterAddress
-
-3. **Install Code Support**
-   - Policy exists (installCode)
-   - No actual install code processing
-   - Marked as TODO in project docs
 
 ---
 
@@ -1259,63 +1316,42 @@ Per AGENTS.md:
 
 ## 11. Critical Recommendations
 
-### 11.1 IMMEDIATE (Security/Correctness):
+### 11.1 Completed Since Previous Revision
 
-1. **✅ VERIFY APS Key Selection** (Priority: CRITICAL)
-   - CONFIRM_KEY: LINK vs TRANSPORT keyId
-   - TRANSPORT_KEY_TC: LOAD vs LINK keyId
-   - Cross-reference with packet captures
-   - Test with multiple device vendors
+- ✅ Association permit enforcement now rejects initial joins when `associationPermit=false` (IEEE 802.15.4 #6.3.1).
+- ✅ APS fragmentation duplicate cache tracks per-block numbers, restoring reliable reassembly before callbacks.
+- ✅ CONFIRM_KEY uses LINK keyId per 05-3474-23 #4.4.11.8.
 
-2. **✅ Implement Association Permit Check** (Priority: HIGH)
-   ```typescript
-   if (!this.associationPermit) {
-       return reject(MACAssociationStatus.PAN_ACCESS_DENIED);
-   }
-   ```
+### 11.2 Outstanding (Security / Correctness)
 
-3. **✅ Add Distributed Network Checks** (Priority: HIGH)
-   - VERIFY_KEY should reject in distributed mode
-   - REJOIN should validate apsTrustCenterAddress
-   - Check for all-FF or all-00 TC address
+1. **⚠️ Interoperability Validation of APS Key Identifiers (Critical)**
+   - TRANSPORT_KEY_TC still relies on LOAD keyId; verify behaviour with multiple vendor stacks and packet captures.
+2. **⚠️ Distributed Network Guardrails (High)**
+   - VERIFY_KEY should reject when operating in distributed mode.
+   - REJOIN paths should validate `apsTrustCenterAddress`.
+3. **⚠️ UPDATE_DEVICE Status 0x02 Handling (Medium)**
+   - Current implementation removes devices immediately.
+   - Spec treats notification as informative; add confirmation policy.
+4. **⚠️ Automated Network Key Rotation (Medium)**
+   - Manual rotation exists; add telemetry and scheduling before counter exhaustion.
 
-4. **✅ Fix Device Left Handling** (Priority: MEDIUM)
-   - Make UPDATE_DEVICE status 0x02 informative only
-   - Don't automatically remove devices
-   - Add confirmation mechanism
+### 11.3 Outstanding (Specification Compliance)
 
-### 11.2 IMPORTANT (Compliance):
+1. **❌ Neighbor Table Management**
+   - Separate neighbour table with age/connectivity metrics per spec #3.6.1.5.
+2. **❌ Secured Rejoin Behaviour**
+   - Implement UPDATE_DEVICE status 0x00 processing for secure rejoin.
+3. **❌ Trust Center Policy Enforcement**
+   - Implement `apsDeviceKeyPairSet`, ONLY_PROVISIONAL, ONLY_APPROVED policies.
+4. **❌ TLV Support for APS Commands (R23)**
+   - Required for TRANSPORT_KEY, UPDATE_DEVICE, VERIFY_KEY, CONFIRM_KEY.
 
-6. **✅ Implement Neighbor Table** (Priority: HIGH)
-   - Separate from device table
-   - Add age, routerAge, connectivity, diversity
-   - Implement proper neighbor management per spec #3.6.1.5
+### 11.4 Quality / Operational Enhancements
 
-7. **✅ Handle Secured Rejoin** (Priority: MEDIUM)
-   - UPDATE_DEVICE status 0x00 completely unhandled
-   - Should be implemented for full compliance
-
-8. **✅ Implement Frame Counter Wrap Protection** (Priority: MEDIUM)
-   - Add SWITCH_KEY mechanism
-   - Or implement periodic key rotation
-   - Monitor counters approaching 0xffffffff
-
-9. **✅ Complete TC Policy Enforcement** (Priority: MEDIUM)
-   - Implement apsDeviceKeyPairSet
-   - Enforce ONLY_PROVISIONAL policy
-   - Enforce ONLY_APPROVED with appKeyRequestList
-
-10. **✅ Add TLV Support** (Priority: LOW-MEDIUM)
-    - Required for R23 compliance
-    - Optional but recommended for current version
-    - Start with TRANSPORT_KEY, UPDATE_DEVICE
-
-### 11.3 ENHANCEMENTS (Quality):
-
-11. **✅ Implement Queue Depth Limits** (Priority: LOW)
-    - Prevent memory leaks in indirect transmission
-    - Add periodic cleanup
-    - Monitor queue sizes
+1. **⚠️ Indirect Queue Depth Limits**
+   - Prevent unbounded growth of indirect transmissions for sleepy devices.
+2. **⚠️ Metrics & Telemetry**
+   - Add counters for disassociation reasons, fragmentation retries, and route failures for easier diagnostics.
 
 12. **✅ Add Capacity Checks** (Priority: LOW)
     - Maximum associations
@@ -1335,13 +1371,13 @@ Per AGENTS.md:
 
 | Category | Score | Assessment |
 |----------|-------|------------|
-| **MAC Layer** | 85% | ✅ Strong, missing permit check |
+| **MAC Layer** | 88% | ✅ Strong; permit gate enforced, add telemetry |
 | **NWK Layer** | 75% | ⚠️ Good routing, missing neighbor table |
-| **APS Layer** | 70% | ⚠️ Core works, incomplete policies |
-| **Security** | 75% | ⚠️ Good base, key selection uncertain |
+| **APS Layer** | 72% | ⚠️ Core works; fragmentation solid, policies incomplete |
+| **Security** | 78% | ⚠️ Strong counters; TRANSPORT_KEY keyId needs validation |
 | **R23 Features** | 20% | ❌ Minimal support |
 | **Code Quality** | 90% | ✅ Excellent structure |
-| **Overall** | **76%** | ⚠️ **PRODUCTION-READY WITH CAVEATS** |
+| **Overall** | **78%** | ⚠️ **PRODUCTION-READY WITH CAVEATS** |
 
 ### Production Readiness
 
@@ -1352,9 +1388,9 @@ Per AGENTS.md:
 - IoT device control applications
 
 **⚠️ USE WITH CAUTION FOR:**
-- Security-critical deployments (verify key handling first)
-- Large networks (>100 devices) - needs stress testing
-- Mixed-vendor networks - test interoperability
+- Security-critical deployments (validate TRANSPORT_KEY keyId interoperability first)
+- Large networks (>100 devices) - needs soak/stress testing
+- Mixed-vendor networks - confirm APS key handling behaviour
 - R23-only networks - not compliant
 
 **❌ NOT RECOMMENDED FOR:**
@@ -1372,7 +1408,7 @@ Per AGENTS.md:
 - ✅ Performance-conscious implementation
 - ✅ Good interoperability foundation
 
-**However**, the explicitly marked uncertainties (XXX comments) around **APS key selection** and **security-critical code paths** MUST be resolved before production deployment in security-sensitive environments.
+**However**, the remaining interoperability uncertainty around the TRANSPORT_KEY key identifier and other security-critical TODOs MUST be resolved before production deployment in security-sensitive environments.
 
 The project acknowledges its WIP status (v0.2.0, "expect breaking changes"), and this analysis confirms that assessment. With the recommended fixes, especially verification of key handling, this could be a production-grade Zigbee coordinator implementation.
 
@@ -1403,7 +1439,5 @@ The project acknowledges its WIP status (v0.2.0, "expect breaking changes"), and
 
 ---
 
-**Report Generated:** October 6, 2025  
-**Reviewer:** AI Analysis (GitHub Copilot)  
-**Last Updated:** Post-structural refactoring (association logic moved to StackContext)  
-**Status:** COMPREHENSIVE SPECIFICATION COMPLIANCE AUDIT COMPLETE
+**Report Generated:** November 2, 2025
+**Reviewer:** AI Analysis (GitHub Copilot)

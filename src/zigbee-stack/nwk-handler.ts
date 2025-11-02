@@ -815,6 +815,13 @@ export class NWKHandler {
 
     /**
      * 05-3474-R #3.4.2
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Decodes originator/responder addresses (short and extended) per options mask
+     * - ✅ Reconstructs relay path including final MAC hop when coordinator initiates discovery
+     * - ✅ Normalizes zero path cost to hop-derived value (spec mandates positive path cost)
+     * - ⚠️ Currently only updates source routes when coordinator initiated the request
+     * - ❌ TODO: Honor optional TLV payload and status-field failure indicators
      */
     public processRouteReply(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const options = data.readUInt8(offset);
@@ -1647,16 +1654,12 @@ export class NWKHandler {
      * 05-3474-R #3.4.11
      *
      * SPEC COMPLIANCE:
-     * - ✅ Correctly decodes requested timeout (0-14 scale)
-     * - ✅ Validates device exists
-     * - ✅ Returns appropriate status
-     * - ⚠️ INCOMPLETE: Accepts requested timeout without validation/policy
-     * - ❌ NOT IMPLEMENTED: Timeout table management
-     * - ❌ NOT IMPLEMENTED: Keep-alive mechanism
-     * - ❌ NOT IMPLEMENTED: Timeout expiration handling
-     * - ❌ NOT IMPLEMENTED: TLV support (R23)
-     *
-     * IMPACT: Timeout values accepted but not enforced
+     * - ✅ Decodes requested timeout index and configuration octet per spec Table 3-54
+     * - ✅ Validates timeout against END_DEVICE_TIMEOUT_TABLE and device presence before accepting
+     * - ✅ Updates StackContext end-device timeout metadata and responds with status codes (SUCCESS/INCORRECT_VALUE/UNSUPPORTED_FEATURE)
+     * - ⚠️ Still lacks parent policy enforcement (e.g., max timeout per device class)
+     * - ❌ NOT IMPLEMENTED: Keep-alive scheduling or timeout expiration handling
+     * - ❌ NOT IMPLEMENTED: TLV processing for R23 extensions
      */
     public async processEdTimeoutRequest(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
         // index into END_DEVICE_TIMEOUT_TABLE_MS
@@ -1736,14 +1739,11 @@ export class NWKHandler {
      * 05-3474-R #3.4.12
      *
      * SPEC COMPLIANCE:
-     * - ✅ Includes status and timeout value
-     * - ✅ Unicast to requester
-     * - ✅ Applies NWK security
-     * - ⚠️ TODO: parentInfo flags need proper implementation
-     *
-     * @param requestDest16
-     * @param requestedTimeout Requested timeout enumeration [0-14] (mapping to actual timeout) @see processEdTimeoutRequest
-     * @returns
+     * - ✅ Populates status field with SUCCESS/INCORRECT_VALUE/UNSUPPORTED_FEATURE based on request validation
+     * - ✅ Sends parent information bitmap indicating keep-alive support (defaults to DATA_POLL + REQUEST + POWER_NEGOTIATION)
+     * - ✅ Applies NWK security and unicasts to requester as required
+     * - ⚠️ Parent info overrides currently static (no dynamic negotiation yet)
+     * - ❌ NOT IMPLEMENTED: TLV extensions (R23)
      */
     public async sendEdTimeoutResponse(
         requestDest16: number,

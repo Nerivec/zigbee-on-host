@@ -115,7 +115,7 @@ export class APSHandler {
     #zdoSeqNum = 0;
 
     /** Recently seen APS frames for duplicate rejection */
-    readonly #apsDuplicateTable = new Map<string, { counter: number; expiresAt: number }>();
+    readonly #apsDuplicateTable = new Map<string, { counter: number; expiresAt: number; fragments?: Set<number> }>();
     /** Pending APS acknowledgments waiting for retransmission */
     readonly #pendingAcks = new Map<string, PendingAckEntry>();
     /** Incoming APS fragment reassembly buffers */
@@ -191,26 +191,44 @@ export class APSHandler {
             return false;
         }
 
-        if (
-            apsHeader.frameControl.extendedHeader &&
-            apsHeader.fragmentation !== undefined &&
-            apsHeader.fragmentation !== ZigbeeAPSFragmentation.NONE
-        ) {
-            // Fragmented transmissions reuse the same APS counter for multiple blocks.
-            return false;
-        }
-
         this.#pruneExpiredAPSDuplicates(now);
 
+        const isFragmented = apsHeader.fragmentation !== undefined && apsHeader.fragmentation !== ZigbeeAPSFragmentation.NONE;
         // XXX: perf: string of bigint/number, this is called a lot
         const sourceKey = nwkHeader.source64 !== undefined ? `64:${nwkHeader.source64}` : `16:${nwkHeader.source16}`;
         const entry = this.#apsDuplicateTable.get(sourceKey);
 
         if (entry !== undefined && entry.counter === apsHeader.counter && entry.expiresAt > now) {
+            if (isFragmented) {
+                const blockNumber = apsHeader.fragBlockNumber ?? 0;
+                let fragments = entry.fragments;
+
+                if (fragments === undefined) {
+                    fragments = new Set<number>();
+                    entry.fragments = fragments;
+                } else if (fragments.has(blockNumber)) {
+                    return true;
+                }
+
+                fragments.add(blockNumber);
+                entry.expiresAt = now + CONFIG_APS_DUPLICATE_TIMEOUT_MS;
+
+                return false;
+            }
+
             return true;
         }
 
-        this.#apsDuplicateTable.set(sourceKey, { counter: apsHeader.counter, expiresAt: now + CONFIG_APS_DUPLICATE_TIMEOUT_MS });
+        const newEntry: { counter: number; expiresAt: number; fragments?: Set<number> } = {
+            counter: apsHeader.counter,
+            expiresAt: now + CONFIG_APS_DUPLICATE_TIMEOUT_MS,
+        };
+
+        if (isFragmented) {
+            newEntry.fragments = new Set([apsHeader.fragBlockNumber ?? 0]);
+        }
+
+        this.#apsDuplicateTable.set(sourceKey, newEntry);
 
         return false;
     }
@@ -615,6 +633,24 @@ export class APSHandler {
         const counter = apsHeader.counter ?? 0;
 
         return `${source}:${profile}:${cluster}:${sourceEndpoint}:${destEndpoint}:${counter}`;
+    }
+
+    #updateSourceRouteForChild(child16: number, parent16: number | undefined, parent64: bigint | undefined): void {
+        if (parent16 === undefined) {
+            return;
+        }
+
+        try {
+            const [, parentRelays] = this.#nwkHandler.findBestSourceRoute(parent16, parent64);
+
+            if (parentRelays) {
+                this.#context.sourceRouteTable.set(child16, [this.#nwkHandler.createSourceRouteEntry(parentRelays, parentRelays.length + 1)]);
+            } else {
+                this.#context.sourceRouteTable.set(child16, [this.#nwkHandler.createSourceRouteEntry([parent16], 2)]);
+            }
+        } catch {
+            /* ignore (no known route yet) */
+        }
     }
 
     #pruneExpiredFragmentStates(now: number): void {
@@ -1321,7 +1357,7 @@ export class APSHandler {
      *       However, TRANSPORT_KEY during initial join may not receive ACK due to lack of NWK key
      * - ✅ Frame counter uses TC key counter which is correct for TRANSPORT keyId
      * - ✅ For distributed networks (no TC), source64 should be 0xFFFFFFFFFFFFFFFF per spec - code correctly uses eui64 (centralized TC)
-     * - ❌ SPEC ISSUE: Broadcast destination64 handling not implemented (should set to all-zero per spec)
+     * - ✅ Broadcast destination64 handling sets all-zero string when using NWK broadcast per spec
      *
      * @param nwkDest16
      * @param key SHALL contain a network key
@@ -1395,11 +1431,12 @@ export class APSHandler {
     /**
      * 05-3474-R #4.4.11.1 #4.4.11.1.3.3
      *
-     * @param nwkDest16
-     * @param key SHALL contain a link key that is shared with the device identified in the partner address sub-field
-     * @param partner SHALL contain the address of the other device that was sent this link key
-     * @param initiatorFlag SHALL be set to 1 if the device receiving this packet requested this key. Otherwise, this sub-field SHALL be set to 0.
-     * @returns
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Sets CMD_KEY_APP_LINK (0x03) and includes partner64 + initiator flag per Table 4-17
+     * - ✅ Applies APS security with TRANSPORT keyId (shared TC link key) while suppressing NWK security (permitted)
+     * - ✅ Supports mirrored delivery (initiator + partner) when invoked twice in Request Key flow
+     * - ⚠️ TODO: Add TLV support for enhanced security context (R23)
+     * - ⚠️ TODO: Consider tunneling for indirect partners per spec #4.6.3.7
      */
     public async sendTransportKeyAPP(nwkDest16: number, key: Buffer, partner: bigint, initiatorFlag: boolean): Promise<boolean> {
         // TODO: tunneling support `, tunnelDest?: bigint`
@@ -1450,7 +1487,7 @@ export class APSHandler {
      * - ✅ Correctly decodes all mandatory fields: device64, device16, status
      * - ⚠️  TODO: TLVs not decoded (optional but recommended for R23+ features)
      * - ✅ Handles 4 status codes as per spec:
-     *       0x00 = Standard Device Secured Rejoin
+     *       0x00 = Standard Device Secured Rejoin (updates device state via associate)
      *       0x01 = Standard Device Unsecured Join
      *       0x02 = Device Left
      *       0x03 = Standard Device Trust Center Rejoin
@@ -1467,7 +1504,6 @@ export class APSHandler {
      * - ⚠️  Status 0x03 (TC Rejoin) handling appears correct but minimal
      * - ⚠️  Status 0x02 (Device Left) handling uses onDisassociate - spec says "informative only, should not take action"
      *       This may be non-compliant as it actively removes the device
-     * - ❌ MISSING: Status 0x00 (Secured Rejoin) is not handled at all
      *
      * SECURITY CONCERN:
      * - Unsecured joins through routers rely heavily on parent router trust
@@ -1503,7 +1539,19 @@ export class APSHandler {
         // 0x02 = Device Left
         // 0x03 = Standard Device Trust Center Rejoin
         // 0x04 – 0x07 = Reserved
-        if (status === 0x01) {
+        if (status === 0x00) {
+            await this.#context.associate(
+                device16,
+                device64,
+                false, // rejoin
+                undefined, // no MAC cap through router
+                false, // not neighbor
+                false,
+                true, // was allowed by parent
+            );
+
+            this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
+        } else if (status === 0x01) {
             await this.#context.associate(
                 device16,
                 device64,
@@ -1514,20 +1562,7 @@ export class APSHandler {
                 true, // was allowed by parent
             );
 
-            // TODO: better handling
-            try {
-                const [, parentRelays] = this.#nwkHandler.findBestSourceRoute(nwkHeader.source16, nwkHeader.source64);
-
-                if (parentRelays) {
-                    // parent is nested
-                    this.#context.sourceRouteTable.set(device16, [this.#nwkHandler.createSourceRouteEntry(parentRelays, parentRelays.length + 1)]);
-                } else {
-                    // parent is direct to coordinator
-                    this.#context.sourceRouteTable.set(device16, [this.#nwkHandler.createSourceRouteEntry([nwkHeader.source16!], 2)]);
-                }
-            } catch {
-                /* ignore */
-            }
+            this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
 
             const tApsCmdPayload = Buffer.alloc(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
             let offset = 0;
@@ -1645,14 +1680,9 @@ export class APSHandler {
      *
      * SPEC COMPLIANCE:
      * - ✅ Correctly decodes target IEEE address (childInfo)
-     * - ✅ Validates source and logs removal
-     * - ❌ NOT IMPLEMENTED: Actual device removal (only logs)
-     * - ❌ MISSING: Should initiate LEAVE sequence to target device
-     * - ❌ MISSING: Should notify parent to remove child
-     * - ❌ MISSING: Parent router role handling
-     *
-     * IMPLEMENTATION GAP: Coordinator receives command but doesn't act on it.
-     * Parent routers should send LEAVE to child and UPDATE_DEVICE(status 0x02) to TC.
+     * - ✅ Issues NWK leave to child and removes from device tables
+     * - ⚠️  Does not notify parent router beyond leave (spec expects UPDATE_DEVICE relays)
+     * - ⚠️  Parent role handling limited to direct coordinator actions
      */
     public async processRemoveDevice(
         data: Buffer,
@@ -1725,6 +1755,15 @@ export class APSHandler {
 
     /**
      * 05-3474-R #4.4.11.4 #4.4.5.2.3
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Rejects unencrypted APS frames as mandated (request MUST be APS secured)
+     * - ✅ Honors Trust Center policies: allowTCKeyRequest / allowAppKeyRequest gates
+     * - ✅ Returns NWK, TC, or APP link keys through appropriate TRANSPORT_KEY helpers
+     * - ✅ Derives/stores application link keys via StackContext for partner distribution
+     * - ⚠️ TODO: Implement ApplicationKeyRequestPolicy.ONLY_APPROVED enforcement
+     * - ⚠️ TODO: Implement TrustCenterKeyRequestPolicy.ONLY_PROVISIONAL enforcement
+     * - ⚠️ TODO: Track apsDeviceKeyPairSet per spec Annex B for negotiated keys
      */
     public async processRequestKey(
         data: Buffer,
@@ -1853,15 +1892,13 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.5
+     * 05-3474-R #4.4.11.3
      *
      * SPEC COMPLIANCE:
-     * - ✅ Correctly decodes sequence number
-     * - ❌ NOT IMPLEMENTED: Actual key switching logic (CRITICAL)
-     * - ❌ NOT IMPLEMENTED: Frame counter reset after key switch
-     * - ❌ NOT IMPLEMENTED: Activation of new network key
-     *
-     * IMPACT: Network key rotation is non-functional - security risk for long-term deployments
+     * - ✅ Decodes sequence number identifying the pending network key
+     * - ✅ Activates staged key via StackContext.activatePendingNetworkKey
+     * - ✅ Resets NWK frame counter following activation
+     * - ⚠️ Pending key staging remains prerequisite (TRANSPORT_KEY)
      */
     public processSwitchKey(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const seqNum = data.readUInt8(offset);
@@ -1884,10 +1921,10 @@ export class APSHandler {
      * 05-3474-R #4.4.11.5
      *
      * SPEC COMPLIANCE:
-     * - ✅ Includes sequence number identifying network key
+     * - ✅ Includes sequence number associated with staged network key
      * - ✅ Broadcast or unicast delivery
-     * - ✅ Applies NWK security only (not APS)
-     * - ❌ NOT IMPLEMENTED: Integration with actual key switching mechanism
+     * - ✅ Applies NWK security only (per spec expectation)
+     * - ⚠️ Relies on caller to stage key via TRANSPORT_KEY before invocation
      *
      * @param nwkDest16
      * @param seqNum SHALL contain the sequence number identifying the network key to be made active.
@@ -2148,7 +2185,7 @@ export class APSHandler {
             {
                 control: {
                     level: ZigbeeSecurityLevel.NONE,
-                    keyId: ZigbeeKeyType.LINK, // XXX: TRANSPORT?
+                    keyId: ZigbeeKeyType.LINK, // Per 05-3474-23 #4.4.11.8 confirmation uses the link key being verified
                     nonce: true,
                 },
                 frameCounter: this.#context.nextTCKeyFrameCounter(),
