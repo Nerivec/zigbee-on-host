@@ -538,9 +538,9 @@ This report provides a meticulous analysis of the zigbee-on-host implementation'
    - Configurable window (default 180s) ✅
 
 2. **Duplicate Detection**
-   - Checks securityFrameCounter ✅
-   - Checks MAC sequence number (fallback) ✅
-   - Stores last values ✅
+   - Tracks most-recent security frame counter per GPD and rejects `<=` values ✅
+   - Falls back to MAC sequence number + FCS when GPD identifiers are absent ✅
+   - Purges stale entries after 60 s to bound memory ✅
 
 3. **Frame Filtering**
    - Blocks commissioning commands when not in commissioning mode ✅
@@ -550,13 +550,22 @@ This report provides a meticulous analysis of the zigbee-on-host implementation'
    - Calls onGPFrame callback with all parameters ✅
    - Uses setImmediate for non-blocking ✅
 
-#### ⚠️ MINIMAL IMPLEMENTATION:
+#### ⚠️ FOLLOW-UP:
 
-- **This handler is very basic**
-- Processes frames but provides minimal validation
-- No security key management
-- No source ID management
-- Suitable for basic GP support but not advanced features
+1. **Security Credential Handling**
+   - Does not manage GP shared keys or sink table entries
+   - No validation of security level vs commissioning state
+
+2. **Commissioning Command Policy**
+   - SUCCESS/CHANNEL_REQUEST still blocked outside commissioning mode; verify per 14-0563-19 §A.3 expectations
+
+3. **Replay Persistence**
+   - Duplicate cache held in-memory only; restarts lose frame counter history
+   - Consider persisting alongside device state when GP deployments are critical
+
+4. **Fallback Collision Risk**
+   - MAC sequence/FCS fallback may collide if multiple anonymous GPDs transmit simultaneously
+   - Monitor live deployments and consider augmenting keying material when available
 
 ---
 

@@ -283,13 +283,14 @@ interface NWKHandlerCallbacks {
 - Handle GP commissioning
 - Forward GP data frames to application
 - Process GP commands
+- Track duplicates per GPD security frame counter with bounded cache
 
 **Key Methods:**
 ```typescript
 public processFrame(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, lqa: number): void
 public enterCommissioningMode(commissioningWindow?: number): void
 public exitCommissioningMode(): void
-public checkDuplicate(macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader): boolean
+public isDuplicateFrame(macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader): boolean
 ```
 
 **Callbacks to Driver (NWKGPHandlerCallbacks):**
@@ -408,7 +409,7 @@ frame.processFrame()
     │     └─ MAC Data → Validate PAN/destination
     │
     ├─ Green Power Frames → NWKGPHandler.processFrame()
-    │     └─ Duplicate filtering via NWKGPHandler.isDuplicateFrame()
+    │     └─ Duplicate filtering via NWKGPHandler.isDuplicateFrame() with per-GPD counters and MAC-seq fallback
     │
     └─ Zigbee NWK Frames
           ↓
