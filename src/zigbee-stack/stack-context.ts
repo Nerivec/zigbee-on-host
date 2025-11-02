@@ -17,7 +17,16 @@ import {
     writeTLVUInt32LE,
 } from "../utils/save-serializer.js";
 import { decodeMACCapabilities, encodeMACCapabilities, MACAssociationStatus, type MACCapabilities, type MACHeader } from "../zigbee/mac.js";
-import { makeKeyedHash, makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../zigbee/zigbee.js";
+import {
+    aes128MmoHash,
+    computeInstallCodeCRC,
+    INSTALL_CODE_VALID_SIZES,
+    makeKeyedHash,
+    makeKeyedHashByType,
+    registerDefaultHashedKeys,
+    ZigbeeConsts,
+    ZigbeeKeyType,
+} from "../zigbee/zigbee.js";
 import type { ZigbeeAPSHeader, ZigbeeAPSPayload } from "../zigbee/zigbee-aps.js";
 import { ZigbeeNWKConsts } from "../zigbee/zigbee-nwk.js";
 import type { ZigbeeNWKGPHeader } from "../zigbee/zigbee-nwkgp.js";
@@ -80,6 +89,12 @@ export enum InstallCodePolicy {
     /** Require the use of Install Codes by joining devices or preset Passphrases */
     REQUIRED = 0x02,
 }
+
+export type InstallCodeEntry = {
+    code: Buffer;
+    crc: number;
+    key: Buffer;
+};
 
 export enum TrustCenterKeyRequestPolicy {
     DISALLOWED = 0x00,
@@ -366,6 +381,8 @@ export class StackContext {
     readonly sourceRouteTable = new Map<number, SourceRouteTableEntry[]>();
     /** Application link keys stored for device pairs (ordered by IEEE address) */
     readonly appLinkKeyTable = new Map<string, AppLinkKeyStoreEntry>();
+    /** Install code metadata per device (mapped by IEEE address) */
+    readonly installCodeTable = new Map<bigint, InstallCodeEntry>();
     /** Trust Center policies */
     readonly trustCenterPolicies: TrustCenterPolicies = {
         allowJoins: false,
@@ -460,6 +477,7 @@ export class StackContext {
         this.sourceRouteTable.clear();
         this.indirectTransmissions.clear();
         this.appLinkKeyTable.clear();
+        this.installCodeTable.clear();
     }
 
     /**
@@ -844,6 +862,43 @@ export class StackContext {
         };
 
         this.appLinkKeyTable.set(this.#makeAppLinkKeyId(canonicalA, canonicalB), stored);
+    }
+
+    public addInstallCode(device64: bigint, installCode: Buffer): Buffer {
+        if (this.trustCenterPolicies.installCode === InstallCodePolicy.NOT_SUPPORTED) {
+            throw new Error("Install codes are not supported by the current Trust Center policy");
+        }
+
+        const payloadLength = installCode.byteLength - 2;
+
+        if (!INSTALL_CODE_VALID_SIZES.some((size) => size === payloadLength)) {
+            throw new Error(`Invalid install code length ${payloadLength}`);
+        }
+
+        const code = installCode.subarray(0, payloadLength);
+        const providedCRC = installCode.readUInt16LE(payloadLength);
+        const computedCRC = computeInstallCodeCRC(code);
+
+        if (providedCRC !== computedCRC) {
+            throw new Error("Invalid install code CRC");
+        }
+
+        const key = aes128MmoHash(code);
+        const entry: InstallCodeEntry = {
+            code: Buffer.from(code),
+            crc: providedCRC,
+            key,
+        };
+
+        this.installCodeTable.set(device64, entry);
+        this.setAppLinkKey(device64, this.netParams.eui64, key);
+
+        return key;
+    }
+
+    public removeInstallCode(device64: bigint): void {
+        this.installCodeTable.delete(device64);
+        // Keep derived link key in appLinkKeyTable; it may have been rotated independently.
     }
 
     /**
@@ -1237,6 +1292,16 @@ export class StackContext {
                 `DEVICE_JOINING[src=${source16}:${source64} newAddr16=${newAddress16} initialJoin=${initialJoin} deviceType=${capabilities?.deviceType} powerSource=${capabilities?.powerSource} rxOnWhenIdle=${capabilities?.rxOnWhenIdle}] replying with status=${status}`,
             NS,
         );
+
+        if (
+            status === MACAssociationStatus.SUCCESS &&
+            initialJoin &&
+            this.trustCenterPolicies.installCode === InstallCodePolicy.REQUIRED &&
+            (source64 === undefined || this.installCodeTable.get(source64) === undefined)
+        ) {
+            newAddress16 = 0xffff;
+            status = MACAssociationStatus.PAN_ACCESS_DENIED;
+        }
 
         if (status === MACAssociationStatus.SUCCESS) {
             if (initialJoin || unknownRejoin) {

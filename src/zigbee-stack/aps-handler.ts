@@ -166,6 +166,22 @@ export class APSHandler {
     }
 
     /**
+     * Get or generate application link key for a device pair
+     */
+    #getOrGenerateAppLinkKey(deviceA: bigint, deviceB: bigint): Buffer {
+        const existing = this.#context.getAppLinkKey(deviceA, deviceB);
+
+        if (existing !== undefined) {
+            return existing;
+        }
+
+        const derived = Buffer.from(this.#context.netParams.tcKey);
+        this.#context.setAppLinkKey(deviceA, deviceB, derived);
+
+        return derived;
+    }
+
+    /**
      * Check whether an incoming APS frame is a duplicate and update the duplicate table accordingly.
      * @returns true when the frame was already seen within the duplicate removal timeout.
      */
@@ -1758,7 +1774,7 @@ export class APSHandler {
                 );
 
                 if (this.#context.trustCenterPolicies.allowAppKeyRequest === ApplicationKeyRequestPolicy.ALLOWED) {
-                    const appLinkKey = this.getOrGenerateAppLinkKey(requester64, partner);
+                    const appLinkKey = this.#getOrGenerateAppLinkKey(requester64, partner);
 
                     await this.sendTransportKeyAPP(nwkHeader.source16!, appLinkKey, partner, true);
 
@@ -2552,26 +2568,6 @@ export class APSHandler {
                 return;
             }
         }
-    }
-
-    // #endregion
-
-    // #region Helpers
-
-    /**
-     * Get or generate application link key for a device pair
-     */
-    private getOrGenerateAppLinkKey(deviceA: bigint, deviceB: bigint): Buffer {
-        const existing = this.#context.getAppLinkKey(deviceA, deviceB);
-
-        if (existing !== undefined) {
-            return existing;
-        }
-
-        const derived = Buffer.from(this.#context.netParams.tcKey);
-        this.#context.setAppLinkKey(deviceA, deviceB, derived);
-
-        return derived;
     }
 
     // #endregion

@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     encodeMACCapabilities,
+    MACAssociationStatus,
     type MACCapabilities,
     MACCommandId,
     MACFrameAddressMode,
@@ -25,6 +26,8 @@ import {
     ZigbeeMACConsts,
 } from "../../src/zigbee/mac.js";
 import {
+    aes128MmoHash,
+    computeInstallCodeCRC,
     makeKeyedHash,
     makeKeyedHashByType,
     registerDefaultHashedKeys,
@@ -58,6 +61,7 @@ import { NWKGPHandler, type NWKGPHandlerCallbacks } from "../../src/zigbee-stack
 import { NWKHandler, type NWKHandlerCallbacks } from "../../src/zigbee-stack/nwk-handler.js";
 import {
     ApplicationKeyRequestPolicy,
+    InstallCodePolicy,
     type NetworkParameters,
     StackContext,
     type StackContextCallbacks,
@@ -910,20 +914,127 @@ describe("Zigbee 3.0 Security Compliance", () => {
      * Zigbee Spec 05-3474-23 §4.6.3.2: Well-Known Keys
      * Well-known keys SHALL be used according to Zigbee 3.0 specification.
      */
-    describe.skip("Well-Known Keys (Zigbee §4.6.3.2)", () => {
-        // TODO: Test ZigBeeAlliance09 TC link key (5a 69 67 42 65 65 41 6c 6c 69 61 6e 63 65 30 39)
-        // TODO: Test install code-derived keys use correct MMOHASH algorithm
+    describe("Well-Known Keys (Zigbee §4.6.3.2)", () => {
+        it("precomputes the trust center verify hash for the ZigBeeAlliance09 link key", () => {
+            const expected = makeKeyedHash(context.netParams.tcKey, 0x03);
+
+            expect(context.tcVerifyKeyHash.equals(expected)).toStrictEqual(true);
+        });
+
+        it("derives transport and load hashed keys from the trust center link key", () => {
+            const transportKey = makeKeyedHashByType(ZigbeeKeyType.TRANSPORT, context.netParams.tcKey);
+            const loadKey = makeKeyedHashByType(ZigbeeKeyType.LOAD, context.netParams.tcKey);
+            const expectedTransport = makeKeyedHash(context.netParams.tcKey, 0x00);
+            const expectedLoad = makeKeyedHash(context.netParams.tcKey, 0x02);
+
+            expect(transportKey.equals(expectedTransport)).toStrictEqual(true);
+            expect(loadKey.equals(expectedLoad)).toStrictEqual(true);
+        });
+
+        it("avoids broadcasting the ZigBeeAlliance09 link key as the distributed network key", async () => {
+            const captured = await captureApsSecurityFrame(ZigbeeConsts.BCAST_DEFAULT, 0n);
+            const transportedKey = captured.apsPayload.subarray(2, 2 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
+
+            expect(transportedKey.equals(NETDEF_TC_KEY)).toStrictEqual(false);
+        });
     });
 
     /**
      * Zigbee Spec 05-3474-23 §4.6.3.4: Install Codes
      * Install codes SHALL be used to derive preconfigured link keys.
      */
-    describe.skip("Install Codes (Zigbee §4.6.3.4)", () => {
-        // TODO: Test install code policy enforcement (not supported, not required, required)
-        // TODO: Test install code CRC validation
-        // TODO: Test install code to AES-128 key transformation using MMOHASH
-        // TODO: Test joining with install code-derived key
+    describe("Install Codes (Zigbee §4.6.3.4)", () => {
+        function makeInstallCodeBuffer(data: Buffer): Buffer {
+            const buffer = Buffer.allocUnsafe(data.length + 2);
+            const crc = computeInstallCodeCRC(data);
+            buffer.set(data, 0);
+            buffer.writeUInt16LE(crc, data.length);
+
+            return buffer;
+        }
+
+        it("rejects install codes when the trust center policy does not support them", () => {
+            const device64 = 0x00124b00ffee0000n;
+            const code = Buffer.from("00112233445566778899aabbccddeeff", "hex");
+            const installCode = makeInstallCodeBuffer(code);
+
+            context.trustCenterPolicies.installCode = InstallCodePolicy.NOT_SUPPORTED;
+
+            expect(() => context.addInstallCode(device64, installCode)).toThrowError(
+                "Install codes are not supported by the current Trust Center policy",
+            );
+        });
+
+        it("derives link keys from install codes using AES-128 MMO hash", () => {
+            const device64 = 0x00124b00ffee0101n;
+            const code = Buffer.from("112233445566778899aabbccddeeff00", "hex");
+            const installCode = makeInstallCodeBuffer(code);
+            const derived = context.addInstallCode(device64, installCode);
+            const expected = aes128MmoHash(code);
+            const stored = context.installCodeTable.get(device64)?.key;
+            const linkKey = context.getAppLinkKey(device64, context.netParams.eui64);
+
+            expect(derived.equals(expected)).toStrictEqual(true);
+            expect(stored?.equals(expected)).toStrictEqual(true);
+            expect(linkKey?.equals(expected)).toStrictEqual(true);
+        });
+
+        it("rejects install codes with invalid CRC", () => {
+            const device64 = 0x00124b00ffee0202n;
+            const code = Buffer.from("8899aabbccddeeff0011223344556677", "hex");
+            const invalid = Buffer.concat([code, Buffer.from([0x00, 0x00])]);
+
+            expect(() => context.addInstallCode(device64, invalid)).toThrowError("Invalid install code CRC");
+        });
+
+        it("enforces install code policy when required by the trust center", async () => {
+            const device64 = 0x00124b00ffee0303n;
+            const caps: MACCapabilities = {
+                alternatePANCoordinator: false,
+                deviceType: 0,
+                powerSource: 1,
+                rxOnWhenIdle: true,
+                securityCapability: true,
+                allocateAddress: true,
+            };
+
+            context.trustCenterPolicies.installCode = InstallCodePolicy.REQUIRED;
+            context.allowJoins(60, true);
+
+            const [statusWithoutCode] = await context.associate(undefined, device64, true, caps, true);
+
+            expect(statusWithoutCode).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
+
+            const code = Buffer.from("0102030405060708090a0b0c0d0e0f10", "hex");
+            const installCode = makeInstallCodeBuffer(code);
+            context.addInstallCode(device64, installCode);
+
+            const [statusWithCode, assignedAddress] = await context.associate(undefined, device64, true, caps, true);
+
+            expect(statusWithCode).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(assignedAddress).not.toStrictEqual(0xffff);
+            expect(context.getAppLinkKey(device64, context.netParams.eui64)).toBeDefined();
+        });
+
+        it("allows joins without install codes when policy is not required", async () => {
+            const device64 = 0x00124b00ffee0404n;
+            const caps: MACCapabilities = {
+                alternatePANCoordinator: false,
+                deviceType: 0,
+                powerSource: 1,
+                rxOnWhenIdle: true,
+                securityCapability: true,
+                allocateAddress: true,
+            };
+
+            context.trustCenterPolicies.installCode = InstallCodePolicy.NOT_REQUIRED;
+            context.allowJoins(60, true);
+
+            const [status, assignedAddress] = await context.associate(undefined, device64, true, caps, true);
+
+            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(assignedAddress).not.toStrictEqual(0xffff);
+        });
     });
 
     /**

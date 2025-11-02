@@ -8,7 +8,7 @@
  * - Length >= 128: two bytes with high bit set in first byte
  */
 
-import { ZigbeeConsts } from "src/zigbee/zigbee.js";
+import { ZigbeeConsts } from "../zigbee/zigbee.js";
 import type { AppLinkKeyStoreEntry, DeviceTableEntry, NetworkParameters, SourceRouteTableEntry } from "../zigbee-stack/stack-context.js";
 
 /**
@@ -344,7 +344,7 @@ export function readTLVs(buffer: Buffer, startOffset = 0, endOffset?: number): P
 export function readAppLinkKeyTLV(buffer: Buffer, startOffset: number): AppLinkKeyStoreEntry {
     const deviceA = buffer.readBigUInt64LE(startOffset);
     const deviceB = buffer.readBigUInt64LE(startOffset + 8);
-    const key = buffer.subarray(startOffset + 16, startOffset + 16 + ZigbeeConsts.SEC_KEYSIZE);
+    const key = Buffer.from(buffer.subarray(startOffset + 16, startOffset + 16 + ZigbeeConsts.SEC_KEYSIZE));
 
     return { deviceA, deviceB, key };
 }

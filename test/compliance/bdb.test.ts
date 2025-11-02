@@ -1093,14 +1093,4 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
             }
         });
     });
-
-    /**
-     * Base Device Behavior 16-02828-012 §8: Finding and Binding
-     * Devices MAY support finding and binding for commissioning.
-     */
-    describe.skip("Finding and Binding (BDB §8)", () => {
-        // TODO: Test identify mode for finding and binding
-        // TODO: Test binding table creation
-        // TODO: Test simple descriptor matching
-    });
 });
