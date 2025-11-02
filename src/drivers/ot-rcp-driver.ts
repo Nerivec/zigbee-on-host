@@ -28,19 +28,11 @@ import {
 } from "../spinel/spinel.js";
 import { SpinelStatus } from "../spinel/statuses.js";
 import { logger } from "../utils/logger.js";
-import { decodeMACFrameControl, decodeMACHeader, decodeMACPayload, MACFrameAddressMode, MACFrameType, ZigbeeMACConsts } from "../zigbee/mac.js";
 import { convertMaskToChannels, ZigbeeConsts } from "../zigbee/zigbee.js";
-import { decodeZigbeeAPSFrameControl, decodeZigbeeAPSHeader, decodeZigbeeAPSPayload, ZigbeeAPSDeliveryMode } from "../zigbee/zigbee-aps.js";
-import {
-    decodeZigbeeNWKFrameControl,
-    decodeZigbeeNWKHeader,
-    decodeZigbeeNWKPayload,
-    ZigbeeNWKConsts,
-    ZigbeeNWKFrameType,
-    ZigbeeNWKRouteDiscovery,
-} from "../zigbee/zigbee-nwk.js";
-import { decodeZigbeeNWKGPFrameControl, decodeZigbeeNWKGPHeader, decodeZigbeeNWKGPPayload, ZigbeeNWKGPFrameType } from "../zigbee/zigbee-nwkgp.js";
+import { ZigbeeAPSDeliveryMode } from "../zigbee/zigbee-aps.js";
+import { ZigbeeNWKRouteDiscovery } from "../zigbee/zigbee-nwk.js";
 import { APSHandler, type APSHandlerCallbacks } from "../zigbee-stack/aps-handler.js";
+import { processFrame } from "../zigbee-stack/frame.js";
 import { MACHandler, type MACHandlerCallbacks } from "../zigbee-stack/mac-handler.js";
 import { NWKGPHandler, type NWKGPHandlerCallbacks } from "../zigbee-stack/nwk-gp-handler.js";
 import { NWKHandler, type NWKHandlerCallbacks } from "../zigbee-stack/nwk-handler.js";
@@ -236,8 +228,6 @@ export class OTRCPDriver {
      * - Minimal allocations in critical paths
      */
     public async onStreamRawFrame(payload: Buffer, metadata: SpinelStreamRawMetadata | undefined): Promise<void> {
-        // HOT PATH: Early bail-out - discard MAC frames before network is started
-        /* @__INLINE__ */
         if (!this.#networkUp) {
             return;
         }
@@ -249,167 +239,16 @@ export class OTRCPDriver {
             });
         }
 
+        // Metadata logging
+        if (metadata) {
+            logger.debug(
+                () => `<--- SPINEL STREAM_RAW METADATA[rssi=${metadata.rssi} noiseFloor=${metadata.noiseFloor} flags=${metadata.flags}]`,
+                NS,
+            );
+        }
+
         try {
-            // HOT PATH: Decode frame control - inlined by V8 optimizer
-            /* @__INLINE__ */
-            const [macFCF, macFCFOutOffset] = decodeMACFrameControl(payload, 0);
-
-            // HOT PATH: Early bail-out - only process CMD and DATA frames
-            /* @__INLINE__ */
-            // TODO: process BEACON for PAN ID conflict detection?
-            if (macFCF.frameType !== MACFrameType.CMD && macFCF.frameType !== MACFrameType.DATA) {
-                logger.debug(() => `<-~- MAC Ignoring frame with type not CMD/DATA (${macFCF.frameType})`, NS);
-                return;
-            }
-
-            // HOT PATH: Decode MAC header
-            const [macHeader, macHOutOffset] = decodeMACHeader(payload, macFCFOutOffset, macFCF);
-
-            // Metadata logging (not in hot path, behind lazy lambda)
-            if (metadata) {
-                logger.debug(
-                    () => `<--- SPINEL STREAM_RAW METADATA[rssi=${metadata.rssi} noiseFloor=${metadata.noiseFloor} flags=${metadata.flags}]`,
-                    NS,
-                );
-            }
-
-            // HOT PATH: Decode MAC payload
-            const macPayload = decodeMACPayload(payload, macHOutOffset, macFCF, macHeader);
-
-            // HOT PATH: Process MAC commands (association, data request, etc.)
-            /* @__INLINE__ */
-            if (macFCF.frameType === MACFrameType.CMD) {
-                await this.macHandler.processCommand(macPayload, macHeader);
-
-                // done
-                return;
-            }
-
-            // HOT PATH: Early bail-out - validate PAN ID
-            /* @__INLINE__ */
-            if (macHeader.destinationPANId !== ZigbeeMACConsts.BCAST_PAN && macHeader.destinationPANId !== this.context.netParams.panId) {
-                logger.debug(() => `<-~- MAC Ignoring frame with mismatching PAN Id ${macHeader.destinationPANId}`, NS);
-                return;
-            }
-
-            // HOT PATH: Early bail-out - validate destination address
-            /* @__INLINE__ */
-            if (
-                macFCF.destAddrMode === MACFrameAddressMode.SHORT &&
-                macHeader.destination16! !== ZigbeeMACConsts.BCAST_ADDR &&
-                macHeader.destination16! !== ZigbeeConsts.COORDINATOR_ADDRESS
-            ) {
-                logger.debug(() => `<-~- MAC Ignoring frame intended for device ${macHeader.destination16}`, NS);
-                return;
-            }
-
-            // HOT PATH: Process payload if present
-            /* @__INLINE__ */
-            if (macPayload.byteLength > 0) {
-                // HOT PATH: Check protocol version - inlined bitwise operation
-                /* @__INLINE__ */
-                const protocolVersion = (macPayload.readUInt8(0) & ZigbeeNWKConsts.FCF_VERSION) >> 2;
-
-                // HOT PATH: Branch based on protocol version
-                /* @__INLINE__ */
-                if (protocolVersion === ZigbeeNWKConsts.VERSION_GREEN_POWER) {
-                    if (
-                        (macFCF.destAddrMode === MACFrameAddressMode.SHORT && macHeader.destination16 === ZigbeeMACConsts.BCAST_ADDR) ||
-                        macFCF.destAddrMode === MACFrameAddressMode.EXT
-                    ) {
-                        const [nwkGPFCF, nwkGPFCFOutOffset] = decodeZigbeeNWKGPFrameControl(macPayload, 0);
-                        const [nwkGPHeader, nwkGPHOutOffset] = decodeZigbeeNWKGPHeader(macPayload, nwkGPFCFOutOffset, nwkGPFCF);
-
-                        if (
-                            nwkGPHeader.frameControl.frameType !== ZigbeeNWKGPFrameType.DATA &&
-                            nwkGPHeader.frameControl.frameType !== ZigbeeNWKGPFrameType.MAINTENANCE
-                        ) {
-                            logger.debug(() => `<-~- NWKGP Ignoring frame with type ${nwkGPHeader.frameControl.frameType}`, NS);
-                            return;
-                        }
-
-                        // Delegate GP duplicate check to NWK GP handler
-                        if (this.nwkGPHandler.checkDuplicate(macHeader, nwkGPHeader)) {
-                            logger.debug(
-                                () =>
-                                    `<-~- NWKGP Ignoring duplicate frame macSeqNum=${macHeader.sequenceNumber} nwkGPFC=${nwkGPHeader.securityFrameCounter}`,
-                                NS,
-                            );
-                            return;
-                        }
-
-                        const nwkGPPayload = decodeZigbeeNWKGPPayload(
-                            macPayload,
-                            nwkGPHOutOffset,
-                            this.context.netParams.networkKey,
-                            macHeader.source64,
-                            nwkGPFCF,
-                            nwkGPHeader,
-                        );
-
-                        // Delegate GP frame processing to NWK GP handler
-                        this.nwkGPHandler.processFrame(
-                            nwkGPPayload,
-                            macHeader,
-                            nwkGPHeader,
-                            this.context.computeLQA(metadata?.rssi ?? this.context.rssiMin),
-                        );
-                    } else {
-                        logger.debug(() => `<-x- NWKGP Invalid frame addressing ${macFCF.destAddrMode} (${macHeader.destination16})`, NS);
-                        return;
-                    }
-                } else {
-                    const [nwkFCF, nwkFCFOutOffset] = decodeZigbeeNWKFrameControl(macPayload, 0);
-                    const [nwkHeader, nwkHOutOffset] = decodeZigbeeNWKHeader(macPayload, nwkFCFOutOffset, nwkFCF);
-
-                    if (
-                        macHeader.destination16 !== undefined &&
-                        macHeader.destination16 >= ZigbeeConsts.BCAST_MIN &&
-                        nwkHeader.source16 === ZigbeeConsts.COORDINATOR_ADDRESS
-                    ) {
-                        logger.debug(() => "<-~- NWK Ignoring frame from coordinator (broadcast loopback)", NS);
-                        return;
-                    }
-
-                    const sourceLQA = this.context.computeDeviceLQA(nwkHeader.source16, nwkHeader.source64, metadata?.rssi ?? this.context.rssiMin);
-                    const nwkPayload = decodeZigbeeNWKPayload(
-                        macPayload,
-                        nwkHOutOffset,
-                        undefined, // use pre-hashed this.context.netParams.networkKey,
-                        /* nwkHeader.frameControl.extendedSource ? nwkHeader.source64 : this.context.address16ToAddress64.get(nwkHeader.source16!) */
-                        nwkHeader.source64 ?? this.context.address16ToAddress64.get(nwkHeader.source16!),
-                        nwkFCF,
-                        nwkHeader,
-                    );
-
-                    if (nwkFCF.frameType === ZigbeeNWKFrameType.DATA) {
-                        const [apsFCF, apsFCFOutOffset] = decodeZigbeeAPSFrameControl(nwkPayload, 0);
-                        const [apsHeader, apsHOutOffset] = decodeZigbeeAPSHeader(nwkPayload, apsFCFOutOffset, apsFCF);
-
-                        if (apsHeader.frameControl.ackRequest && nwkHeader.source16 !== ZigbeeConsts.COORDINATOR_ADDRESS) {
-                            await this.apsHandler.sendACK(macHeader, nwkHeader, apsHeader);
-                        }
-
-                        const apsPayload = decodeZigbeeAPSPayload(
-                            nwkPayload,
-                            apsHOutOffset,
-                            undefined, // use pre-hashed this.context.netParams.tcKey,
-                            /* nwkHeader.frameControl.extendedSource ? nwkHeader.source64 : this.context.address16ToAddress64.get(nwkHeader.source16!) */
-                            nwkHeader.source64 ?? this.context.address16ToAddress64.get(nwkHeader.source16!),
-                            apsFCF,
-                            apsHeader,
-                        );
-
-                        // Delegate APS frame processing to APS handler
-                        await this.apsHandler.onZigbeeAPSFrame(apsPayload, macHeader, nwkHeader, apsHeader, sourceLQA);
-                    } else if (nwkFCF.frameType === ZigbeeNWKFrameType.CMD) {
-                        // Delegate NWK command processing to NWK handler
-                        await this.nwkHandler.processCommand(nwkPayload, macHeader, nwkHeader);
-                    } else if (nwkFCF.frameType === ZigbeeNWKFrameType.INTERPAN) {
-                        throw new Error("INTERPAN not supported");
-                    }
-                }
-            }
+            await processFrame(payload, this.context, this.macHandler, this.nwkHandler, this.nwkGPHandler, this.apsHandler, metadata?.rssi);
         } catch (error) {
             // TODO log or throw depending on error
             logger.error((error as Error).stack!, NS);

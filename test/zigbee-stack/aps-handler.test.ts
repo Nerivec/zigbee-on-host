@@ -618,7 +618,7 @@ describe("APS Handler", () => {
             const apsPayload = Buffer.from("test data");
             const lqa = 150;
 
-            await apsHandler.onZigbeeAPSFrame(apsPayload, macHeader, nwkHeader, apsHeader, lqa);
+            await apsHandler.processFrame(apsPayload, macHeader, nwkHeader, apsHeader, lqa);
 
             // Wait for setImmediate callback
             await new Promise((resolve) => setImmediate(resolve));
@@ -660,7 +660,7 @@ describe("APS Handler", () => {
             const apsPayload = Buffer.from("zdo request");
             const lqa = 150;
 
-            await apsHandler.onZigbeeAPSFrame(apsPayload, macHeader, nwkHeader, apsHeader, lqa);
+            await apsHandler.processFrame(apsPayload, macHeader, nwkHeader, apsHeader, lqa);
 
             expect(isZDOSpy).toHaveBeenCalled();
             expect(respondZDOSpy).toHaveBeenCalled();

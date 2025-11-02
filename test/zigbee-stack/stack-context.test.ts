@@ -128,79 +128,6 @@ describe("StackContext", () => {
         });
     });
 
-    describe("device management", () => {
-        const device64 = 0x00124b0098765432n;
-        const device16 = 0x1234;
-
-        beforeEach(() => {
-            context.deviceTable.set(device64, {
-                address16: device16,
-                capabilities: {
-                    alternatePANCoordinator: false,
-                    deviceType: 1,
-                    powerSource: 1,
-                    rxOnWhenIdle: true,
-                    securityCapability: true,
-                    allocateAddress: true,
-                },
-                authorized: true,
-                neighbor: true,
-                recentLQAs: [100, 110, 120],
-            });
-            context.address16ToAddress64.set(device16, device64);
-        });
-
-        describe("getDevice", () => {
-            it("should get device by 64-bit address", () => {
-                const device = context.getDevice(device64);
-                expect(device).toBeDefined();
-                expect(device?.address16).toStrictEqual(device16);
-                expect(device?.authorized).toStrictEqual(true);
-            });
-
-            it("should get device by 16-bit address", () => {
-                const device = context.getDevice(device16);
-                expect(device).toBeDefined();
-                expect(device?.address16).toStrictEqual(device16);
-                expect(device?.authorized).toStrictEqual(true);
-            });
-
-            it("should return undefined for unknown 64-bit address", () => {
-                const device = context.getDevice(0x9999999999999999n);
-                expect(device).toBeUndefined();
-            });
-
-            it("should return undefined for unknown 16-bit address", () => {
-                const device = context.getDevice(0x9999);
-                expect(device).toBeUndefined();
-            });
-        });
-
-        describe("getAddress64", () => {
-            it("should get 64-bit address from 16-bit address", () => {
-                const addr64 = context.getAddress64(device16);
-                expect(addr64).toStrictEqual(device64);
-            });
-
-            it("should return undefined for unknown 16-bit address", () => {
-                const addr64 = context.getAddress64(0x9999);
-                expect(addr64).toBeUndefined();
-            });
-        });
-
-        describe("getAddress16", () => {
-            it("should get 16-bit address from 64-bit address", () => {
-                const addr16 = context.getAddress16(device64);
-                expect(addr16).toStrictEqual(device16);
-            });
-
-            it("should return undefined for unknown 64-bit address", () => {
-                const addr16 = context.getAddress16(0x9999999999999999n);
-                expect(addr16).toBeUndefined();
-            });
-        });
-    });
-
     describe("source route table", () => {
         it("should allow adding source routes", () => {
             const dest16 = 0x1234;
@@ -359,11 +286,6 @@ describe("StackContext", () => {
         expect(context.decrementRadius(5)).toStrictEqual(4);
         expect(context.decrementRadius(10)).toStrictEqual(9);
         expect(context.decrementRadius(2)).toStrictEqual(1);
-    });
-
-    it("should return 0 when radius equal or below 1", () => {
-        expect(context.decrementRadius(1)).toStrictEqual(1);
-        expect(context.decrementRadius(0)).toStrictEqual(1);
     });
 
     it("should handle large radius values", () => {

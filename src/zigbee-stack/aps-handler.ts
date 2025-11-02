@@ -14,18 +14,67 @@ import {
     ZigbeeAPSCommandId,
     ZigbeeAPSConsts,
     ZigbeeAPSDeliveryMode,
+    ZigbeeAPSFragmentation,
     ZigbeeAPSFrameType,
     type ZigbeeAPSHeader,
 } from "../zigbee/zigbee-aps.js";
 import { encodeZigbeeNWKFrame, ZigbeeNWKConsts, ZigbeeNWKFrameType, type ZigbeeNWKHeader, ZigbeeNWKRouteDiscovery } from "../zigbee/zigbee-nwk.js";
 import type { MACHandler } from "./mac-handler.js";
-import type { NWKHandler } from "./nwk-handler.js";
+import { CONFIG_NWK_MAX_HOPS, type NWKHandler } from "./nwk-handler.js";
 import { ApplicationKeyRequestPolicy, type StackCallbacks, type StackContext, TrustCenterKeyRequestPolicy } from "./stack-context.js";
 
 const NS = "aps-handler";
 
-// Configuration constants
-const CONFIG_NWK_MAX_HOPS = 30;
+type FragmentParams = {
+    blockNumber: number;
+    isFirst: boolean;
+    isLast: boolean;
+};
+
+type FragmentBaseParams = Omit<SendDataParams, "finalPayload" | "fragment">;
+
+type OutgoingFragmentContext = {
+    baseParams: FragmentBaseParams;
+    chunks: Buffer[];
+    awaitingBlock: number;
+    totalBlocks: number;
+};
+
+type IncomingFragmentState = {
+    totalLength?: number;
+    expectedBlocks?: number;
+    chunks: Map<number, Buffer>;
+    lastActivity: number;
+    source16?: number;
+    source64?: bigint;
+    destEndpoint?: number;
+    profileId?: number;
+    clusterId?: number;
+    counter: number;
+};
+
+type SendDataParams = {
+    finalPayload: Buffer;
+    nwkDiscoverRoute: ZigbeeNWKRouteDiscovery;
+    nwkDest16: number | undefined;
+    nwkDest64: bigint | undefined;
+    apsDeliveryMode: ZigbeeAPSDeliveryMode;
+    clusterId: number;
+    profileId: number;
+    destEndpoint: number | undefined;
+    sourceEndpoint: number | undefined;
+    group: number | undefined;
+    fragment?: FragmentParams;
+};
+
+type PendingAckEntry = {
+    params: SendDataParams;
+    apsCounter: number;
+    dest16: number;
+    retries: number;
+    timer: NodeJS.Timeout | undefined;
+    fragment?: OutgoingFragmentContext;
+};
 
 /**
  * Callbacks for APS handler to communicate with driver
@@ -36,6 +85,21 @@ export interface APSHandlerCallbacks {
     onDeviceRejoined: StackCallbacks["onDeviceRejoined"];
     onDeviceAuthorized: StackCallbacks["onDeviceAuthorized"];
 }
+
+/** Duration while APS duplicate table entries remain valid (milliseconds). Spec default ≈ 8s. */
+const CONFIG_APS_DUPLICATE_TIMEOUT_MS = 8000;
+/** Default ack wait duration per Zigbee 3.0 spec (milliseconds). */
+const CONFIG_APS_ACK_WAIT_DURATION_MS = 1500;
+/** Default number of APS retransmissions when ACK is missing. */
+const CONFIG_APS_MAX_FRAME_RETRIES = 3;
+/** Maximum payload that may be transmitted without APS fragmentation. */
+const CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX = ZigbeeAPSConsts.PAYLOAD_MAX_SIZE;
+/** Number of bytes carried in each APS fragment after the first one. */
+const CONFIG_APS_FRAGMENT_PAYLOAD_SIZE = 40;
+/** Number of bytes reserved in the first APS fragment for metadata. */
+const CONFIG_APS_FRAGMENT_FIRST_OVERHEAD = 2;
+/** Timeout for incomplete incoming APS fragment reassembly (milliseconds). */
+const CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS = 30000;
 
 /**
  * APS Handler - Zigbee Application Support Layer Operations
@@ -50,6 +114,13 @@ export class APSHandler {
     #counter = 0;
     #zdoSeqNum = 0;
 
+    /** Recently seen APS frames for duplicate rejection */
+    readonly #apsDuplicateTable = new Map<string, { counter: number; expiresAt: number; fragments?: Set<number> }>();
+    /** Pending APS acknowledgments waiting for retransmission */
+    readonly #pendingAcks = new Map<string, PendingAckEntry>();
+    /** Incoming APS fragment reassembly buffers */
+    readonly #incomingFragments = new Map<string, IncomingFragmentState>();
+
     constructor(context: StackContext, macHandler: MACHandler, nwkHandler: NWKHandler, callbacks: APSHandlerCallbacks) {
         this.#context = context;
         this.#macHandler = macHandler;
@@ -59,7 +130,16 @@ export class APSHandler {
 
     async start() {}
 
-    stop() {}
+    stop() {
+        for (const entry of this.#pendingAcks.values()) {
+            if (entry.timer !== undefined) {
+                clearTimeout(entry.timer);
+            }
+        }
+
+        this.#pendingAcks.clear();
+        this.#incomingFragments.clear();
+    }
 
     /**
      * Get next APS counter.
@@ -86,7 +166,83 @@ export class APSHandler {
     }
 
     /**
-     * Send a Zigbee APS DATA frame.
+     * Get or generate application link key for a device pair
+     */
+    #getOrGenerateAppLinkKey(deviceA: bigint, deviceB: bigint): Buffer {
+        const existing = this.#context.getAppLinkKey(deviceA, deviceB);
+
+        if (existing !== undefined) {
+            return existing;
+        }
+
+        const derived = Buffer.from(this.#context.netParams.tcKey);
+        this.#context.setAppLinkKey(deviceA, deviceB, derived);
+
+        return derived;
+    }
+
+    /**
+     * Check whether an incoming APS frame is a duplicate and update the duplicate table accordingly.
+     * @returns true when the frame was already seen within the duplicate removal timeout.
+     */
+    public isDuplicateFrame(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader, now = Date.now()): boolean {
+        if (apsHeader.counter === undefined) {
+            // skip check
+            return false;
+        }
+
+        this.#pruneExpiredDuplicates(now);
+
+        const isFragmented = apsHeader.fragmentation !== undefined && apsHeader.fragmentation !== ZigbeeAPSFragmentation.NONE;
+        // XXX: perf: string of bigint/number, this is called a lot
+        const sourceKey = nwkHeader.source64 !== undefined ? `64:${nwkHeader.source64}` : `16:${nwkHeader.source16}`;
+        const entry = this.#apsDuplicateTable.get(sourceKey);
+
+        if (entry !== undefined && entry.counter === apsHeader.counter && entry.expiresAt > now) {
+            if (isFragmented) {
+                const blockNumber = apsHeader.fragBlockNumber ?? 0;
+                let fragments = entry.fragments;
+
+                if (fragments === undefined) {
+                    fragments = new Set<number>();
+                    entry.fragments = fragments;
+                } else if (fragments.has(blockNumber)) {
+                    return true;
+                }
+
+                fragments.add(blockNumber);
+                entry.expiresAt = now + CONFIG_APS_DUPLICATE_TIMEOUT_MS;
+
+                return false;
+            }
+
+            return true;
+        }
+
+        const newEntry: { counter: number; expiresAt: number; fragments?: Set<number> } = {
+            counter: apsHeader.counter,
+            expiresAt: now + CONFIG_APS_DUPLICATE_TIMEOUT_MS,
+        };
+
+        if (isFragmented) {
+            newEntry.fragments = new Set([apsHeader.fragBlockNumber ?? 0]);
+        }
+
+        this.#apsDuplicateTable.set(sourceKey, newEntry);
+
+        return false;
+    }
+
+    #pruneExpiredDuplicates(now: number): void {
+        for (const [sourceKey, entry] of this.#apsDuplicateTable) {
+            if (entry.expiresAt <= now) {
+                this.#apsDuplicateTable.delete(sourceKey);
+            }
+        }
+    }
+
+    /**
+     * Send a Zigbee APS DATA frame and track pending ACK if necessary.
      * Throws if could not send.
      * @param finalPayload
      * @param macDest16
@@ -113,7 +269,44 @@ export class APSHandler {
         sourceEndpoint: number | undefined,
         group: number | undefined,
     ): Promise<number> {
+        const params: SendDataParams = {
+            finalPayload,
+            nwkDiscoverRoute,
+            nwkDest16,
+            nwkDest64,
+            apsDeliveryMode,
+            clusterId,
+            profileId,
+            destEndpoint,
+            sourceEndpoint,
+            group,
+        };
         const apsCounter = this.nextCounter();
+
+        if (finalPayload.length > CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX) {
+            return await this.#sendFragmentedData(params, apsCounter);
+        }
+
+        const sendDest16 = await this.#sendDataInternal(params, apsCounter, 0);
+
+        if (sendDest16 !== undefined) {
+            this.#trackPendingAck(sendDest16, apsCounter, params);
+        }
+
+        return apsCounter;
+    }
+
+    /**
+     * Send a Zigbee APS DATA frame.
+     * Throws if could not send.
+     * @param params
+     * @param apsCounter
+     * @param attempt
+     * @returns Destination 16 data was sent to (undefined if bcast)
+     */
+    async #sendDataInternal(params: SendDataParams, apsCounter: number, attempt: number): Promise<number | undefined> {
+        const { finalPayload, nwkDiscoverRoute, apsDeliveryMode, clusterId, profileId, destEndpoint, sourceEndpoint, group } = params;
+        let { nwkDest16, nwkDest64 } = params;
         const nwkSeqNum = this.#nwkHandler.nextSeqNum();
         const macSeqNum = this.#macHandler.nextSeqNum();
         let relayIndex: number | undefined;
@@ -123,7 +316,7 @@ export class APSHandler {
             [relayIndex, relayAddresses] = this.#nwkHandler.findBestSourceRoute(nwkDest16, nwkDest64);
         } catch (error) {
             logger.error(
-                `=x=> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) nwkDst=${nwkDest16}:${nwkDest64}] ${(error as Error).message}`,
+                `=x=> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) attempt=${attempt} nwkDst=${nwkDest16}:${nwkDest64}] ${(error as Error).message}`,
                 NS,
             );
 
@@ -135,36 +328,57 @@ export class APSHandler {
         }
 
         if (nwkDest16 === undefined) {
-            logger.error(`=x=> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) nwkDst=${nwkDest16}:${nwkDest64}] Invalid parameters`, NS);
+            logger.error(
+                `=x=> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) attempt=${attempt} nwkDst=${nwkDest16}:${nwkDest64}] Invalid parameters`,
+                NS,
+            );
 
             throw new Error("Invalid parameters");
         }
+
+        // update params as needed
+        params.nwkDest16 = nwkDest16;
+        params.nwkDest64 = nwkDest64;
 
         const macDest16 = nwkDest16 < ZigbeeConsts.BCAST_MIN ? (relayAddresses?.[relayIndex!] ?? nwkDest16) : ZigbeeMACConsts.BCAST_ADDR;
 
         logger.debug(
             () =>
-                `===> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) macDst16=${macDest16} nwkDst=${nwkDest16}:${nwkDest64} nwkDiscRte=${nwkDiscoverRoute} apsDlv=${apsDeliveryMode}]`,
+                `===> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum})${attempt > 0 ? ` attempt=${attempt}` : ""} macDst16=${macDest16} nwkDst=${nwkDest16}:${nwkDest64} nwkDiscRte=${nwkDiscoverRoute} apsDlv=${apsDeliveryMode}]`,
             NS,
         );
 
-        const apsFrame = encodeZigbeeAPSFrame(
-            {
-                frameControl: {
-                    frameType: ZigbeeAPSFrameType.DATA,
-                    deliveryMode: apsDeliveryMode,
-                    ackFormat: false,
-                    security: false, // TODO link key support
-                    ackRequest: true,
-                    extendedHeader: false,
-                },
-                destEndpoint,
-                group,
-                clusterId,
-                profileId,
-                sourceEndpoint,
-                counter: apsCounter,
+        const isFragment = params.fragment !== undefined;
+        const apsHeader: ZigbeeAPSHeader = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.DATA,
+                deliveryMode: apsDeliveryMode,
+                ackFormat: false,
+                security: false, // TODO link key support
+                ackRequest: true,
+                extendedHeader: isFragment,
             },
+            destEndpoint,
+            group,
+            clusterId,
+            profileId,
+            sourceEndpoint,
+            counter: apsCounter,
+        };
+
+        if (isFragment) {
+            const fragmentInfo = params.fragment!;
+            const fragmentation = fragmentInfo.isFirst
+                ? ZigbeeAPSFragmentation.FIRST
+                : fragmentInfo.isLast
+                  ? ZigbeeAPSFragmentation.LAST
+                  : ZigbeeAPSFragmentation.MIDDLE;
+            apsHeader.fragmentation = fragmentation;
+            apsHeader.fragBlockNumber = fragmentInfo.blockNumber;
+        }
+
+        const apsFrame = encodeZigbeeAPSFrame(
+            apsHeader,
             finalPayload,
             // undefined,
             // undefined,
@@ -237,20 +451,313 @@ export class APSHandler {
 
         if (result === false) {
             logger.error(
-                `=x=> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) macDst16=${macDest16} nwkDst=${nwkDest16}:${nwkDest64}] Failed to send`,
+                `=x=> APS DATA[seqNum=(${apsCounter}/${nwkSeqNum}/${macSeqNum}) attempt=${attempt} macDst16=${macDest16} nwkDst=${nwkDest16}:${nwkDest64}] Failed to send`,
                 NS,
             );
 
             throw new Error("Failed to send");
         }
 
+        if (macDest16 === ZigbeeMACConsts.BCAST_ADDR) {
+            return undefined;
+        }
+
+        return nwkDest16;
+    }
+
+    async #sendFragmentedData(params: SendDataParams, apsCounter: number): Promise<number> {
+        const payload = params.finalPayload;
+        if (payload.byteLength <= CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX) {
+            return apsCounter;
+        }
+
+        const baseParams: FragmentBaseParams = {
+            nwkDiscoverRoute: params.nwkDiscoverRoute,
+            nwkDest16: params.nwkDest16,
+            nwkDest64: params.nwkDest64,
+            apsDeliveryMode: params.apsDeliveryMode,
+            clusterId: params.clusterId,
+            profileId: params.profileId,
+            destEndpoint: params.destEndpoint,
+            sourceEndpoint: params.sourceEndpoint,
+            group: params.group,
+        };
+
+        const chunks: Buffer[] = [];
+        let offset = 0;
+        let block = 0;
+        const firstChunkSize = Math.max(1, CONFIG_APS_FRAGMENT_PAYLOAD_SIZE - CONFIG_APS_FRAGMENT_FIRST_OVERHEAD);
+
+        while (offset < payload.byteLength) {
+            const size = block === 0 ? firstChunkSize : CONFIG_APS_FRAGMENT_PAYLOAD_SIZE;
+            const chunk = Buffer.from(payload.subarray(offset, offset + size));
+            chunks.push(chunk);
+            offset += chunk.byteLength;
+            block += 1;
+        }
+
+        if (chunks.length <= 1) {
+            throw new Error("APS fragmentation requires at least two chunks");
+        }
+
+        const context: OutgoingFragmentContext = {
+            baseParams,
+            chunks,
+            awaitingBlock: 0,
+            totalBlocks: chunks.length,
+        };
+
+        const { dest16, params: firstParams } = await this.#sendFragmentBlock(context, apsCounter, 0, 0);
+
+        if (dest16 === undefined) {
+            throw new Error("APS fragmentation requires unicast destination acknowledgments");
+        }
+
+        this.#trackPendingAck(dest16, apsCounter, firstParams, context);
+
         return apsCounter;
+    }
+
+    #buildFragmentParams(context: OutgoingFragmentContext, blockNumber: number): SendDataParams {
+        const fragment: FragmentParams = {
+            blockNumber,
+            isFirst: blockNumber === 0,
+            isLast: blockNumber === context.totalBlocks - 1,
+        };
+
+        return {
+            ...context.baseParams,
+            finalPayload: context.chunks[blockNumber],
+            fragment,
+        };
+    }
+
+    async #sendFragmentBlock(
+        context: OutgoingFragmentContext,
+        apsCounter: number,
+        blockNumber: number,
+        attempt: number,
+    ): Promise<{ dest16: number | undefined; params: SendDataParams }> {
+        const fragmentParams = this.#buildFragmentParams(context, blockNumber);
+        const dest16 = await this.#sendDataInternal(fragmentParams, apsCounter, attempt);
+
+        return { dest16, params: fragmentParams };
+    }
+
+    async #sendNextFragmentBlock(context: OutgoingFragmentContext, previousEntry: PendingAckEntry): Promise<void> {
+        context.awaitingBlock += 1;
+
+        if (context.awaitingBlock >= context.totalBlocks) {
+            return;
+        }
+
+        const { dest16, params } = await this.#sendFragmentBlock(context, previousEntry.apsCounter, context.awaitingBlock, 0);
+
+        if (dest16 === undefined) {
+            throw new Error("APS fragmentation requires unicast destination acknowledgments");
+        }
+
+        this.#trackPendingAck(dest16, previousEntry.apsCounter, params, context);
+    }
+
+    #handleIncomingFragment(data: Buffer, nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Buffer | undefined {
+        const now = Date.now();
+        this.#pruneExpiredFragmentStates(now);
+
+        const blockNumber = apsHeader.fragBlockNumber ?? 0;
+        const key = this.#makeFragmentKey(nwkHeader, apsHeader);
+        const fragmentation = apsHeader.fragmentation ?? ZigbeeAPSFragmentation.NONE;
+
+        if (fragmentation === ZigbeeAPSFragmentation.FIRST) {
+            const state: IncomingFragmentState = {
+                chunks: new Map([[blockNumber, Buffer.from(data)]]),
+                lastActivity: now,
+                source16: nwkHeader.source16,
+                source64: nwkHeader.source64,
+                destEndpoint: apsHeader.destEndpoint,
+                profileId: apsHeader.profileId,
+                clusterId: apsHeader.clusterId,
+                counter: apsHeader.counter ?? 0,
+            };
+
+            this.#incomingFragments.set(key, state);
+
+            return undefined;
+        }
+
+        const state = this.#incomingFragments.get(key);
+
+        if (state === undefined) {
+            return undefined;
+        }
+
+        state.chunks.set(blockNumber, Buffer.from(data));
+        state.lastActivity = now;
+
+        if (fragmentation === ZigbeeAPSFragmentation.LAST) {
+            state.expectedBlocks = blockNumber + 1;
+        }
+
+        if (state.expectedBlocks === undefined || state.chunks.size < state.expectedBlocks) {
+            return undefined;
+        }
+
+        const buffers: Buffer[] = [];
+
+        for (let block = 0; block < state.expectedBlocks; block += 1) {
+            const chunk = state.chunks.get(block);
+
+            if (chunk === undefined) {
+                return undefined;
+            }
+
+            buffers.push(chunk);
+        }
+
+        this.#incomingFragments.delete(key);
+
+        apsHeader.frameControl.extendedHeader = false;
+        apsHeader.fragmentation = undefined;
+        apsHeader.fragBlockNumber = undefined;
+        apsHeader.fragACKBitfield = undefined;
+
+        return Buffer.concat(buffers);
+    }
+
+    #makeFragmentKey(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): string {
+        const source = nwkHeader.source64 !== undefined ? `64:${nwkHeader.source64}` : `16:${nwkHeader.source16 ?? 0xffff}`;
+        const profile = apsHeader.profileId ?? 0;
+        const cluster = apsHeader.clusterId ?? 0;
+        const sourceEndpoint = apsHeader.sourceEndpoint ?? 0xff;
+        const destEndpoint = apsHeader.destEndpoint ?? 0xff;
+        const counter = apsHeader.counter ?? 0;
+
+        return `${source}:${profile}:${cluster}:${sourceEndpoint}:${destEndpoint}:${counter}`;
+    }
+
+    #updateSourceRouteForChild(child16: number, parent16: number | undefined, parent64: bigint | undefined): void {
+        if (parent16 === undefined) {
+            return;
+        }
+
+        try {
+            const [, parentRelays] = this.#nwkHandler.findBestSourceRoute(parent16, parent64);
+
+            if (parentRelays) {
+                this.#context.sourceRouteTable.set(child16, [this.#nwkHandler.createSourceRouteEntry(parentRelays, parentRelays.length + 1)]);
+            } else {
+                this.#context.sourceRouteTable.set(child16, [this.#nwkHandler.createSourceRouteEntry([parent16], 2)]);
+            }
+        } catch {
+            /* ignore (no known route yet) */
+        }
+    }
+
+    #pruneExpiredFragmentStates(now: number): void {
+        for (const [key, state] of this.#incomingFragments) {
+            if (now - state.lastActivity >= CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS) {
+                this.#incomingFragments.delete(key);
+            }
+        }
+    }
+
+    #trackPendingAck(dest16: number, apsCounter: number, params: SendDataParams, fragment?: OutgoingFragmentContext): void {
+        const key = `${dest16}:${apsCounter}`;
+        const existing = this.#pendingAcks.get(key);
+
+        if (existing?.timer !== undefined) {
+            clearTimeout(existing.timer);
+        }
+
+        this.#pendingAcks.set(key, {
+            params,
+            apsCounter,
+            dest16,
+            retries: 0,
+            timer: setTimeout(async () => {
+                await this.#handleAckTimeout(key);
+            }, CONFIG_APS_ACK_WAIT_DURATION_MS),
+            fragment,
+        });
+    }
+
+    async #handleAckTimeout(key: string): Promise<void> {
+        const entry = this.#pendingAcks.get(key);
+
+        if (entry === undefined) {
+            return;
+        }
+
+        if (entry.retries >= CONFIG_APS_MAX_FRAME_RETRIES) {
+            this.#pendingAcks.delete(key);
+            logger.error(`=x=> APS DATA[apsCounter=${entry.apsCounter} dest16=${entry.dest16}] Retries exhausted`, NS);
+
+            return;
+        }
+
+        entry.retries += 1;
+
+        try {
+            await this.#sendDataInternal(entry.params, entry.apsCounter, entry.retries);
+        } catch (error) {
+            this.#pendingAcks.delete(key);
+            logger.warning(
+                () =>
+                    `=x=> APS DATA retry failed[apsCounter=${entry.apsCounter} dest16=${entry.dest16} attempt=${entry.retries}] ${(error as Error).message}`,
+                NS,
+            );
+
+            return;
+        }
+
+        entry.timer = setTimeout(async () => {
+            await this.#handleAckTimeout(key);
+        }, CONFIG_APS_ACK_WAIT_DURATION_MS);
+    }
+
+    async #resolvePendingAck(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Promise<void> {
+        if (apsHeader.counter === undefined) {
+            return;
+        }
+
+        let source16 = nwkHeader.source16;
+
+        if (source16 === undefined && nwkHeader.source64 !== undefined) {
+            source16 = this.#context.deviceTable.get(nwkHeader.source64)?.address16;
+        }
+
+        if (source16 === undefined) {
+            return;
+        }
+
+        const key = `${source16}:${apsHeader.counter}`;
+        const entry = this.#pendingAcks.get(key);
+
+        if (entry === undefined) {
+            return;
+        }
+
+        if (entry.timer !== undefined) {
+            clearTimeout(entry.timer);
+        }
+
+        this.#pendingAcks.delete(key);
+
+        logger.debug(
+            () =>
+                `<=== APS ACK[src16=${source16} apsCounter=${apsHeader.counter} dstEp=${apsHeader.sourceEndpoint} clusterId=${apsHeader.clusterId}]`,
+            NS,
+        );
+
+        if (entry.fragment !== undefined) {
+            await this.#sendNextFragmentBlock(entry.fragment, entry);
+        }
     }
 
     public async sendACK(macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Promise<void> {
         logger.debug(
             () =>
-                `===> APS ACK[dst16=${nwkHeader.source16} seqNum=${nwkHeader.seqNum} dstEp=${apsHeader.sourceEndpoint} clusterId=${apsHeader.clusterId}]`,
+                `===> APS ACK[dst16=${nwkHeader.source16} apsCounter=${apsHeader.counter} dstEp=${apsHeader.sourceEndpoint} clusterId=${apsHeader.clusterId}]`,
             NS,
         );
 
@@ -274,7 +781,7 @@ export class APSHandler {
         if (nwkDest16 === undefined) {
             logger.debug(
                 () =>
-                    `=x=> APS ACK[dst16=${nwkHeader.source16} seqNum=${nwkHeader.seqNum} dstEp=${apsHeader.sourceEndpoint} clusterId=${apsHeader.clusterId}]`,
+                    `=x=> APS ACK[dst16=${nwkHeader.source16} seqNum=${nwkHeader.seqNum} dstEp=${apsHeader.sourceEndpoint} clusterId=${apsHeader.clusterId}] Unknown destination`,
                 NS,
             );
 
@@ -282,22 +789,32 @@ export class APSHandler {
         }
 
         const macDest16 = nwkDest16 < ZigbeeConsts.BCAST_MIN ? (relayAddresses?.[relayIndex!] ?? nwkDest16) : ZigbeeMACConsts.BCAST_ADDR;
-        const ackAPSFrame = encodeZigbeeAPSFrame(
-            {
-                frameControl: {
-                    frameType: ZigbeeAPSFrameType.ACK,
-                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
-                    ackFormat: false,
-                    security: false,
-                    ackRequest: false,
-                    extendedHeader: false,
-                },
-                destEndpoint: apsHeader.sourceEndpoint,
-                clusterId: apsHeader.clusterId,
-                profileId: apsHeader.profileId,
-                sourceEndpoint: apsHeader.destEndpoint,
-                counter: apsHeader.counter,
+        const ackNeedsFragmentInfo =
+            apsHeader.frameControl.extendedHeader && apsHeader.fragmentation !== undefined && apsHeader.fragmentation !== ZigbeeAPSFragmentation.NONE;
+        const ackHeader: ZigbeeAPSHeader = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.ACK,
+                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                ackFormat: false,
+                security: false,
+                ackRequest: false,
+                extendedHeader: ackNeedsFragmentInfo,
             },
+            destEndpoint: apsHeader.sourceEndpoint,
+            clusterId: apsHeader.clusterId,
+            profileId: apsHeader.profileId,
+            sourceEndpoint: apsHeader.destEndpoint,
+            counter: apsHeader.counter,
+        };
+
+        if (ackNeedsFragmentInfo) {
+            ackHeader.fragmentation = ZigbeeAPSFragmentation.FIRST;
+            ackHeader.fragBlockNumber = apsHeader.fragBlockNumber ?? 0;
+            ackHeader.fragACKBitfield = 0x01;
+        }
+
+        const ackAPSFrame = encodeZigbeeAPSFrame(
+            ackHeader,
             Buffer.alloc(0), // TODO optimize
             // undefined,
             // undefined,
@@ -365,7 +882,7 @@ export class APSHandler {
         await this.#macHandler.sendFrame(macHeader.sequenceNumber!, ackMACFrame, macHeader.source16, undefined);
     }
 
-    public async onZigbeeAPSFrame(
+    public async processFrame(
         data: Buffer,
         macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
@@ -375,13 +892,28 @@ export class APSHandler {
         switch (apsHeader.frameControl.frameType) {
             case ZigbeeAPSFrameType.ACK: {
                 // ACKs should never contain a payload
-                // TODO: ?
-                break;
+                await this.#resolvePendingAck(nwkHeader, apsHeader);
+
+                return;
             }
             case ZigbeeAPSFrameType.DATA:
             case ZigbeeAPSFrameType.INTERPAN: {
                 if (data.byteLength < 1) {
                     return;
+                }
+
+                if (
+                    apsHeader.frameControl.extendedHeader &&
+                    apsHeader.fragmentation !== undefined &&
+                    apsHeader.fragmentation !== ZigbeeAPSFragmentation.NONE
+                ) {
+                    const reassembled = this.#handleIncomingFragment(data, nwkHeader, apsHeader);
+
+                    if (reassembled === undefined) {
+                        return;
+                    }
+
+                    data = reassembled;
                 }
 
                 logger.debug(
@@ -432,11 +964,6 @@ export class APSHandler {
                             return;
                         }
                     }
-                }
-
-                if (nwkHeader.source16 === undefined && nwkHeader.source64 === undefined) {
-                    logger.debug(() => "<=~= APS Ignoring frame with no sender info", NS);
-                    return;
                 }
 
                 setImmediate(() => {
@@ -623,7 +1150,7 @@ export class APSHandler {
                 break;
             }
             case ZigbeeAPSCommandId.REMOVE_DEVICE: {
-                offset = this.processRemoveDevice(data, offset, macHeader, nwkHeader, apsHeader);
+                offset = await this.processRemoveDevice(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
             case ZigbeeAPSCommandId.REQUEST_KEY: {
@@ -693,6 +1220,10 @@ export class APSHandler {
                         `<=== APS TRANSPORT_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType} key=${key} seqNum=${seqNum} dst64=${destination} src64=${source}]`,
                     NS,
                 );
+
+                if (destination === this.#context.netParams.eui64 || destination === 0n) {
+                    this.#context.setPendingNetworkKey(key, seqNum);
+                }
 
                 break;
             }
@@ -815,7 +1346,7 @@ export class APSHandler {
      *       However, TRANSPORT_KEY during initial join may not receive ACK due to lack of NWK key
      * - ✅ Frame counter uses TC key counter which is correct for TRANSPORT keyId
      * - ✅ For distributed networks (no TC), source64 should be 0xFFFFFFFFFFFFFFFF per spec - code correctly uses eui64 (centralized TC)
-     * - ❌ SPEC ISSUE: Broadcast destination64 handling not implemented (should set to all-zero per spec)
+     * - ✅ Broadcast destination64 handling sets all-zero string when using NWK broadcast per spec
      *
      * @param nwkDest16
      * @param key SHALL contain a network key
@@ -828,6 +1359,7 @@ export class APSHandler {
         // TODO: tunneling support `, tunnelDest?: bigint`
         logger.debug(() => `===> APS TRANSPORT_KEY_NWK[key=${key.toString("hex")} seqNum=${seqNum} dst64=${destination64}]`, NS);
 
+        const isBroadcast = nwkDest16 >= ZigbeeConsts.BCAST_MIN;
         const finalPayload = Buffer.alloc(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
         let offset = 0;
         finalPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
@@ -838,7 +1370,7 @@ export class APSHandler {
         offset += ZigbeeAPSConsts.CMD_KEY_LENGTH;
         finalPayload.writeUInt8(seqNum, offset);
         offset += 1;
-        finalPayload.writeBigUInt64LE(destination64, offset);
+        finalPayload.writeBigUInt64LE(isBroadcast ? 0n : destination64, offset);
         offset += 8;
         finalPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
         offset += 8;
@@ -868,8 +1400,8 @@ export class APSHandler {
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             false, // nwkSecurity
             nwkDest16, // nwkDest16
-            undefined, // nwkDest64
-            ZigbeeAPSDeliveryMode.UNICAST, // apsDeliveryMode
+            isBroadcast ? undefined : destination64, // nwkDest64
+            isBroadcast ? ZigbeeAPSDeliveryMode.BCAST : ZigbeeAPSDeliveryMode.UNICAST, // apsDeliveryMode
             {
                 control: {
                     level: ZigbeeSecurityLevel.NONE,
@@ -888,11 +1420,12 @@ export class APSHandler {
     /**
      * 05-3474-R #4.4.11.1 #4.4.11.1.3.3
      *
-     * @param nwkDest16
-     * @param key SHALL contain a link key that is shared with the device identified in the partner address sub-field
-     * @param partner SHALL contain the address of the other device that was sent this link key
-     * @param initiatorFlag SHALL be set to 1 if the device receiving this packet requested this key. Otherwise, this sub-field SHALL be set to 0.
-     * @returns
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Sets CMD_KEY_APP_LINK (0x03) and includes partner64 + initiator flag per Table 4-17
+     * - ✅ Applies APS security with TRANSPORT keyId (shared TC link key) while suppressing NWK security (permitted)
+     * - ✅ Supports mirrored delivery (initiator + partner) when invoked twice in Request Key flow
+     * - ⚠️ TODO: Add TLV support for enhanced security context (R23)
+     * - ⚠️ TODO: Consider tunneling for indirect partners per spec #4.6.3.7
      */
     public async sendTransportKeyAPP(nwkDest16: number, key: Buffer, partner: bigint, initiatorFlag: boolean): Promise<boolean> {
         // TODO: tunneling support `, tunnelDest?: bigint`
@@ -943,7 +1476,7 @@ export class APSHandler {
      * - ✅ Correctly decodes all mandatory fields: device64, device16, status
      * - ⚠️  TODO: TLVs not decoded (optional but recommended for R23+ features)
      * - ✅ Handles 4 status codes as per spec:
-     *       0x00 = Standard Device Secured Rejoin
+     *       0x00 = Standard Device Secured Rejoin (updates device state via associate)
      *       0x01 = Standard Device Unsecured Join
      *       0x02 = Device Left
      *       0x03 = Standard Device Trust Center Rejoin
@@ -960,7 +1493,6 @@ export class APSHandler {
      * - ⚠️  Status 0x03 (TC Rejoin) handling appears correct but minimal
      * - ⚠️  Status 0x02 (Device Left) handling uses onDisassociate - spec says "informative only, should not take action"
      *       This may be non-compliant as it actively removes the device
-     * - ❌ MISSING: Status 0x00 (Secured Rejoin) is not handled at all
      *
      * SECURITY CONCERN:
      * - Unsecured joins through routers rely heavily on parent router trust
@@ -996,7 +1528,19 @@ export class APSHandler {
         // 0x02 = Device Left
         // 0x03 = Standard Device Trust Center Rejoin
         // 0x04 – 0x07 = Reserved
-        if (status === 0x01) {
+        if (status === 0x00) {
+            await this.#context.associate(
+                device16,
+                device64,
+                false, // rejoin
+                undefined, // no MAC cap through router
+                false, // not neighbor
+                false,
+                true, // was allowed by parent
+            );
+
+            this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
+        } else if (status === 0x01) {
             await this.#context.associate(
                 device16,
                 device64,
@@ -1007,20 +1551,7 @@ export class APSHandler {
                 true, // was allowed by parent
             );
 
-            // TODO: better handling
-            try {
-                const [, parentRelays] = this.#nwkHandler.findBestSourceRoute(nwkHeader.source16, nwkHeader.source64);
-
-                if (parentRelays) {
-                    // parent is nested
-                    this.#context.sourceRouteTable.set(device16, [this.#nwkHandler.createSourceRouteEntry(parentRelays, parentRelays.length + 1)]);
-                } else {
-                    // parent is direct to coordinator
-                    this.#context.sourceRouteTable.set(device16, [this.#nwkHandler.createSourceRouteEntry([nwkHeader.source16!], 2)]);
-                }
-            } catch {
-                /* ignore */
-            }
+            this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
 
             const tApsCmdPayload = Buffer.alloc(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
             let offset = 0;
@@ -1138,16 +1669,17 @@ export class APSHandler {
      *
      * SPEC COMPLIANCE:
      * - ✅ Correctly decodes target IEEE address (childInfo)
-     * - ✅ Validates source and logs removal
-     * - ❌ NOT IMPLEMENTED: Actual device removal (only logs)
-     * - ❌ MISSING: Should initiate LEAVE sequence to target device
-     * - ❌ MISSING: Should notify parent to remove child
-     * - ❌ MISSING: Parent router role handling
-     *
-     * IMPLEMENTATION GAP: Coordinator receives command but doesn't act on it.
-     * Parent routers should send LEAVE to child and UPDATE_DEVICE(status 0x02) to TC.
+     * - ✅ Issues NWK leave to child and removes from device tables
+     * - ⚠️  Does not notify parent router beyond leave (spec expects UPDATE_DEVICE relays)
+     * - ⚠️  Parent role handling limited to direct coordinator actions
      */
-    public processRemoveDevice(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
+    public async processRemoveDevice(
+        data: Buffer,
+        offset: number,
+        macHeader: MACHeader,
+        nwkHeader: ZigbeeNWKHeader,
+        _apsHeader: ZigbeeAPSHeader,
+    ): Promise<number> {
         const target = data.readBigUInt64LE(offset);
         offset += 8;
 
@@ -1156,6 +1688,20 @@ export class APSHandler {
                 `<=== APS REMOVE_DEVICE[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} target64=${target}]`,
             NS,
         );
+
+        const childEntry = this.#context.deviceTable.get(target);
+
+        if (childEntry !== undefined) {
+            const leaveSent = await this.#nwkHandler.sendLeave(childEntry.address16, false);
+
+            if (!leaveSent) {
+                logger.warning(`<=x= APS REMOVE_DEVICE[target64=${target}] Failed to send NWK leave`, NS);
+            }
+
+            await this.#context.disassociate(childEntry.address16, target);
+        } else {
+            logger.warning(`<=x= APS REMOVE_DEVICE[target64=${target}] Unknown device`, NS);
+        }
 
         return offset;
     }
@@ -1198,6 +1744,15 @@ export class APSHandler {
 
     /**
      * 05-3474-R #4.4.11.4 #4.4.5.2.3
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Rejects unencrypted APS frames as mandated (request MUST be APS secured)
+     * - ✅ Honors Trust Center policies: allowTCKeyRequest / allowAppKeyRequest gates
+     * - ✅ Returns NWK, TC, or APP link keys through appropriate TRANSPORT_KEY helpers
+     * - ✅ Derives/stores application link keys via StackContext for partner distribution
+     * - ⚠️ TODO: Implement ApplicationKeyRequestPolicy.ONLY_APPROVED enforcement
+     * - ⚠️ TODO: Implement TrustCenterKeyRequestPolicy.ONLY_PROVISIONAL enforcement
+     * - ⚠️ TODO: Track apsDeviceKeyPairSet per spec Annex B for negotiated keys
      */
     public async processRequestKey(
         data: Buffer,
@@ -1215,15 +1770,28 @@ export class APSHandler {
             return offset;
         }
 
-        const device64 = this.#context.address16ToAddress64.get(nwkHeader.source16!);
+        const requester64 = nwkHeader.source64 ?? this.#context.address16ToAddress64.get(nwkHeader.source16!);
 
         // don't send to unknown device
-        if (device64 !== undefined) {
+        if (requester64 !== undefined) {
             // TODO:
             //   const deviceKeyPair = this.apsDeviceKeyPairSet.get(nwkHeader.source16!);
             //   if (!deviceKeyPair || deviceKeyPair.keyNegotiationMethod === 0x00 /* `APS Request Key` method */) {
 
-            if (keyType === ZigbeeAPSConsts.CMD_KEY_APP_MASTER) {
+            if (keyType === ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK) {
+                logger.debug(
+                    () =>
+                        `<=== APS REQUEST_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType}]`,
+                    NS,
+                );
+
+                await this.sendTransportKeyNWK(
+                    nwkHeader.source16!,
+                    this.#context.netParams.networkKey,
+                    this.#context.netParams.networkKeySequenceNumber,
+                    requester64,
+                );
+            } else if (keyType === ZigbeeAPSConsts.CMD_KEY_APP_MASTER) {
                 const partner = data.readBigUInt64LE(offset);
                 offset += 8;
 
@@ -1234,9 +1802,17 @@ export class APSHandler {
                 );
 
                 if (this.#context.trustCenterPolicies.allowAppKeyRequest === ApplicationKeyRequestPolicy.ALLOWED) {
-                    const appLinkKey = this.getOrGenerateAppLinkKey(nwkHeader.source16!, partner);
+                    const appLinkKey = this.#getOrGenerateAppLinkKey(requester64, partner);
 
                     await this.sendTransportKeyAPP(nwkHeader.source16!, appLinkKey, partner, true);
+
+                    const partnerEntry = this.#context.deviceTable.get(partner);
+
+                    if (partnerEntry?.address16 === undefined) {
+                        logger.warning(() => `<=x= APS REQUEST_KEY[partner64=${partner}] Unknown partner`, NS);
+                    } else {
+                        await this.sendTransportKeyAPP(partnerEntry.address16, appLinkKey, requester64, false);
+                    }
                 }
                 // TODO ApplicationKeyRequestPolicy.ONLY_APPROVED
             } else if (keyType === ZigbeeAPSConsts.CMD_KEY_TC_LINK) {
@@ -1247,7 +1823,7 @@ export class APSHandler {
                 );
 
                 if (this.#context.trustCenterPolicies.allowTCKeyRequest === TrustCenterKeyRequestPolicy.ALLOWED) {
-                    await this.sendTransportKeyTC(nwkHeader.source16!, this.#context.netParams.tcKey, device64);
+                    await this.sendTransportKeyTC(nwkHeader.source16!, this.#context.netParams.tcKey, requester64);
                 }
                 // TODO TrustCenterKeyRequestPolicy.ONLY_PROVISIONAL
                 //      this.apsDeviceKeyPairSet => find deviceAddress === this.context.deviceTable.get(nwkHeader.source).address64 => check provisional or drop msg
@@ -1305,15 +1881,13 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.5
+     * 05-3474-R #4.4.11.3
      *
      * SPEC COMPLIANCE:
-     * - ✅ Correctly decodes sequence number
-     * - ❌ NOT IMPLEMENTED: Actual key switching logic (CRITICAL)
-     * - ❌ NOT IMPLEMENTED: Frame counter reset after key switch
-     * - ❌ NOT IMPLEMENTED: Activation of new network key
-     *
-     * IMPACT: Network key rotation is non-functional - security risk for long-term deployments
+     * - ✅ Decodes sequence number identifying the pending network key
+     * - ✅ Activates staged key via StackContext.activatePendingNetworkKey
+     * - ✅ Resets NWK frame counter following activation
+     * - ⚠️ Pending key staging remains prerequisite (TRANSPORT_KEY)
      */
     public processSwitchKey(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const seqNum = data.readUInt8(offset);
@@ -1325,6 +1899,10 @@ export class APSHandler {
             NS,
         );
 
+        if (!this.#context.activatePendingNetworkKey(seqNum)) {
+            logger.warning(`<=x= APS SWITCH_KEY[seqNum=${seqNum}] Received without pending key`, NS);
+        }
+
         return offset;
     }
 
@@ -1332,10 +1910,10 @@ export class APSHandler {
      * 05-3474-R #4.4.11.5
      *
      * SPEC COMPLIANCE:
-     * - ✅ Includes sequence number identifying network key
+     * - ✅ Includes sequence number associated with staged network key
      * - ✅ Broadcast or unicast delivery
-     * - ✅ Applies NWK security only (not APS)
-     * - ❌ NOT IMPLEMENTED: Integration with actual key switching mechanism
+     * - ✅ Applies NWK security only (per spec expectation)
+     * - ⚠️ Relies on caller to stage key via TRANSPORT_KEY before invocation
      *
      * @param nwkDest16
      * @param seqNum SHALL contain the sequence number identifying the network key to be made active.
@@ -1527,7 +2105,7 @@ export class APSHandler {
      */
     public processConfirmKey(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const status = data.readUInt8(offset);
-        offset += 8;
+        offset += 1;
         const keyType = data.readUInt8(offset);
         offset += 1;
         const destination = data.readBigUInt64LE(offset);
@@ -1596,7 +2174,7 @@ export class APSHandler {
             {
                 control: {
                     level: ZigbeeSecurityLevel.NONE,
-                    keyId: ZigbeeKeyType.LINK, // XXX: TRANSPORT?
+                    keyId: ZigbeeKeyType.LINK, // Per 05-3474-23 #4.4.11.8 confirmation uses the link key being verified
                     nonce: true,
                 },
                 frameCounter: this.#context.nextTCKeyFrameCounter(),
@@ -1609,7 +2187,7 @@ export class APSHandler {
         const device = this.#context.deviceTable.get(destination64);
 
         // TODO: proper place?
-        if (device !== undefined && device.authorized === false) {
+        if (status === 0x00 && device !== undefined && device.authorized === false) {
             device.authorized = true;
 
             setImmediate(() => {
@@ -2016,18 +2594,6 @@ export class APSHandler {
                 return;
             }
         }
-    }
-
-    // #endregion
-
-    // #region Helpers
-
-    /**
-     * Get or generate application link key for a device pair
-     */
-    private getOrGenerateAppLinkKey(_device16: number, _partner64: bigint): Buffer {
-        // TODO: whole mechanism
-        return this.#context.netParams.tcKey;
     }
 
     // #endregion

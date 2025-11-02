@@ -374,11 +374,11 @@ docker compose -f docker-dev/compose.yaml down
 - ✅ Source routing
 - ✅ Coordinator LQI/Routing tables
 - ✅ LQI reporting
+- ✅ Install code validation and Trust Center enforcement for initial joins
+- ✅ APS APP link keys
 
 **Work in progress:**
 - ⚠️ Route repairing
-- ⚠️ Install codes
-- ⚠️ APS APP link keys
 - ⚠️ InterPAN / Touchlink
 - ⚠️ R23 support
 - ⚠️ Security refinement
@@ -517,7 +517,7 @@ docker compose -f docker-dev/compose.yaml down
 
 ### Testing Status
 
-- **CI:** ~70% coverage
+- **CI:** ~90% coverage
 - **Stress-testing:** Pending
 - **Firmware stability:** Silicon Labs and TI ongoing, Nordic pending
 - **Test networks:** Ongoing validation

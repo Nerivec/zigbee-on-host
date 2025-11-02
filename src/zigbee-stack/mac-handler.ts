@@ -5,6 +5,7 @@ import {
     encodeMACZigbeeBeacon,
     MACAssociationStatus,
     MACCommandId,
+    MACDisassociationReason,
     MACFrameAddressMode,
     MACFrameType,
     MACFrameVersion,
@@ -96,7 +97,7 @@ export class MACHandler {
      */
     public async sendFrameDirect(seqNum: number, payload: Buffer, dest16: number | undefined, dest64: bigint | undefined): Promise<boolean> {
         if (dest16 === undefined && dest64 !== undefined) {
-            dest16 = this.#context.getDevice(dest64)?.address16;
+            dest16 = this.#context.deviceTable.get(dest64)?.address16;
         }
 
         try {
@@ -140,7 +141,7 @@ export class MACHandler {
     public async sendFrame(seqNum: number, payload: Buffer, dest16: number | undefined, dest64: bigint | undefined): Promise<boolean | undefined> {
         if (dest16 !== undefined || dest64 !== undefined) {
             if (dest64 === undefined && dest16 !== undefined) {
-                dest64 = this.#context.getAddress64(dest16);
+                dest64 = this.#context.address16ToAddress64.get(dest16);
             }
 
             if (dest64 !== undefined) {
@@ -245,8 +246,11 @@ export class MACHandler {
                 offset = await this.processDataReq(data, offset, macHeader);
                 break;
             }
+            case MACCommandId.DISASSOC_NOTIFY: {
+                offset = await this.processDisassocNotify(data, offset, macHeader);
+                break;
+            }
             // TODO: other cases?
-            // DISASSOC_NOTIFY
             // PANID_CONFLICT
             // ORPHAN_NOTIFY
             // COORD_REALIGN
@@ -269,6 +273,7 @@ export class MACHandler {
      * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.3.1):
      * - ✅ Correctly extracts capabilities byte from payload
      * - ✅ Validates presence of source64 (mandatory per spec)
+     * - ✅ Enforces associationPermit flag for initial joins (PAN access denied when false)
      * - ✅ Calls context associate to handle higher-layer processing
      * - ✅ Determines initial join vs rejoin by checking if device is known
      * - ✅ Stores pending association in map for DATA_REQ retrieval
@@ -295,7 +300,7 @@ export class MACHandler {
         if (macHeader.source64 === undefined) {
             logger.debug(() => `<=x= MAC ASSOC_REQ[macSrc=${macHeader.source16}:${macHeader.source64} cap=${capabilities}] Invalid source64`, NS);
         } else {
-            const address16 = this.#context.getDevice(macHeader.source64)?.address16;
+            const address16 = this.#context.deviceTable.get(macHeader.source64)?.address16;
             const decodedCap = decodeMACCapabilities(capabilities);
             const [status, newAddress16] = await this.#context.associate(
                 address16,
@@ -303,6 +308,7 @@ export class MACHandler {
                 address16 === undefined /* initial join if unknown device, else rejoin */,
                 decodedCap,
                 true /* neighbor */,
+                address16 === undefined && !this.#context.associationPermit,
             );
 
             this.#context.pendingAssociations.set(macHeader.source64, {
@@ -342,6 +348,31 @@ export class MACHandler {
             () => `<=== MAC ASSOC_RSP[macSrc=${macHeader.source16}:${macHeader.source64} addr16=${address} status=${MACAssociationStatus[status]}]`,
             NS,
         );
+
+        return offset;
+    }
+
+    /**
+     * IEEE 802.15.4-2015 #6.4.3.3 (Disassociation Notification command)
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Handles both coordinator- and device-initiated reasons
+     * - ✅ Removes device state through StackContext.disassociate
+     * - ⚠️ Does not emit confirmation back to child (not required for coordinator role)
+     * - ❌ TODO: Maintain per-reason metrics for diagnostics
+     */
+    public async processDisassocNotify(data: Buffer, offset: number, macHeader: MACHeader): Promise<number> {
+        const reason = data.readUInt8(offset);
+        offset += 1;
+
+        logger.debug(() => `<=== MAC DISASSOC_NOTIFY[macSrc=${macHeader.source16}:${macHeader.source64} reason=${reason}]`, NS);
+
+        if (reason === MACDisassociationReason.COORDINATOR_INITIATED || reason === MACDisassociationReason.DEVICE_INITIATED) {
+            const source16 =
+                macHeader.source16 ?? (macHeader.source64 !== undefined ? this.#context.deviceTable.get(macHeader.source64)?.address16 : undefined);
+
+            await this.#context.disassociate(source16, macHeader.source64);
+        }
 
         return offset;
     }
@@ -501,7 +532,7 @@ export class MACHandler {
         let address64 = macHeader.source64;
 
         if (address64 === undefined && macHeader.source16 !== undefined) {
-            address64 = this.#context.getAddress64(macHeader.source16);
+            address64 = this.#context.address16ToAddress64.get(macHeader.source16);
         }
 
         if (address64 !== undefined) {

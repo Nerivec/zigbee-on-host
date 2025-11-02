@@ -180,6 +180,7 @@ export type ZigbeeNWKGPHeader = {
     frameControl: ZigbeeNWKGPFrameControl;
     frameControlExt?: ZigbeeNWKGPFrameControlExt;
     sourceId?: number;
+    source64?: bigint;
     endpoint?: number;
     /** (utility, not part of the spec) */
     micSize: 0 | 2 | 4;
@@ -262,6 +263,7 @@ export function decodeZigbeeNWKGPHeader(data: Buffer, offset: number, frameContr
     }
 
     let sourceId: number | undefined;
+    let source64: bigint | undefined;
     let endpoint: number | undefined;
     let micSize: ZigbeeNWKGPHeader["micSize"] = 0;
     let securityFrameCounter: number | undefined;
@@ -282,6 +284,8 @@ export function decodeZigbeeNWKGPHeader(data: Buffer, offset: number, frameContr
     }
 
     if (frameControl.nwkFrameControlExtension && frameControlExt!.appId === ZigbeeNWKGPAppId.ZGP) {
+        source64 = data.readBigUInt64LE(offset);
+        offset += 8;
         endpoint = data.readUInt8(offset);
         offset += 1;
     }
@@ -323,6 +327,7 @@ export function decodeZigbeeNWKGPHeader(data: Buffer, offset: number, frameContr
             frameControl,
             frameControlExt,
             sourceId,
+            source64,
             endpoint,
             micSize,
             securityFrameCounter,
@@ -355,6 +360,8 @@ function encodeZigbeeNWKGPHeader(data: Buffer, offset: number, header: ZigbeeNWK
     }
 
     if (header.frameControl.nwkFrameControlExtension && header.frameControlExt!.appId === ZigbeeNWKGPAppId.ZGP) {
+        data.writeBigUInt64LE(header.source64!, offset);
+        offset += 8;
         data.writeUInt8(header.endpoint!, offset);
         offset += 1;
     }
@@ -392,7 +399,13 @@ function makeGPNonce(header: ZigbeeNWKGPHeader, macSource64: bigint | undefined)
         nonce.writeUInt32LE(header.sourceId!, offset);
         offset += 4;
     } else if (header.frameControlExt!.appId === ZigbeeNWKGPAppId.ZGP) {
-        nonce.writeBigUInt64LE(macSource64!, offset);
+        const ieeeSource = header.source64 ?? macSource64;
+
+        if (ieeeSource === undefined) {
+            throw new Error("Zigbee NWK GP frame missing IEEE source for AppId=ZGP");
+        }
+
+        nonce.writeBigUInt64LE(ieeeSource, offset);
         offset += 8;
     }
 

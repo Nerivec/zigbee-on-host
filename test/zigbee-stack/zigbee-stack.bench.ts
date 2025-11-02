@@ -570,7 +570,7 @@ describe("Zigbee Stack Handlers", () => {
                 const [macFCF, macFCFOutOffset] = decodeMACFrameControl(NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0, 0);
                 const [macHeader] = decodeMACHeader(NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0, macFCFOutOffset, macFCF);
 
-                nwkGPHandler.checkDuplicate(macHeader, {
+                nwkGPHandler.isDuplicateFrame(macHeader, {
                     frameControl: { frameType: 0, protocolVersion: 3, autoCommissioning: false, nwkFrameControlExtension: false },
                     securityFrameCounter: 12345,
                     sourceId: 0x87654321,
@@ -660,35 +660,6 @@ describe("Zigbee Stack Handlers", () => {
     });
 
     describe("StackContext", () => {
-        bench(
-            "getDevice - device table lookup (hot path)",
-            () => {
-                const eui64 = 0x00124b0098765432n;
-                context.deviceTable.set(eui64, {
-                    address16: 0x1234,
-                    capabilities: undefined,
-                    authorized: true,
-                    neighbor: false,
-                    recentLQAs: [255, 240, 230],
-                });
-
-                context.getDevice(eui64);
-
-                context.deviceTable.delete(eui64);
-            },
-            {
-                ...BENCH_OPTIONS,
-                setup: (task, mode) => {
-                    BENCH_OPTIONS.setup?.(task, mode);
-                    setup();
-                },
-                teardown: (task, mode) => {
-                    BENCH_OPTIONS.teardown?.(task, mode);
-                    teardown();
-                },
-            },
-        );
-
         bench(
             "mapRSSIToLQI - RSSI to LQI conversion (hot path)",
             () => {

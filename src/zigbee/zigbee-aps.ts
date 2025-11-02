@@ -62,6 +62,7 @@ export const enum ZigbeeAPSFragmentation {
     NONE = 0x00,
     FIRST = 0x01,
     MIDDLE = 0x02,
+    LAST = 0x03,
 }
 
 export const enum ZigbeeAPSCommandId {
@@ -255,11 +256,6 @@ export function decodeZigbeeAPSHeader(data: Buffer, offset: number, frameControl
         }
     }
 
-    if (fragmentation !== undefined && fragmentation !== ZigbeeAPSFragmentation.NONE) {
-        // TODO
-        throw new Error("APS fragmentation not supported");
-    }
-
     return [
         {
             frameControl,
@@ -349,17 +345,18 @@ export function encodeZigbeeAPSHeader(data: Buffer, offset: number, header: Zigb
     }
 
     if (header.frameControl.extendedHeader) {
-        const fcf = header.fragmentation! & ZigbeeAPSConsts.EXT_FCF_FRAGMENT;
+        const fragmentation = header.fragmentation ?? ZigbeeAPSFragmentation.NONE;
+        const fcf = fragmentation & ZigbeeAPSConsts.EXT_FCF_FRAGMENT;
 
         data.writeUInt8(fcf, offset);
         offset += 1;
 
-        if (header.fragmentation! !== ZigbeeAPSFragmentation.NONE) {
+        if (fragmentation !== ZigbeeAPSFragmentation.NONE) {
             data.writeUInt8(header.fragBlockNumber!, offset);
             offset += 1;
         }
 
-        if (header.fragmentation! !== ZigbeeAPSFragmentation.NONE && header.frameControl.frameType === ZigbeeAPSFrameType.ACK) {
+        if (fragmentation !== ZigbeeAPSFragmentation.NONE && header.frameControl.frameType === ZigbeeAPSFrameType.ACK) {
             data.writeUInt8(header.fragACKBitfield!, offset);
             offset += 1;
         }

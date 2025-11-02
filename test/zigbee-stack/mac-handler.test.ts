@@ -39,7 +39,19 @@ describe("MACHandler", () => {
 
         mockContext = new StackContext(mockStackContextCallbacks, join(saveDir, "zoh.save"), netParams);
 
-        vi.spyOn(mockContext, "associate").mockResolvedValue([MACAssociationStatus.SUCCESS, 0x1234]);
+        vi.spyOn(mockContext, "associate").mockImplementation(
+            (_source16, _source64, _initialJoin, _capabilities, _neighbor, denyOverride, allowOverride) => {
+                if (denyOverride) {
+                    return Promise.resolve([MACAssociationStatus.PAN_ACCESS_DENIED, 0xffff]);
+                }
+
+                if (allowOverride) {
+                    return Promise.resolve([MACAssociationStatus.SUCCESS, 0x1234]);
+                }
+
+                return Promise.resolve([MACAssociationStatus.SUCCESS, 0x1234]);
+            },
+        );
         vi.spyOn(mockContext, "disassociate").mockResolvedValue(undefined);
 
         mockCallbacks = {
@@ -55,6 +67,7 @@ describe("MACHandler", () => {
 
     afterEach(() => {
         rmSync(saveDir, { force: true, recursive: true });
+        mockContext?.disallowJoins();
     });
 
     describe("constructor", () => {
@@ -305,6 +318,8 @@ describe("MACHandler", () => {
 
     describe("processAssocReq", () => {
         it("should process association request from new device", async () => {
+            mockContext.allowJoins(0xfe, true);
+
             const macHeader: MACHeader = {
                 frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
                 sequenceNumber: 1,
@@ -318,11 +333,13 @@ describe("MACHandler", () => {
             const data = Buffer.from([0x8e]); // capabilities: rxOnWhenIdle=true, deviceType=FFD, powerSource=mains, securityCapability=true, allocateAddress=true
             await macHandler.processAssocReq(data, 0, macHeader);
 
-            expect(mockContext.associate).toHaveBeenCalledWith(undefined, 0x00124b0098765432n, true, expect.any(Object), true);
+            expect(mockContext.associate).toHaveBeenCalledWith(undefined, 0x00124b0098765432n, true, expect.any(Object), true, false);
             expect(mockContext.pendingAssociations.has(0x00124b0098765432n)).toStrictEqual(true);
         });
 
         it("should process association request from known device (rejoin)", async () => {
+            mockContext.allowJoins(0xfe, true);
+
             const dest64 = 0x00124b0098765432n;
             const dest16 = 0x5678;
 
@@ -347,7 +364,7 @@ describe("MACHandler", () => {
             const data = Buffer.from([0x8e]);
             await macHandler.processAssocReq(data, 0, macHeader);
 
-            expect(mockContext.associate).toHaveBeenCalledWith(dest16, dest64, false, expect.any(Object), true);
+            expect(mockContext.associate).toHaveBeenCalledWith(dest16, dest64, false, expect.any(Object), true, false);
         });
 
         it("should handle association request without source64", async () => {

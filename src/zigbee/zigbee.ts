@@ -110,6 +110,27 @@ export type ZigbeeSecurityHeader = {
     // mic?: number;
 };
 
+/** Valid install code lengths excluding CRC (bytes) */
+export const INSTALL_CODE_VALID_SIZES = [6, 8, 12, 16] as const;
+
+export function computeInstallCodeCRC(data: Buffer): number {
+    let crc = 0xffff;
+
+    for (const value of data) {
+        crc ^= value << 8;
+
+        for (let bit = 0; bit < 8; bit += 1) {
+            if ((crc & 0x8000) !== 0) {
+                crc = ((crc << 1) ^ 0x1021) & 0xffff;
+            } else {
+                crc = (crc << 1) & 0xffff;
+            }
+        }
+    }
+
+    return crc & 0xffff;
+}
+
 function aes128MmoHashUpdate(result: Buffer, data: Buffer, dataSize: number): void {
     while (dataSize >= ZigbeeConsts.SEC_BLOCKSIZE) {
         const cipher = createCipheriv("aes-128-ecb", result, null);

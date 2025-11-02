@@ -8,7 +8,8 @@
  * - Length >= 128: two bytes with high bit set in first byte
  */
 
-import type { DeviceTableEntry, NetworkParameters, SourceRouteTableEntry } from "../zigbee-stack/stack-context.js";
+import { ZigbeeConsts } from "../zigbee/zigbee.js";
+import type { AppLinkKeyStoreEntry, DeviceTableEntry, NetworkParameters, SourceRouteTableEntry } from "../zigbee-stack/stack-context.js";
 
 /**
  * Parsed device entry with final values ready to use.
@@ -38,6 +39,9 @@ export interface ParsedState extends NetworkParameters {
 
     // Device entries (parsed device objects)
     deviceEntries: ParsedDevice[];
+
+    // Application link keys stored by the Trust Center
+    appLinkKeys: AppLinkKeyStoreEntry[];
 }
 
 /**
@@ -61,6 +65,7 @@ export const enum TLVTag {
     NETWORK_KEY_SEQUENCE_NUMBER = 0x09,
     TC_KEY = 0x0a,
     TC_KEY_FRAME_COUNTER = 0x0b,
+    APP_LINK_KEY_ENTRY = 0x0c,
 
     // Reserved: 0x0c-0x7f for future network params (115 tags available)
 
@@ -233,6 +238,7 @@ export function writeTLVBigUInt64LE(buffer: Buffer, offset: number, tag: TLVTag 
 export function readTLVs(buffer: Buffer, startOffset = 0, endOffset?: number): ParsedState {
     const state: Partial<ParsedState> = {
         deviceEntries: [],
+        appLinkKeys: [],
     };
 
     let offset = startOffset;
@@ -306,6 +312,9 @@ export function readTLVs(buffer: Buffer, startOffset = 0, endOffset?: number): P
             case TLVTag.DEVICE_ENTRY:
                 state.deviceEntries!.push(readDeviceTLVs(buffer, offset, offset + length));
                 break;
+            case TLVTag.APP_LINK_KEY_ENTRY:
+                state.appLinkKeys!.push(readAppLinkKeyTLV(buffer, offset));
+                break;
             // Unknown tags ignored for forward compatibility
         }
 
@@ -330,6 +339,14 @@ export function readTLVs(buffer: Buffer, startOffset = 0, endOffset?: number): P
     }
 
     return state as ParsedState;
+}
+
+export function readAppLinkKeyTLV(buffer: Buffer, startOffset: number): AppLinkKeyStoreEntry {
+    const deviceA = buffer.readBigUInt64LE(startOffset);
+    const deviceB = buffer.readBigUInt64LE(startOffset + 8);
+    const key = Buffer.from(buffer.subarray(startOffset + 16, startOffset + 16 + ZigbeeConsts.SEC_KEYSIZE));
+
+    return { deviceA, deviceB, key };
 }
 
 /**
@@ -487,12 +504,18 @@ export function readSourceRouteTLVs(buffer: Buffer, startOffset: number, endOffs
  * @param deviceCount
  * @returns
  */
-export function estimateTLVStateSize(deviceCount: number): number {
+export function estimateTLVStateSize(deviceCount: number, appLinkKeyCount = 0): number {
     // version + network parameters
     let size = 250;
     // each device entry + source routes (to ~10% of network, min 5)
     const avgDeviceSize = 50 + Math.max(Math.ceil(deviceCount * 0.1), 5) * 15;
     size += deviceCount * calculateTLVSize(avgDeviceSize);
+
+    if (appLinkKeyCount > 0) {
+        const appLinkEntrySize = 8 + 8 + 1 + 16;
+        size += appLinkKeyCount * calculateTLVSize(appLinkEntrySize);
+    }
+
     // end marker
     size += 1;
 
@@ -582,4 +605,15 @@ export function serializeDeviceEntry(
     }
 
     return buffer.subarray(0, offset);
+}
+
+export function serializeAppLinkKeyEntry(deviceA: bigint, deviceB: bigint, key: Buffer): Buffer {
+    const payload = Buffer.allocUnsafe(16 + ZigbeeConsts.SEC_KEYSIZE);
+    let offset = 0;
+
+    offset = payload.writeBigUInt64LE(deviceA, offset);
+    offset = payload.writeBigUInt64LE(deviceB, offset);
+    key.copy(payload, offset);
+
+    return payload;
 }

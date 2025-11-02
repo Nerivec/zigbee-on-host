@@ -602,6 +602,8 @@ describe("OT RCP Driver", () => {
                 authorized: true,
                 neighbor: true,
                 recentLQAs: [],
+                endDeviceTimeout: undefined,
+                incomingNWKFrameCounter: undefined,
             });
             expect(driver.context.deviceTable.get(12656887476334n)).toStrictEqual({
                 address16: 3457,
@@ -609,6 +611,8 @@ describe("OT RCP Driver", () => {
                 authorized: true,
                 neighbor: true,
                 recentLQAs: [],
+                endDeviceTimeout: undefined,
+                incomingNWKFrameCounter: undefined,
             });
             expect(driver.context.deviceTable.get(12328965645634n)).toStrictEqual({
                 address16: 9674,
@@ -616,6 +620,8 @@ describe("OT RCP Driver", () => {
                 authorized: true,
                 neighbor: false,
                 recentLQAs: [],
+                endDeviceTimeout: undefined,
+                incomingNWKFrameCounter: undefined,
             });
             expect(driver.context.deviceTable.get(234367481234n)).toStrictEqual({
                 address16: 54748,
@@ -623,6 +629,8 @@ describe("OT RCP Driver", () => {
                 authorized: false,
                 neighbor: true,
                 recentLQAs: [],
+                endDeviceTimeout: undefined,
+                incomingNWKFrameCounter: undefined,
             });
             expect(driver.context.address16ToAddress64.size).toStrictEqual(4);
             expect(driver.context.address16ToAddress64.get(1)).toStrictEqual(1234n);
@@ -1344,7 +1352,7 @@ describe("OT RCP Driver", () => {
         it("receives frame NETDEF_ACK_FRAME_TO_COORD", async () => {
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
             const sendACKSpy = vi.spyOn(driver.apsHandler, "sendACK");
-            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "onZigbeeAPSFrame");
+            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processCommandSpy = vi.spyOn(driver.apsHandler, "processCommand");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ACK_FRAME_TO_COORD), "utf8", () => {});
@@ -1359,7 +1367,7 @@ describe("OT RCP Driver", () => {
         it("receives frame NETDEF_LINK_STATUS_FROM_DEV", async () => {
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
             const sendACKSpy = vi.spyOn(driver.apsHandler, "sendACK");
-            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "onZigbeeAPSFrame");
+            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processLinkStatusSpy = vi.spyOn(driver.nwkHandler, "processLinkStatus");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_LINK_STATUS_FROM_DEV), "utf8", () => {});
@@ -1374,7 +1382,7 @@ describe("OT RCP Driver", () => {
         it("receives frame NETDEF_ZCL_FRAME_CMD_TO_COORD", async () => {
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
             const sendACKSpy = vi.spyOn(driver.apsHandler, "sendACK");
-            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "onZigbeeAPSFrame");
+            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processCommandSpy = vi.spyOn(driver.apsHandler, "processCommand");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ZCL_FRAME_CMD_TO_COORD), "utf8", () => {});
@@ -1415,7 +1423,7 @@ describe("OT RCP Driver", () => {
         it("receives frame NETDEF_ROUTE_RECORD_TO_COORD", async () => {
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
             const sendACKSpy = vi.spyOn(driver.apsHandler, "sendACK");
-            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "onZigbeeAPSFrame");
+            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processRouteRecSpy = vi.spyOn(driver.nwkHandler, "processRouteRecord");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ROUTE_RECORD_TO_COORD), "utf8", () => {});
@@ -1430,7 +1438,7 @@ describe("OT RCP Driver", () => {
         it("receives frame NETDEF_MTORR_FRAME_FROM_COORD", async () => {
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
             const sendACKSpy = vi.spyOn(driver.apsHandler, "sendACK");
-            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "onZigbeeAPSFrame");
+            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processRouteReqSpy = vi.spyOn(driver.nwkHandler, "processRouteReq");
             const sendRouteReplySpy = vi.spyOn(driver.nwkHandler, "sendRouteReply");
 
@@ -1449,7 +1457,7 @@ describe("OT RCP Driver", () => {
 
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
             const sendACKSpy = vi.spyOn(driver.apsHandler, "sendACK");
-            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "onZigbeeAPSFrame");
+            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processGPFrameSpy = vi.spyOn(driver.nwkGPHandler, "processFrame");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ZGP_COMMISSIONING), "utf8", () => {});
@@ -1515,7 +1523,7 @@ describe("OT RCP Driver", () => {
         it("receives frame NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0", async () => {
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
             const sendACKSpy = vi.spyOn(driver.apsHandler, "sendACK");
-            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "onZigbeeAPSFrame");
+            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processGPFrameSpy = vi.spyOn(driver.nwkGPHandler, "processFrame");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0), "utf8", () => {});
@@ -1633,7 +1641,7 @@ describe("OT RCP Driver", () => {
             // encrypted only APS
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
             const sendACKSpy = vi.spyOn(driver.apsHandler, "sendACK");
-            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "onZigbeeAPSFrame");
+            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processTransportKeySpy = vi.spyOn(driver.apsHandler, "processTransportKey");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_TRANSPORT_KEY_NWK_FROM_COORD), "utf8", () => {});
@@ -1659,7 +1667,7 @@ describe("OT RCP Driver", () => {
 
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
             const sendACKSpy = vi.spyOn(driver.apsHandler, "sendACK");
-            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "onZigbeeAPSFrame");
+            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processRequestKeySpy = vi.spyOn(driver.apsHandler, "processRequestKey");
             const sendTransportKeyTCSpy = vi.spyOn(driver.apsHandler, "sendTransportKeyTC");
 
@@ -1766,6 +1774,8 @@ describe("OT RCP Driver", () => {
                 authorized: false,
                 neighbor: true,
                 recentLQAs: [],
+                endDeviceTimeout: undefined,
+                incomingNWKFrameCounter: undefined,
             });
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_DEVICE_ANNOUNCE_BCAST, Buffer.from([0xd8, 0xff, 0x00, 0x00])), "utf8", () => {});
@@ -1805,6 +1815,8 @@ describe("OT RCP Driver", () => {
                 authorized: true,
                 neighbor: true,
                 recentLQAs: [200, 153, 178, 188],
+                incomingNWKFrameCounter: 33498,
+                endDeviceTimeout: undefined,
             });
         });
 
@@ -2039,7 +2051,7 @@ describe("OT RCP Driver", () => {
             waitForTIDSpy.mockRejectedValueOnce(new Error("Failed with status=NO_ACK"));
             // throws through respondToCoordinatorZDORequest
             await expect(
-                driver.apsHandler.onZigbeeAPSFrame(
+                driver.apsHandler.processFrame(
                     Buffer.alloc(8),
                     {
                         frameControl: {},
@@ -3052,7 +3064,7 @@ describe("OT RCP Driver", () => {
             ).resolves.toStrictEqual(undefined);
             // throws through respondToCoordinatorZDORequest
             await expect(
-                driver.apsHandler.onZigbeeAPSFrame(
+                driver.apsHandler.processFrame(
                     Buffer.alloc(8),
                     {
                         frameControl: {},
@@ -3714,7 +3726,7 @@ describe("OT RCP Driver", () => {
 
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
             const sendACKSpy = vi.spyOn(driver.apsHandler, "sendACK");
-            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "onZigbeeAPSFrame");
+            const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processGPFrameSpy = vi.spyOn(driver.nwkGPHandler, "processFrame");
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
