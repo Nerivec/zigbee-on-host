@@ -661,35 +661,6 @@ describe("Zigbee Stack Handlers", () => {
 
     describe("StackContext", () => {
         bench(
-            "getDevice - device table lookup (hot path)",
-            () => {
-                const eui64 = 0x00124b0098765432n;
-                context.deviceTable.set(eui64, {
-                    address16: 0x1234,
-                    capabilities: undefined,
-                    authorized: true,
-                    neighbor: false,
-                    recentLQAs: [255, 240, 230],
-                });
-
-                context.getDevice(eui64);
-
-                context.deviceTable.delete(eui64);
-            },
-            {
-                ...BENCH_OPTIONS,
-                setup: (task, mode) => {
-                    BENCH_OPTIONS.setup?.(task, mode);
-                    setup();
-                },
-                teardown: (task, mode) => {
-                    BENCH_OPTIONS.teardown?.(task, mode);
-                    teardown();
-                },
-            },
-        );
-
-        bench(
             "mapRSSIToLQI - RSSI to LQI conversion (hot path)",
             () => {
                 for (let rssi = -90; rssi <= -20; rssi += 5) {

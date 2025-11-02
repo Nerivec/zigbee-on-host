@@ -548,45 +548,6 @@ export class StackContext {
         return true;
     }
 
-    /**
-     * Get device by IEEE (64-bit) or network (16-bit) address.
-     * @param address IEEE address (bigint) or network address (number)
-     * @returns Device table entry or undefined if not found
-     */
-    public getDevice(address: bigint | number): DeviceTableEntry | undefined {
-        if (typeof address === "bigint") {
-            return this.deviceTable.get(address);
-        }
-
-        const address64 = this.address16ToAddress64.get(address);
-
-        if (address64 === undefined) {
-            return undefined;
-        }
-
-        return this.deviceTable.get(address64);
-    }
-
-    /**
-     * Get IEEE (64-bit) address from network (16-bit) address.
-     * @param address16 Network address
-     * @returns IEEE address or undefined if not found
-     */
-    public getAddress64(address16: number): bigint | undefined {
-        return this.address16ToAddress64.get(address16);
-    }
-
-    /**
-     * Get network (16-bit) address from IEEE (64-bit) address.
-     * @param address64 IEEE address
-     * @returns Network address or undefined if not found
-     */
-    public getAddress16(address64: bigint): number | undefined {
-        const device = this.deviceTable.get(address64);
-
-        return device?.address16;
-    }
-
     // private countDirectChildren(exclude64?: bigint): { childCount: number; routerCount: number } {
     //     let childCount = 0;
     //     let routerCount = 0;

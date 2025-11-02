@@ -191,7 +191,7 @@ export class APSHandler {
             return false;
         }
 
-        this.#pruneExpiredAPSDuplicates(now);
+        this.#pruneExpiredDuplicates(now);
 
         const isFragmented = apsHeader.fragmentation !== undefined && apsHeader.fragmentation !== ZigbeeAPSFragmentation.NONE;
         // XXX: perf: string of bigint/number, this is called a lot
@@ -233,7 +233,7 @@ export class APSHandler {
         return false;
     }
 
-    #pruneExpiredAPSDuplicates(now: number): void {
+    #pruneExpiredDuplicates(now: number): void {
         for (const [sourceKey, entry] of this.#apsDuplicateTable) {
             if (entry.expiresAt <= now) {
                 this.#apsDuplicateTable.delete(sourceKey);
@@ -723,7 +723,7 @@ export class APSHandler {
         let source16 = nwkHeader.source16;
 
         if (source16 === undefined && nwkHeader.source64 !== undefined) {
-            source16 = this.#context.getAddress16(nwkHeader.source64);
+            source16 = this.#context.deviceTable.get(nwkHeader.source64)?.address16;
         }
 
         if (source16 === undefined) {

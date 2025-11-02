@@ -97,7 +97,7 @@ export class MACHandler {
      */
     public async sendFrameDirect(seqNum: number, payload: Buffer, dest16: number | undefined, dest64: bigint | undefined): Promise<boolean> {
         if (dest16 === undefined && dest64 !== undefined) {
-            dest16 = this.#context.getAddress16(dest64);
+            dest16 = this.#context.deviceTable.get(dest64)?.address16;
         }
 
         try {
@@ -141,7 +141,7 @@ export class MACHandler {
     public async sendFrame(seqNum: number, payload: Buffer, dest16: number | undefined, dest64: bigint | undefined): Promise<boolean | undefined> {
         if (dest16 !== undefined || dest64 !== undefined) {
             if (dest64 === undefined && dest16 !== undefined) {
-                dest64 = this.#context.getAddress64(dest16);
+                dest64 = this.#context.address16ToAddress64.get(dest16);
             }
 
             if (dest64 !== undefined) {
@@ -300,7 +300,7 @@ export class MACHandler {
         if (macHeader.source64 === undefined) {
             logger.debug(() => `<=x= MAC ASSOC_REQ[macSrc=${macHeader.source16}:${macHeader.source64} cap=${capabilities}] Invalid source64`, NS);
         } else {
-            const address16 = this.#context.getAddress16(macHeader.source64);
+            const address16 = this.#context.deviceTable.get(macHeader.source64)?.address16;
             const decodedCap = decodeMACCapabilities(capabilities);
             const [status, newAddress16] = await this.#context.associate(
                 address16,
@@ -368,7 +368,8 @@ export class MACHandler {
         logger.debug(() => `<=== MAC DISASSOC_NOTIFY[macSrc=${macHeader.source16}:${macHeader.source64} reason=${reason}]`, NS);
 
         if (reason === MACDisassociationReason.COORDINATOR_INITIATED || reason === MACDisassociationReason.DEVICE_INITIATED) {
-            const source16 = macHeader.source16 ?? (macHeader.source64 !== undefined ? this.#context.getAddress16(macHeader.source64) : undefined);
+            const source16 =
+                macHeader.source16 ?? (macHeader.source64 !== undefined ? this.#context.deviceTable.get(macHeader.source64)?.address16 : undefined);
 
             await this.#context.disassociate(source16, macHeader.source64);
         }
@@ -531,7 +532,7 @@ export class MACHandler {
         let address64 = macHeader.source64;
 
         if (address64 === undefined && macHeader.source16 !== undefined) {
-            address64 = this.#context.getAddress64(macHeader.source16);
+            address64 = this.#context.address16ToAddress64.get(macHeader.source16);
         }
 
         if (address64 !== undefined) {
