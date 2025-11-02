@@ -72,57 +72,42 @@ export function encodeCoordinatorDescriptors(eui64: bigint): [address: Buffer, n
     // works for both NETWORK & IEEE response
     const address = Buffer.alloc(12);
     let offset = 2; // skip seqNum (set on use), status
-
-    address.writeBigUInt64LE(eui64, offset);
-    offset += 8;
-    address.writeUInt16LE(ZigbeeConsts.COORDINATOR_ADDRESS, offset);
-    offset += 2;
+    offset = address.writeBigUInt64LE(eui64, offset);
+    offset = address.writeUInt16LE(ZigbeeConsts.COORDINATOR_ADDRESS, offset);
 
     const node = Buffer.alloc(17);
     offset = 4; // skip seqNum (set on use), status, nwkAddress
-
-    node.writeUInt8(
+    offset = node.writeUInt8(
         (0 & 0x07) | // logicalType
             ((0 << 5) & 0x20), // fragmentationSupported
         offset,
     );
-    offset += 1;
-    node.writeUInt8(
+    offset = node.writeUInt8(
         (0 & 0x07) | // apsFlags
             ((8 << 3) & 0xf8), // frequencyBand
         offset,
     );
-    offset += 1;
-    node.writeUInt8(MAC_CAPABILITIES, offset);
-    offset += 1;
-    node.writeUInt16LE(MANUFACTURER_CODE, offset);
-    offset += 2;
-    node.writeUInt8(0x7f, offset);
-    offset += 1;
-    node.writeUInt16LE(ZigbeeMACConsts.FRAME_MAX_SIZE, offset);
-    offset += 2;
-    node.writeUInt16LE(SERVER_MASK, offset);
-    offset += 2;
-    node.writeUInt16LE(ZigbeeMACConsts.FRAME_MAX_SIZE, offset);
-    offset += 2;
+    offset = node.writeUInt8(MAC_CAPABILITIES, offset);
+    offset = node.writeUInt16LE(MANUFACTURER_CODE, offset);
+    offset = node.writeUInt8(0x7f, offset);
+    offset = node.writeUInt16LE(ZigbeeMACConsts.FRAME_MAX_SIZE, offset);
+    offset = node.writeUInt16LE(SERVER_MASK, offset);
+    offset = node.writeUInt16LE(ZigbeeMACConsts.FRAME_MAX_SIZE, offset);
     // skip deprecated
     offset += 1;
 
     const power = Buffer.alloc(6);
     offset = 4; // skip seqNum (set on use), status, nwkAddress
-
-    power.writeUInt8(
+    offset = power.writeUInt8(
         (0 & 0xf) | // currentPowerMode
             ((0 & 0xf) << 4), // availPowerSources
         offset,
     );
-    offset += 1;
-    power.writeUInt8(
+    offset = power.writeUInt8(
         (0 & 0xf) | // currentPowerSource
             ((0b1100 & 0xf) << 4), // currentPowerSourceLevel
         offset,
     );
-    offset += 1;
 
     const simple = Buffer.alloc(
         21 +
@@ -130,62 +115,44 @@ export function encodeCoordinatorDescriptors(eui64: bigint): [address: Buffer, n
                 2 /* uint16_t */,
     );
     offset = 4; // skip seqNum (set on use), status, nwkAddress
-
-    simple.writeUInt8(
+    offset = simple.writeUInt8(
         16 +
             (EP_HA_INPUT_CLUSTERS.length + EP_HA_OUTPUT_CLUSTERS.length + EP_GP_INPUT_CLUSTERS.length + EP_GP_OUTPUT_CLUSTERS.length) *
                 2 /* uint16_t */,
         offset,
     );
-    offset += 1;
     // HA endpoint
-    simple.writeUInt8(EP_HA, offset);
-    offset += 1;
-    simple.writeUInt16LE(EP_HA_PROFILE_ID, offset);
-    offset += 2;
-    simple.writeUInt16LE(EP_HA_DEVICE_ID, offset);
-    offset += 2;
-    simple.writeUInt8(1, offset);
-    offset += 1;
-    simple.writeUInt8(EP_HA_INPUT_CLUSTERS.length, offset);
-    offset += 1;
+    offset = simple.writeUInt8(EP_HA, offset);
+    offset = simple.writeUInt16LE(EP_HA_PROFILE_ID, offset);
+    offset = simple.writeUInt16LE(EP_HA_DEVICE_ID, offset);
+    offset = simple.writeUInt8(1, offset);
+    offset = simple.writeUInt8(EP_HA_INPUT_CLUSTERS.length, offset);
 
     for (const haInCluster of EP_HA_INPUT_CLUSTERS) {
-        simple.writeUInt16LE(haInCluster, offset);
-        offset += 2;
+        offset = simple.writeUInt16LE(haInCluster, offset);
     }
 
-    simple.writeUInt8(EP_HA_OUTPUT_CLUSTERS.length, offset);
-    offset += 1;
+    offset = simple.writeUInt8(EP_HA_OUTPUT_CLUSTERS.length, offset);
 
     for (const haOutCluster of EP_HA_OUTPUT_CLUSTERS) {
-        simple.writeUInt16LE(haOutCluster, offset);
-        offset += 2;
+        offset = simple.writeUInt16LE(haOutCluster, offset);
     }
 
     // GP endpoint
-    simple.writeUInt8(EP_GP, offset);
-    offset += 1;
-    simple.writeUInt16LE(EP_GP_PROFILE_ID, offset);
-    offset += 2;
-    simple.writeUInt16LE(EP_GP_DEVICE_ID, offset);
-    offset += 2;
-    simple.writeUInt8(1, offset);
-    offset += 1;
-    simple.writeUInt8(EP_GP_INPUT_CLUSTERS.length, offset);
-    offset += 1;
+    offset = simple.writeUInt8(EP_GP, offset);
+    offset = simple.writeUInt16LE(EP_GP_PROFILE_ID, offset);
+    offset = simple.writeUInt16LE(EP_GP_DEVICE_ID, offset);
+    offset = simple.writeUInt8(1, offset);
+    offset = simple.writeUInt8(EP_GP_INPUT_CLUSTERS.length, offset);
 
     for (const gpInCluster of EP_GP_INPUT_CLUSTERS) {
-        simple.writeUInt16LE(gpInCluster, offset);
-        offset += 2;
+        offset = simple.writeUInt16LE(gpInCluster, offset);
     }
 
-    simple.writeUInt8(EP_GP_OUTPUT_CLUSTERS.length, offset);
-    offset += 1;
+    offset = simple.writeUInt8(EP_GP_OUTPUT_CLUSTERS.length, offset);
 
     for (const gpOutCluster of EP_GP_OUTPUT_CLUSTERS) {
-        simple.writeUInt16LE(gpOutCluster, offset);
-        offset += 2;
+        offset = simple.writeUInt16LE(gpOutCluster, offset);
     }
 
     const activeEndpoints = Buffer.from(ACTIVE_ENDPOINTS_RESPONSE);

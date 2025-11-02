@@ -171,7 +171,8 @@ export function encodeSpinelFrame(frame: SpinelFrame): HdlcFrame {
         ((frame.header.flg << SPINEL_HEADER_FLG_SHIFT) & SPINEL_HEADER_FLG_MASK);
     buffer[0] = headerByte;
     const outOffset = setPackedUInt(buffer, 1, frame.commandId, cmdIdSize);
-    buffer.set(frame.payload, outOffset);
+
+    frame.payload.copy(buffer, outOffset);
 
     return encodeHdlcFrame(buffer);
 }
@@ -297,8 +298,7 @@ export function writePropertyAC(propertyId: SpinelPropertyId, values: number[]):
     let offset = pOffset;
 
     for (const value of values) {
-        buf.writeUInt8(value, offset);
-        offset += 1;
+        offset = buf.writeUInt8(value, offset);
     }
 
     return buf;
@@ -453,7 +453,7 @@ export function writePropertyd(propertyId: SpinelPropertyId, value: Buffer): Buf
     const [buf, offset] = writePropertyId(propertyId, 2 + value.byteLength);
 
     buf.writeUInt16LE(value.byteLength, offset);
-    buf.set(value, offset);
+    value.copy(buf, offset);
 
     return buf;
 }
@@ -473,7 +473,7 @@ export function readPropertyd(propertyId: SpinelPropertyId, data: Buffer, offset
 export function writePropertyD(propertyId: SpinelPropertyId, value: Buffer): Buffer {
     const [buf, offset] = writePropertyId(propertyId, value.byteLength);
 
-    buf.set(value, offset);
+    value.copy(buf, offset);
 
     return buf;
 }
@@ -596,42 +596,18 @@ export type StreamRawConfig = {
 export function writePropertyStreamRaw(data: Buffer, config: StreamRawConfig): Buffer {
     const [buf, pOutOffset] = writePropertyId(SpinelPropertyId.STREAM_RAW, data.byteLength + 18);
     let offset = pOutOffset;
-
-    buf.writeUInt16LE(data.byteLength, offset);
-    offset += 2;
-
-    buf.set(data, offset);
-    offset += data.byteLength;
-
-    buf.writeUInt8(config.txChannel, offset);
-    offset += 1;
-
-    buf.writeUInt8(config.ccaBackoffAttempts, offset);
-    offset += 1;
-
-    buf.writeUInt8(config.ccaRetries, offset);
-    offset += 1;
-
-    buf.writeUInt8(config.enableCSMACA ? 1 : 0, offset);
-    offset += 1;
-
-    buf.writeUInt8(config.headerUpdated ? 1 : 0, offset);
-    offset += 1;
-
-    buf.writeUInt8(config.reTx ? 1 : 0, offset);
-    offset += 1;
-
-    buf.writeUInt8(config.securityProcessed ? 1 : 0, offset);
-    offset += 1;
-
-    buf.writeUInt32LE(config.txDelay, offset);
-    offset += 4;
-
-    buf.writeUInt32LE(config.txDelayBaseTime, offset);
-    offset += 4;
-
-    buf.writeUInt8(config.rxChannelAfterTxDone, offset);
-    offset += 1;
+    offset = buf.writeUInt16LE(data.byteLength, offset);
+    offset += data.copy(buf, offset);
+    offset = buf.writeUInt8(config.txChannel, offset);
+    offset = buf.writeUInt8(config.ccaBackoffAttempts, offset);
+    offset = buf.writeUInt8(config.ccaRetries, offset);
+    offset = buf.writeUInt8(config.enableCSMACA ? 1 : 0, offset);
+    offset = buf.writeUInt8(config.headerUpdated ? 1 : 0, offset);
+    offset = buf.writeUInt8(config.reTx ? 1 : 0, offset);
+    offset = buf.writeUInt8(config.securityProcessed ? 1 : 0, offset);
+    offset = buf.writeUInt32LE(config.txDelay, offset);
+    offset = buf.writeUInt32LE(config.txDelayBaseTime, offset);
+    offset = buf.writeUInt8(config.rxChannelAfterTxDone, offset);
 
     return buf;
 }

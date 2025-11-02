@@ -148,7 +148,7 @@ export function decodeZigbeeAPSFrameControl(data: Buffer, offset: number): [Zigb
 }
 
 function encodeZigbeeAPSFrameControl(data: Buffer, offset: number, fcf: ZigbeeAPSFrameControl): number {
-    data.writeUInt8(
+    offset = data.writeUInt8(
         (fcf.frameType & ZigbeeAPSConsts.FCF_FRAME_TYPE) |
             ((fcf.deliveryMode << 2) & ZigbeeAPSConsts.FCF_DELIVERY_MODE) |
             // ((fcf.indirectMode << 4) & ZigbeeAPSConsts.FCF_INDIRECT_MODE) |
@@ -158,7 +158,6 @@ function encodeZigbeeAPSFrameControl(data: Buffer, offset: number, fcf: ZigbeeAP
             (((fcf.extendedHeader ? 1 : 0) << 7) & ZigbeeAPSConsts.FCF_EXT_HEADER),
         offset,
     );
-    offset += 1;
 
     return offset;
 }
@@ -317,48 +316,39 @@ export function encodeZigbeeAPSHeader(data: Buffer, offset: number, header: Zigb
             }
 
             if (destPresent) {
-                data.writeUInt8(header.destEndpoint!, offset);
-                offset += 1;
+                offset = data.writeUInt8(header.destEndpoint!, offset);
             }
         }
 
         if (header.frameControl.deliveryMode === ZigbeeAPSDeliveryMode.GROUP) {
-            data.writeUInt16LE(header.group!, offset);
-            offset += 2;
+            offset = data.writeUInt16LE(header.group!, offset);
         }
 
-        data.writeUInt16LE(header.clusterId!, offset);
-        offset += 2;
+        offset = data.writeUInt16LE(header.clusterId!, offset);
 
-        data.writeUInt16LE(header.profileId!, offset);
-        offset += 2;
+        offset = data.writeUInt16LE(header.profileId!, offset);
 
         if (sourcePresent) {
-            data.writeUInt8(header.sourceEndpoint!, offset);
-            offset += 1;
+            offset = data.writeUInt8(header.sourceEndpoint!, offset);
         }
     }
 
     if (header.frameControl.frameType !== ZigbeeAPSFrameType.INTERPAN) {
-        data.writeUInt8(header.counter!, offset);
-        offset += 1;
+        offset = data.writeUInt8(header.counter!, offset);
     }
 
     if (header.frameControl.extendedHeader) {
         const fragmentation = header.fragmentation ?? ZigbeeAPSFragmentation.NONE;
         const fcf = fragmentation & ZigbeeAPSConsts.EXT_FCF_FRAGMENT;
 
-        data.writeUInt8(fcf, offset);
-        offset += 1;
+        offset = data.writeUInt8(fcf, offset);
 
         if (fragmentation !== ZigbeeAPSFragmentation.NONE) {
-            data.writeUInt8(header.fragBlockNumber!, offset);
-            offset += 1;
+            offset = data.writeUInt8(header.fragBlockNumber!, offset);
         }
 
         if (fragmentation !== ZigbeeAPSFragmentation.NONE && header.frameControl.frameType === ZigbeeAPSFrameType.ACK) {
-            data.writeUInt8(header.fragACKBitfield!, offset);
-            offset += 1;
+            offset = data.writeUInt8(header.fragACKBitfield!, offset);
         }
     }
 
@@ -413,18 +403,13 @@ export function encodeZigbeeAPSFrame(
         // the octet string `a` SHALL be the string ApsHeader || Auxiliary-Header and the octet string `m` SHALL be the string Payload
         const [cryptedPayload, authTag, eOutOffset] = encryptZigbeePayload(data, offset, payload, securityHeader!, encryptKey);
         offset = eOutOffset;
-
-        data.set(cryptedPayload, offset);
-        offset += cryptedPayload.byteLength;
-
-        data.set(authTag, offset);
-        offset += authTag.byteLength;
+        offset += cryptedPayload.copy(data, offset);
+        offset += authTag.copy(data, offset);
 
         return data.subarray(0, offset);
     }
 
-    data.set(payload, offset);
-    offset += payload.byteLength;
+    offset += payload.copy(data, offset);
 
     // TODO: auth tag?
     //       the octet string `a` SHALL be the string ApsHeader || AuxiliaryHeader || Payload and the octet string `m` SHALL be a string of length zero

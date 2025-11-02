@@ -310,7 +310,7 @@ export function decodeZigbeeNWKFrameControl(data: Buffer, offset: number): [Zigb
 }
 
 function encodeZigbeeNWKFrameControl(view: Buffer, offset: number, fcf: ZigbeeNWKFrameControl): number {
-    view.writeUInt16LE(
+    offset = view.writeUInt16LE(
         (fcf.frameType & ZigbeeNWKConsts.FCF_FRAME_TYPE) |
             ((fcf.protocolVersion << 2) & ZigbeeNWKConsts.FCF_VERSION) |
             ((fcf.discoverRoute << 6) & ZigbeeNWKConsts.FCF_DISCOVER_ROUTE) |
@@ -322,7 +322,6 @@ function encodeZigbeeNWKFrameControl(view: Buffer, offset: number, fcf: ZigbeeNW
             (((fcf.endDeviceInitiator ? 1 : 0) << 13) & ZigbeeNWKConsts.FCF_END_DEVICE_INITIATOR),
         offset,
     );
-    offset += 2;
 
     return offset;
 }
@@ -400,34 +399,25 @@ function encodeZigbeeNWKHeader(data: Buffer, offset: number, header: ZigbeeNWKHe
     offset = encodeZigbeeNWKFrameControl(data, offset, header.frameControl);
 
     if (header.frameControl.frameType !== ZigbeeNWKFrameType.INTERPAN) {
-        data.writeUInt16LE(header.destination16!, offset);
-        offset += 2;
-        data.writeUInt16LE(header.source16!, offset);
-        offset += 2;
-        data.writeUInt8(header.radius!, offset);
-        offset += 1;
-        data.writeUInt8(header.seqNum!, offset);
-        offset += 1;
+        offset = data.writeUInt16LE(header.destination16!, offset);
+        offset = data.writeUInt16LE(header.source16!, offset);
+        offset = data.writeUInt8(header.radius!, offset);
+        offset = data.writeUInt8(header.seqNum!, offset);
 
         if (header.frameControl.extendedDestination) {
-            data.writeBigUInt64LE(header.destination64!, offset);
-            offset += 8;
+            offset = data.writeBigUInt64LE(header.destination64!, offset);
         }
 
         if (header.frameControl.extendedSource) {
-            data.writeBigUInt64LE(header.source64!, offset);
-            offset += 8;
+            offset = data.writeBigUInt64LE(header.source64!, offset);
         }
 
         if (header.frameControl.sourceRoute) {
-            data.writeUInt8(header.relayAddresses!.length, offset);
-            offset += 1;
-            data.writeUInt8(header.relayIndex!, offset);
-            offset += 1;
+            offset = data.writeUInt8(header.relayAddresses!.length, offset);
+            offset = data.writeUInt8(header.relayIndex!, offset);
 
             for (const relayAddress of header.relayAddresses!) {
-                data.writeUInt16LE(relayAddress, offset);
-                offset += 2;
+                offset = data.writeUInt16LE(relayAddress, offset);
             }
         }
     }
@@ -483,18 +473,13 @@ export function encodeZigbeeNWKFrame(
     if (header.frameControl.security) {
         const [cryptedPayload, authTag, eOutOffset] = encryptZigbeePayload(data, offset, payload, securityHeader!, encryptKey);
         offset = eOutOffset;
-
-        data.set(cryptedPayload, offset);
-        offset += cryptedPayload.byteLength;
-
-        data.set(authTag, offset);
-        offset += authTag.byteLength;
+        offset += cryptedPayload.copy(data, offset);
+        offset += authTag.copy(data, offset);
 
         return data.subarray(0, offset);
     }
 
-    data.set(payload, offset);
-    offset += payload.byteLength;
+    offset += payload.copy(data, offset);
 
     return data.subarray(0, offset);
 }

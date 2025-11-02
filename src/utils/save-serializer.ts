@@ -134,15 +134,14 @@ export function calculateTLVSize(valueLength: number): number {
  */
 export function writeTLV(buffer: Buffer, offset: number, tag: TLVTag | DeviceTLVTag | SourceRouteTLVTag, value: Buffer): number {
     const length = value.length;
-
-    buffer.writeUInt8(tag, offset++);
+    offset = buffer.writeUInt8(tag, offset);
 
     if (length < LENGTH_THRESHOLD) {
-        buffer.writeUInt8(length, offset++);
+        offset = buffer.writeUInt8(length, offset);
     } else {
         // Two-byte length with high bit set
-        buffer.writeUInt8((length >> 8) | 0x80, offset++);
-        buffer.writeUInt8(length & 0xff, offset++);
+        offset = buffer.writeUInt8((length >> 8) | 0x80, offset);
+        offset = buffer.writeUInt8(length & 0xff, offset);
     }
 
     value.copy(buffer, offset);
@@ -159,9 +158,9 @@ export function writeTLV(buffer: Buffer, offset: number, tag: TLVTag | DeviceTLV
  * @returns
  */
 export function writeTLVUInt8(buffer: Buffer, offset: number, tag: TLVTag | DeviceTLVTag | SourceRouteTLVTag, value: number): number {
-    buffer.writeUInt8(tag, offset++);
-    buffer.writeUInt8(1, offset++);
-    buffer.writeUInt8(value, offset++);
+    offset = buffer.writeUInt8(tag, offset);
+    offset = buffer.writeUInt8(1, offset);
+    offset = buffer.writeUInt8(value, offset);
 
     return offset;
 }
@@ -175,9 +174,9 @@ export function writeTLVUInt8(buffer: Buffer, offset: number, tag: TLVTag | Devi
  * @returns
  */
 export function writeTLVInt8(buffer: Buffer, offset: number, tag: TLVTag, value: number): number {
-    buffer.writeUInt8(tag, offset++);
-    buffer.writeUInt8(1, offset++);
-    buffer.writeInt8(value, offset++);
+    offset = buffer.writeUInt8(tag, offset);
+    offset = buffer.writeUInt8(1, offset);
+    offset = buffer.writeInt8(value, offset);
 
     return offset;
 }
@@ -191,11 +190,11 @@ export function writeTLVInt8(buffer: Buffer, offset: number, tag: TLVTag, value:
  * @returns
  */
 export function writeTLVUInt16LE(buffer: Buffer, offset: number, tag: TLVTag | DeviceTLVTag, value: number): number {
-    buffer.writeUInt8(tag, offset++);
-    buffer.writeUInt8(2, offset++);
-    buffer.writeUInt16LE(value, offset);
+    offset = buffer.writeUInt8(tag, offset);
+    offset = buffer.writeUInt8(2, offset);
+    offset = buffer.writeUInt16LE(value, offset);
 
-    return offset + 2;
+    return offset;
 }
 
 /**
@@ -207,11 +206,11 @@ export function writeTLVUInt16LE(buffer: Buffer, offset: number, tag: TLVTag | D
  * @returns
  */
 export function writeTLVUInt32LE(buffer: Buffer, offset: number, tag: TLVTag, value: number): number {
-    buffer.writeUInt8(tag, offset++);
-    buffer.writeUInt8(4, offset++);
-    buffer.writeUInt32LE(value, offset);
+    offset = buffer.writeUInt8(tag, offset);
+    offset = buffer.writeUInt8(4, offset);
+    offset = buffer.writeUInt32LE(value, offset);
 
-    return offset + 4;
+    return offset;
 }
 
 /**
@@ -223,11 +222,11 @@ export function writeTLVUInt32LE(buffer: Buffer, offset: number, tag: TLVTag, va
  * @returns
  */
 export function writeTLVBigUInt64LE(buffer: Buffer, offset: number, tag: TLVTag | DeviceTLVTag, value: bigint): number {
-    buffer.writeUInt8(tag, offset++);
-    buffer.writeUInt8(8, offset++);
-    buffer.writeBigUInt64LE(value, offset);
+    offset = buffer.writeUInt8(tag, offset);
+    offset = buffer.writeUInt8(8, offset);
+    offset = buffer.writeBigUInt64LE(value, offset);
 
-    return offset + 8;
+    return offset;
 }
 
 /**
@@ -542,9 +541,7 @@ export function serializeSourceRouteEntry(pathCost: number, relayAddresses: numb
         let relayOffset = 0;
 
         for (const address of relayAddresses) {
-            relayBuf.writeUInt16LE(address, relayOffset);
-
-            relayOffset += 2;
+            relayOffset = relayBuf.writeUInt16LE(address, relayOffset);
         }
 
         offset = writeTLV(buffer, offset, SourceRouteTLVTag.RELAY_ADDRESSES, relayBuf);
