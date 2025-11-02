@@ -15,6 +15,8 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MACHeader } from "../../src/zigbee/mac.js";
+import { MACFrameAddressMode, MACFrameType } from "../../src/zigbee/mac.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import {
     decodeZigbeeNWKGPFrameControl,
@@ -33,6 +35,7 @@ import { NWKGPHandler, type NWKGPHandlerCallbacks } from "../../src/zigbee-stack
 import { NWKHandler, type NWKHandlerCallbacks } from "../../src/zigbee-stack/nwk-handler.js";
 import { type NetworkParameters, StackContext, type StackContextCallbacks } from "../../src/zigbee-stack/stack-context.js";
 import { NETDEF_EXTENDED_PAN_ID, NETDEF_NETWORK_KEY, NETDEF_PAN_ID, NETDEF_TC_KEY, NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0 } from "../data.js";
+import { createMACHeader, createNWKGPHeader } from "../utils.js";
 import { decodeMACFramePayload, NO_ACK_CODE } from "./utils.js";
 
 describe("Zigbee 3.0 Green Power (NWK GP) Compliance", () => {
@@ -128,6 +131,43 @@ describe("Zigbee 3.0 Green Power (NWK GP) Compliance", () => {
         return { macDecoded, gpPayload, gpFrameControl, gpHeader, gpdf };
     }
 
+    function cloneMACHeader(header: MACHeader): MACHeader {
+        return {
+            ...header,
+            frameControl: { ...header.frameControl },
+        };
+    }
+
+    function cloneGPHeader(header: ZigbeeNWKGPHeader): ZigbeeNWKGPHeader {
+        return {
+            ...header,
+            frameControl: { ...header.frameControl },
+            frameControlExt: header.frameControlExt ? { ...header.frameControlExt } : undefined,
+        };
+    }
+
+    async function deliverIfNotDuplicate(
+        macHeader: MACHeader,
+        nwkHeader: ZigbeeNWKGPHeader,
+        payload: Buffer,
+        lqa: number,
+        useFakeTimers = false,
+    ): Promise<boolean> {
+        if (nwkGPHandler.isDuplicateFrame(macHeader, nwkHeader)) {
+            return false;
+        }
+
+        nwkGPHandler.processFrame(payload, macHeader, nwkHeader, lqa);
+
+        if (useFakeTimers) {
+            await vi.runAllTimersAsync();
+        } else {
+            await new Promise((resolve) => setImmediate(resolve));
+        }
+
+        return true;
+    }
+
     it("parses GP stub frame control fields for recall scene broadcasts", () => {
         const decoded = decodeGPFromMacFrame(Buffer.from(NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0));
 
@@ -193,5 +233,109 @@ describe("Zigbee 3.0 Green Power (NWK GP) Compliance", () => {
         expect(decodedHeader.securityFrameCounter).toStrictEqual(0x10203040);
         expect(decodedHeader.micSize).toStrictEqual(4);
         expect(decodedPayload).toStrictEqual(payload);
+    });
+
+    it("blocks commissioning commands when joins are closed", async () => {
+        const macHeader = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.EXT, MACFrameAddressMode.EXT);
+        const nwkHeader = createNWKGPHeader();
+        nwkHeader.frameControl.frameType = ZigbeeNWKGPFrameType.DATA;
+        nwkHeader.payloadLength = 2;
+        const command = ZigbeeNWKGPCommandId.COMMISSIONING;
+        const payload = Buffer.from([command, 0x01]);
+
+        await deliverIfNotDuplicate(cloneMACHeader(macHeader), cloneGPHeader(nwkHeader), payload, 0x64);
+
+        expect(mockNWKGPHandlerCallbacks.onGPFrame).not.toHaveBeenCalled();
+
+        nwkGPHandler.enterCommissioningMode(5);
+        const macHeader2 = cloneMACHeader(macHeader);
+        macHeader2.sequenceNumber = (macHeader.sequenceNumber ?? 0) + 1;
+        const nwkHeader2 = cloneGPHeader(nwkHeader);
+        nwkHeader2.securityFrameCounter = (nwkHeader.securityFrameCounter ?? 0) + 1;
+
+        await deliverIfNotDuplicate(macHeader2, nwkHeader2, payload, 0x64);
+
+        expect(mockNWKGPHandlerCallbacks.onGPFrame).toHaveBeenCalledTimes(1);
+        expect(mockNWKGPHandlerCallbacks.onGPFrame).toHaveBeenLastCalledWith(command, payload.subarray(1), macHeader2, nwkHeader2, 0x64);
+    });
+
+    it("enforces monotonic security frame counter per GPD", async () => {
+        const macHeaderBase = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.EXT, MACFrameAddressMode.EXT);
+        const nwkHeaderBase = createNWKGPHeader();
+        nwkHeaderBase.frameControl.frameType = ZigbeeNWKGPFrameType.DATA;
+        nwkHeaderBase.payloadLength = 1;
+
+        const command = ZigbeeNWKGPCommandId.RECALL_SCENE0;
+        const data = Buffer.from([command]);
+
+        const send = async (counter: number, seqOffset: number) => {
+            const macHeader = cloneMACHeader(macHeaderBase);
+            macHeader.sequenceNumber = (macHeader.sequenceNumber ?? 0) + seqOffset;
+            const nwkHeader = cloneGPHeader(nwkHeaderBase);
+            nwkHeader.securityFrameCounter = counter;
+
+            await deliverIfNotDuplicate(macHeader, nwkHeader, data, 0x40);
+        };
+
+        await send(200, 0);
+        await send(200, 1);
+        await send(201, 2);
+
+        expect(mockNWKGPHandlerCallbacks.onGPFrame).toHaveBeenCalledTimes(2);
+    });
+
+    it("falls back to MAC sequence and FCS for anonymous GPDs", async () => {
+        const macHeaderBase = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.EXT, MACFrameAddressMode.EXT);
+        macHeaderBase.source64 = undefined;
+        macHeaderBase.sequenceNumber = 50;
+        macHeaderBase.fcs = 0x1234;
+
+        const nwkHeaderBase = createNWKGPHeader();
+        nwkHeaderBase.sourceId = undefined;
+        nwkHeaderBase.securityFrameCounter = undefined;
+        nwkHeaderBase.frameControl.frameType = ZigbeeNWKGPFrameType.DATA;
+        nwkHeaderBase.payloadLength = 1;
+
+        const data = Buffer.from([ZigbeeNWKGPCommandId.RECALL_SCENE0]);
+
+        const send = async (fcs: number) => {
+            const macHeader = cloneMACHeader(macHeaderBase);
+            macHeader.fcs = fcs;
+            const nwkHeader = cloneGPHeader(nwkHeaderBase);
+
+            await deliverIfNotDuplicate(macHeader, nwkHeader, data, 0x55);
+        };
+
+        await send(0x1234);
+        await send(0x1234);
+        await send(0x1235);
+
+        expect(mockNWKGPHandlerCallbacks.onGPFrame).toHaveBeenCalledTimes(2);
+    });
+
+    it("expires duplicate cache entries after 60 seconds", async () => {
+        vi.useFakeTimers();
+
+        const macHeaderBase = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.EXT, MACFrameAddressMode.EXT);
+        const nwkHeaderBase = createNWKGPHeader();
+        nwkHeaderBase.frameControl.frameType = ZigbeeNWKGPFrameType.DATA;
+        nwkHeaderBase.payloadLength = 1;
+        const data = Buffer.from([ZigbeeNWKGPCommandId.RECALL_SCENE0]);
+
+        const send = async () => {
+            const macHeader = cloneMACHeader(macHeaderBase);
+            const nwkHeader = cloneGPHeader(nwkHeaderBase);
+
+            await deliverIfNotDuplicate(macHeader, nwkHeader, data, 0x33, true);
+        };
+
+        await send();
+        await send();
+        expect(mockNWKGPHandlerCallbacks.onGPFrame).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(61000);
+        await send();
+
+        expect(mockNWKGPHandlerCallbacks.onGPFrame).toHaveBeenCalledTimes(2);
     });
 });

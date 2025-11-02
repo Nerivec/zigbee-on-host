@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MACFrameAddressMode, MACFrameType } from "../../src/zigbee/mac.js";
-import { ZigbeeNWKGPCommandId } from "../../src/zigbee/zigbee-nwkgp.js";
+import { ZigbeeNWKGPAppId, ZigbeeNWKGPCommandId, ZigbeeNWKGPFrameType } from "../../src/zigbee/zigbee-nwkgp.js";
 import { NWKGPHandler, type NWKGPHandlerCallbacks } from "../../src/zigbee-stack/nwk-gp-handler.js";
 import { createMACHeader, createNWKGPHeader } from "../utils.js";
 
@@ -14,6 +14,11 @@ describe("NWK GP Handler", () => {
         };
 
         nwkgpHandler = new NWKGPHandler(mockCallbacks);
+    });
+
+    afterEach(() => {
+        nwkgpHandler.stop();
+        vi.useRealTimers();
     });
 
     describe("Duplicate Detection", () => {
@@ -54,6 +59,75 @@ describe("NWK GP Handler", () => {
             macHeader.sequenceNumber = 11;
             const isDuplicate3 = nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader);
             expect(isDuplicate3).toStrictEqual(false);
+        });
+
+        it("uses endpoint as part of IEEE-addressed duplicate key", () => {
+            const macHeader = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.EXT, MACFrameAddressMode.EXT);
+            const nwkHeader = createNWKGPHeader();
+
+            nwkHeader.sourceId = undefined;
+            nwkHeader.frameControl.frameType = ZigbeeNWKGPFrameType.DATA;
+            nwkHeader.frameControl.nwkFrameControlExtension = true;
+            nwkHeader.frameControlExt = {
+                appId: ZigbeeNWKGPAppId.ZGP,
+                securityLevel: 0,
+                securityKey: false,
+                rxAfterTx: false,
+                direction: 0,
+            };
+            nwkHeader.source64 = 0x00124b0000112233n;
+            nwkHeader.endpoint = 0xf2;
+
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(true);
+
+            const nwkHeaderDifferentEndpoint = { ...nwkHeader, endpoint: 0xf3 };
+
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeaderDifferentEndpoint)).toStrictEqual(false);
+        });
+
+        it("expires duplicate cache entries after timeout", () => {
+            vi.useFakeTimers();
+
+            const macHeader = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.EXT, MACFrameAddressMode.EXT);
+            const nwkHeader = createNWKGPHeader();
+
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
+
+            vi.advanceTimersByTime(59000);
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(true);
+
+            vi.advanceTimersByTime(2000);
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
+        });
+
+        it("falls back to MAC sequence + FCS when identifiers missing", () => {
+            const macHeader = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.EXT, MACFrameAddressMode.EXT);
+            macHeader.source64 = undefined;
+            macHeader.sequenceNumber = 22;
+            macHeader.fcs = 0x1234;
+
+            const nwkHeader = createNWKGPHeader();
+            nwkHeader.sourceId = undefined;
+            nwkHeader.securityFrameCounter = undefined;
+
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(true);
+
+            macHeader.fcs = 0x1235;
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
+        });
+
+        it("clears duplicate cache on stop", () => {
+            const macHeader = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.EXT, MACFrameAddressMode.EXT);
+            const nwkHeader = createNWKGPHeader();
+
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(true);
+
+            nwkgpHandler.stop();
+
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
         });
     });
 
