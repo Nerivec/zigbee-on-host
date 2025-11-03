@@ -9,7 +9,7 @@
  */
 
 import { ZigbeeConsts } from "../zigbee/zigbee.js";
-import type { AppLinkKeyStoreEntry, DeviceTableEntry, NetworkParameters, SourceRouteTableEntry } from "../zigbee-stack/stack-context.js";
+import type { AppLinkKeyStoreEntry, DeviceTableEntry, NetworkParameters, SourceRouteTableEntry } from "./stack-context.js";
 
 /**
  * Parsed device entry with final values ready to use.
