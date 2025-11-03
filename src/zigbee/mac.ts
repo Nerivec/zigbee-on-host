@@ -67,12 +67,6 @@ export const enum ZigbeeMACConsts {
     PENDADDR_LONG_MASK = 0x70,
     PENDADDR_LONG_SHIFT = 4,
 
-    HEADER_IE_TYPE_MASK = 0x8000,
-    HEADER_IE_ID_MASK = 0x7f80,
-    HEADER_IE_LENGTH_MASK = 0x007f,
-    HEADER_IE_HT1 = 0x7e,
-    HEADER_IE_HT2 = 0x7f,
-
     /** currently assumed always 2 */
     FCS_LEN = 2,
 
@@ -239,7 +233,6 @@ export type MACFrameControl = {
 export type MACAuxSecHeader = {
     securityLevel?: number;
     keyIdMode?: number;
-    frameCounterSuppression: boolean;
     asn?: number;
     frameCounter?: number;
     keySourceAddr32?: number;
@@ -383,6 +376,7 @@ export function decodeMACFrameControl(data: Buffer, offset: number): [MACFrameCo
     const frameType = fcf & ZigbeeMACConsts.FCF_TYPE_MASK;
 
     if (frameType === MACFrameType.MULTIPURPOSE) {
+        // MULTIPURPOSE frames belong to generic 802.15.4 features that Zigbee never exercises
         throw new Error(`Unsupported MAC frame type MULTIPURPOSE (${frameType})`);
     }
 
@@ -406,6 +400,7 @@ export function decodeMACFrameControl(data: Buffer, offset: number): [MACFrameCo
 
 function encodeMACFrameControl(data: Buffer, offset: number, fcf: MACFrameControl): number {
     if (fcf.frameType === MACFrameType.MULTIPURPOSE) {
+        // MULTIPURPOSE frames belong to generic 802.15.4 features that Zigbee never exercises
         throw new Error(`Unsupported MAC frame type MULTIPURPOSE (${fcf.frameType})`);
     }
 
@@ -427,10 +422,8 @@ function encodeMACFrameControl(data: Buffer, offset: number, fcf: MACFrameContro
     return offset;
 }
 
-function decodeMACAuxSecHeader(data: Buffer, offset: number, frameControl: MACFrameControl): [MACAuxSecHeader, offset: number] {
-    let frameCounterSuppression = false;
+function decodeMACAuxSecHeader(data: Buffer, offset: number): [MACAuxSecHeader, offset: number] {
     let asn: number | undefined;
-    let frameCounter: number | undefined;
     let keySourceAddr32: number | undefined;
     let keySourceAddr64: bigint | undefined;
     let keyIndex: number | undefined;
@@ -440,16 +433,8 @@ function decodeMACAuxSecHeader(data: Buffer, offset: number, frameControl: MACFr
     const securityLevel = securityControl & ZigbeeMACConsts.AUX_SEC_LEVEL_MASK;
     const keyIdMode = (securityControl & ZigbeeMACConsts.AUX_KEY_ID_MODE_MASK) >> ZigbeeMACConsts.AUX_KEY_ID_MODE_SHIFT;
 
-    if (frameControl.frameVersion === MACFrameVersion.V2015) {
-        frameCounterSuppression = Boolean(securityControl & ZigbeeMACConsts.AUX_FRAME_COUNTER_SUPPRESSION_MASK);
-        // TODO: correct??
-        asn = (securityControl & ZigbeeMACConsts.AUX_ASN_IN_NONCE_MASK) >> 6;
-    }
-
-    if (!frameCounterSuppression) {
-        frameCounter = data.readUInt32LE(offset);
-        offset += 4;
-    }
+    const frameCounter = data.readUInt32LE(offset);
+    offset += 4;
 
     if (keyIdMode !== MACSecurityKeyIdMode.IMPLICIT) {
         if (keyIdMode === MACSecurityKeyIdMode.EXPLICIT_4) {
@@ -468,7 +453,6 @@ function decodeMACAuxSecHeader(data: Buffer, offset: number, frameControl: MACFr
         {
             securityLevel,
             keyIdMode,
-            frameCounterSuppression,
             asn,
             frameCounter,
             keySourceAddr32,
@@ -647,74 +631,6 @@ function encodeMACPendAddr(data: Buffer, offset: number, header: MACHeader): num
     return offset;
 }
 
-export const enum MacZigbeePayloadIESubId {
-    REJOIN = 0x00,
-    TX_POWER = 0x01,
-    EB_PAYLOAD = 0x02,
-    // 0x003-0x3ff Reserved
-}
-
-function decodeMACHeaderIEs(data: Buffer, offset: number, auxSecHeader: MACAuxSecHeader | undefined): [MACHeaderIE, offset: number] {
-    let remaining = data.byteLength - offset - getMICLength(auxSecHeader?.securityLevel ?? 0);
-    let payloadIEPresent = false;
-    const ies: MACHeaderIE["ies"] = [];
-
-    do {
-        const header = data.readUInt16LE(offset);
-        offset += 2;
-        const id = (header & ZigbeeMACConsts.HEADER_IE_ID_MASK) >> 7;
-        const length = header & ZigbeeMACConsts.HEADER_IE_LENGTH_MASK;
-
-        ies.push({ id, length });
-
-        offset += 2 + length;
-        remaining -= 2 + length;
-
-        if (id === ZigbeeMACConsts.HEADER_IE_HT1 || id === ZigbeeMACConsts.HEADER_IE_HT2) {
-            payloadIEPresent = id === ZigbeeMACConsts.HEADER_IE_HT1;
-
-            break;
-        }
-    } while (remaining > 0);
-
-    return [
-        {
-            ies,
-            payloadIEPresent,
-        },
-        offset,
-    ];
-}
-
-// function encodeMACHeaderIEs(data: Buffer, offset: number): number {}
-
-// export type MACHeaderPayloadIE = {
-
-// }
-
-// /**
-//  * TODO: proper support for all IE stuff
-//  *
-//  * The Zigbee Payload IE is a Vendor Specific Payload IE (Group ID = 0x2) using the Zigbee OUI value of 0x4A191B.
-//  *   - Bits: 0-5     6-15    Octets: Variable
-//  *   -       Length  Sub-ID  Content
-//  *
-//  * REJOIN:
-//  *   - Octets: 8                        2
-//  *   -         Network Extended PAN ID  Sender Short Address
-//  *
-//  * TX_POWER:
-//  *   - Octets: 1
-//  *   -         TX Power (in dBm - used to send the frame)
-//  *
-//  * EB_PAYLOAD:
-//  *   - Octets: 15              2                         2
-//  *   -         Beacon Payload  Superframe Specification  Sender Short Address
-//  */
-// function decodeMACHeaderPayloadIEs(data: Buffer, offset: number, headerIE: MACHeaderIE): [MACHeaderPayloadIE[], offset: number] {
-//     return [[], offset];
-// }
-
 export function decodeMACCapabilities(capabilities: number): MACCapabilities {
     return {
         alternatePANCoordinator: Boolean(capabilities & 0x01),
@@ -768,6 +684,7 @@ export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACF
     let sourcePANPresent = false;
 
     if (frameControl.frameType === MACFrameType.MULTIPURPOSE) {
+        // MULTIPURPOSE frames belong to generic 802.15.4 features that Zigbee never exercises
         throw new Error("Unsupported MAC frame: MULTIPURPOSE");
     }
 
@@ -801,119 +718,6 @@ export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACF
             } else {
                 throw new Error("Invalid MAC frame: invalid addressing");
             }
-        }
-    } else if (frameControl.frameVersion === MACFrameVersion.V2015) {
-        if (
-            frameControl.frameType === MACFrameType.BEACON ||
-            frameControl.frameType === MACFrameType.DATA ||
-            frameControl.frameType === MACFrameType.ACK ||
-            frameControl.frameType === MACFrameType.CMD
-        ) {
-            if (
-                frameControl.destAddrMode === MACFrameAddressMode.NONE &&
-                frameControl.sourceAddrMode === MACFrameAddressMode.NONE &&
-                !frameControl.panIdCompression
-            ) {
-                destPANPresent = false;
-                sourcePANPresent = false;
-            } else if (
-                frameControl.destAddrMode === MACFrameAddressMode.NONE &&
-                frameControl.sourceAddrMode === MACFrameAddressMode.NONE &&
-                frameControl.panIdCompression
-            ) {
-                destPANPresent = true;
-                sourcePANPresent = false;
-            } else if (
-                frameControl.destAddrMode !== MACFrameAddressMode.NONE &&
-                frameControl.sourceAddrMode === MACFrameAddressMode.NONE &&
-                !frameControl.panIdCompression
-            ) {
-                destPANPresent = true;
-                sourcePANPresent = false;
-            } else if (
-                frameControl.destAddrMode !== MACFrameAddressMode.NONE &&
-                frameControl.sourceAddrMode === MACFrameAddressMode.NONE &&
-                frameControl.panIdCompression
-            ) {
-                destPANPresent = false;
-                sourcePANPresent = false;
-            } else if (
-                frameControl.destAddrMode === MACFrameAddressMode.NONE &&
-                frameControl.sourceAddrMode !== MACFrameAddressMode.NONE &&
-                !frameControl.panIdCompression
-            ) {
-                destPANPresent = false;
-                sourcePANPresent = true;
-            } else if (
-                frameControl.destAddrMode === MACFrameAddressMode.NONE &&
-                frameControl.sourceAddrMode !== MACFrameAddressMode.NONE &&
-                frameControl.panIdCompression
-            ) {
-                destPANPresent = false;
-                sourcePANPresent = false;
-            } else if (
-                frameControl.destAddrMode === MACFrameAddressMode.EXT &&
-                frameControl.sourceAddrMode === MACFrameAddressMode.EXT &&
-                !frameControl.panIdCompression
-            ) {
-                destPANPresent = true;
-                sourcePANPresent = false;
-            } else if (
-                frameControl.destAddrMode === MACFrameAddressMode.EXT &&
-                frameControl.sourceAddrMode === MACFrameAddressMode.EXT &&
-                frameControl.panIdCompression
-            ) {
-                destPANPresent = false;
-                sourcePANPresent = false;
-            } else if (
-                frameControl.destAddrMode === MACFrameAddressMode.SHORT &&
-                frameControl.sourceAddrMode === MACFrameAddressMode.SHORT &&
-                !frameControl.panIdCompression
-            ) {
-                destPANPresent = true;
-                sourcePANPresent = true;
-            } else if (
-                frameControl.destAddrMode === MACFrameAddressMode.SHORT &&
-                frameControl.sourceAddrMode === MACFrameAddressMode.EXT &&
-                !frameControl.panIdCompression
-            ) {
-                destPANPresent = true;
-                sourcePANPresent = true;
-            } else if (
-                frameControl.destAddrMode === MACFrameAddressMode.EXT &&
-                frameControl.sourceAddrMode === MACFrameAddressMode.SHORT &&
-                !frameControl.panIdCompression
-            ) {
-                destPANPresent = true;
-                sourcePANPresent = true;
-            } else if (
-                frameControl.destAddrMode === MACFrameAddressMode.SHORT &&
-                frameControl.sourceAddrMode === MACFrameAddressMode.EXT &&
-                frameControl.panIdCompression
-            ) {
-                destPANPresent = true;
-                sourcePANPresent = false;
-            } else if (
-                frameControl.destAddrMode === MACFrameAddressMode.EXT &&
-                frameControl.sourceAddrMode === MACFrameAddressMode.SHORT &&
-                frameControl.panIdCompression
-            ) {
-                destPANPresent = true;
-                sourcePANPresent = false;
-            } else if (
-                frameControl.destAddrMode === MACFrameAddressMode.SHORT &&
-                frameControl.sourceAddrMode === MACFrameAddressMode.SHORT &&
-                frameControl.panIdCompression
-            ) {
-                destPANPresent = true;
-                sourcePANPresent = false;
-            } else {
-                throw new Error("Invalid MAC frame: unexpected PAN ID compression");
-            }
-        } else {
-            // PAN ID Compression is not used
-            destPANPresent = false;
-            sourcePANPresent = false;
         }
     } else {
         throw new Error("Invalid MAC frame: invalid version");
@@ -954,11 +758,8 @@ export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACF
 
     let auxSecHeader: MACAuxSecHeader | undefined;
 
-    if (
-        frameControl.securityEnabled &&
-        /*(frameControl.frameType === MACFrameType.MULTIPURPOSE || */ frameControl.frameVersion === MACFrameVersion.V2003
-    ) {
-        [auxSecHeader, offset] = decodeMACAuxSecHeader(data, offset, frameControl);
+    if (frameControl.securityEnabled && frameControl.frameVersion === MACFrameVersion.V2003) {
+        [auxSecHeader, offset] = decodeMACAuxSecHeader(data, offset);
     }
 
     let superframeSpec: MACSuperframeSpec | undefined;
@@ -967,34 +768,19 @@ export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACF
     let commandId: number | undefined;
     let headerIE: MACHeaderIE | undefined;
 
-    if (
-        /*frameControl.frameType !== MACFrameType.MULTIPURPOSE && */
-        frameControl.frameVersion === MACFrameVersion.V2003 ||
-        frameControl.frameVersion === MACFrameVersion.V2006
-    ) {
-        if (frameControl.frameType === MACFrameType.BEACON) {
-            [superframeSpec, offset] = decodeMACSuperframeSpec(data, offset);
-            [gtsInfo, offset] = decodeMACGtsInfo(data, offset);
-            [pendAddr, offset] = decodeMACPendAddr(data, offset);
-        } else if (frameControl.frameType === MACFrameType.CMD) {
-            commandId = data.readUInt8(offset);
-            offset += 1;
-        }
-    } else {
-        if (frameControl.iePresent) {
-            [headerIE, offset] = decodeMACHeaderIEs(data, offset, auxSecHeader);
-            // TODO: headerIE.payloadIEPresent === true, Zigbee OUI?
-        }
+    if (frameControl.frameType === MACFrameType.BEACON) {
+        [superframeSpec, offset] = decodeMACSuperframeSpec(data, offset);
+        [gtsInfo, offset] = decodeMACGtsInfo(data, offset);
+        [pendAddr, offset] = decodeMACPendAddr(data, offset);
+    } else if (frameControl.frameType === MACFrameType.CMD) {
+        commandId = data.readUInt8(offset);
+        offset += 1;
     }
 
     let frameCounter: number | undefined;
     let keySeqCounter: number | undefined;
 
-    if (
-        frameControl.securityEnabled &&
-        /*frameControl.frameType !== MACFrameType.MULTIPURPOSE && */
-        frameControl.frameVersion === MACFrameVersion.V2003
-    ) {
+    if (frameControl.securityEnabled && frameControl.frameVersion === MACFrameVersion.V2003) {
         // auxSecHeader?.securityLevel = ???;
         const isEncrypted = auxSecHeader!.securityLevel! & 0x04;
 
@@ -1067,6 +853,7 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
         let sourcePANPresent = false;
 
         if (header.frameControl.frameType === MACFrameType.MULTIPURPOSE) {
+            // MULTIPURPOSE frames belong to generic 802.15.4 features that Zigbee never exercises
             throw new Error("Unsupported MAC frame: MULTIPURPOSE");
         }
 
@@ -1110,119 +897,6 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
                     throw new Error("Invalid MAC frame: invalid addressing");
                 }
             }
-        } else if (header.frameControl.frameVersion === MACFrameVersion.V2015) {
-            if (
-                header.frameControl.frameType === MACFrameType.BEACON ||
-                header.frameControl.frameType === MACFrameType.DATA ||
-                header.frameControl.frameType === MACFrameType.ACK ||
-                header.frameControl.frameType === MACFrameType.CMD
-            ) {
-                if (
-                    header.frameControl.destAddrMode === MACFrameAddressMode.NONE &&
-                    header.frameControl.sourceAddrMode === MACFrameAddressMode.NONE &&
-                    !header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = false;
-                    sourcePANPresent = false;
-                } else if (
-                    header.frameControl.destAddrMode === MACFrameAddressMode.NONE &&
-                    header.frameControl.sourceAddrMode === MACFrameAddressMode.NONE &&
-                    header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = true;
-                    sourcePANPresent = false;
-                } else if (
-                    header.frameControl.destAddrMode !== MACFrameAddressMode.NONE &&
-                    header.frameControl.sourceAddrMode === MACFrameAddressMode.NONE &&
-                    !header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = true;
-                    sourcePANPresent = false;
-                } else if (
-                    header.frameControl.destAddrMode !== MACFrameAddressMode.NONE &&
-                    header.frameControl.sourceAddrMode === MACFrameAddressMode.NONE &&
-                    header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = false;
-                    sourcePANPresent = false;
-                } else if (
-                    header.frameControl.destAddrMode === MACFrameAddressMode.NONE &&
-                    header.frameControl.sourceAddrMode !== MACFrameAddressMode.NONE &&
-                    !header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = false;
-                    sourcePANPresent = true;
-                } else if (
-                    header.frameControl.destAddrMode === MACFrameAddressMode.NONE &&
-                    header.frameControl.sourceAddrMode !== MACFrameAddressMode.NONE &&
-                    header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = false;
-                    sourcePANPresent = false;
-                } else if (
-                    header.frameControl.destAddrMode === MACFrameAddressMode.EXT &&
-                    header.frameControl.sourceAddrMode === MACFrameAddressMode.EXT &&
-                    !header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = true;
-                    sourcePANPresent = false;
-                } else if (
-                    header.frameControl.destAddrMode === MACFrameAddressMode.EXT &&
-                    header.frameControl.sourceAddrMode === MACFrameAddressMode.EXT &&
-                    header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = false;
-                    sourcePANPresent = false;
-                } else if (
-                    header.frameControl.destAddrMode === MACFrameAddressMode.SHORT &&
-                    header.frameControl.sourceAddrMode === MACFrameAddressMode.SHORT &&
-                    !header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = true;
-                    sourcePANPresent = true;
-                } else if (
-                    header.frameControl.destAddrMode === MACFrameAddressMode.SHORT &&
-                    header.frameControl.sourceAddrMode === MACFrameAddressMode.EXT &&
-                    !header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = true;
-                    sourcePANPresent = true;
-                } else if (
-                    header.frameControl.destAddrMode === MACFrameAddressMode.EXT &&
-                    header.frameControl.sourceAddrMode === MACFrameAddressMode.SHORT &&
-                    !header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = true;
-                    sourcePANPresent = true;
-                } else if (
-                    header.frameControl.destAddrMode === MACFrameAddressMode.SHORT &&
-                    header.frameControl.sourceAddrMode === MACFrameAddressMode.EXT &&
-                    header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = true;
-                    sourcePANPresent = false;
-                } else if (
-                    header.frameControl.destAddrMode === MACFrameAddressMode.EXT &&
-                    header.frameControl.sourceAddrMode === MACFrameAddressMode.SHORT &&
-                    header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = true;
-                    sourcePANPresent = false;
-                } else if (
-                    header.frameControl.destAddrMode === MACFrameAddressMode.SHORT &&
-                    header.frameControl.sourceAddrMode === MACFrameAddressMode.SHORT &&
-                    header.frameControl.panIdCompression
-                ) {
-                    destPANPresent = true;
-                    sourcePANPresent = false;
-                } else {
-                    throw new Error("Invalid MAC frame: unexpected PAN ID compression");
-                }
-            } else {
-                // PAN ID Compression is not used
-                destPANPresent = false;
-                sourcePANPresent = false;
-            }
         } else {
             throw new Error("Invalid MAC frame: invalid version");
         }
@@ -1249,38 +923,20 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
 
         let auxSecHeader: MACAuxSecHeader | undefined;
 
-        if (
-            header.frameControl.securityEnabled &&
-            /*(header.frameControl.frameType === MACFrameType.MULTIPURPOSE || */ header.frameControl.frameVersion === MACFrameVersion.V2003
-        ) {
+        if (header.frameControl.securityEnabled && header.frameControl.frameVersion === MACFrameVersion.V2003) {
+            // Zigbee never relies on MAC layer security; the error documents the intentional gap
             throw new Error("Unsupported: securityEnabled");
-            // [auxSecHeader, offset] = encodeMACAuxSecHeader(data, offset, header.frameControl);
         }
 
-        if (
-            /*header.frameControl.frameType !== MACFrameType.MULTIPURPOSE && */
-            header.frameControl.frameVersion === MACFrameVersion.V2003 ||
-            header.frameControl.frameVersion === MACFrameVersion.V2006
-        ) {
-            if (header.frameControl.frameType === MACFrameType.BEACON) {
-                offset = encodeMACSuperframeSpec(data, offset, header);
-                offset = encodeMACGtsInfo(data, offset, header);
-                offset = encodeMACPendAddr(data, offset, header);
-            } else if (header.frameControl.frameType === MACFrameType.CMD) {
-                offset = data.writeUInt8(header.commandId!, offset);
-            }
-        } else {
-            if (header.frameControl.iePresent) {
-                throw new Error("Unsupported iePresent");
-                // offset = encodeMACHeaderIEs(data, offset, auxSecHeader);
-            }
+        if (header.frameControl.frameType === MACFrameType.BEACON) {
+            offset = encodeMACSuperframeSpec(data, offset, header);
+            offset = encodeMACGtsInfo(data, offset, header);
+            offset = encodeMACPendAddr(data, offset, header);
+        } else if (header.frameControl.frameType === MACFrameType.CMD) {
+            offset = data.writeUInt8(header.commandId!, offset);
         }
 
-        if (
-            header.frameControl.securityEnabled &&
-            /*header.frameControl.frameType !== MACFrameType.MULTIPURPOSE && */
-            header.frameControl.frameVersion === MACFrameVersion.V2003
-        ) {
+        if (header.frameControl.securityEnabled && header.frameControl.frameVersion === MACFrameVersion.V2003) {
             // auxSecHeader?.securityLevel = ???;
             const isEncrypted = auxSecHeader!.securityLevel! & 0x04;
 
@@ -1309,7 +965,7 @@ function crc16CCITT(data: Buffer): number {
 
 export function decodeMACPayload(data: Buffer, offset: number, frameControl: MACFrameControl, header: MACHeader): MACPayload {
     if (frameControl.securityEnabled) {
-        // XXX: not needed for Zigbee
+        // MAC layer security is intentionally unsupported for Zigbee hosts
         throw new Error("Unsupported MAC frame: security enabled");
     }
 
