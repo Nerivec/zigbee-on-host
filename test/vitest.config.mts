@@ -24,10 +24,10 @@ export default defineConfig({
             reportOnFailure: false,
             thresholds: {
                 /** current dev status, should maintain above this */
-                statements: 85,
-                functions: 85,
-                branches: 85,
-                lines: 85,
+                statements: 90,
+                branches: 90,
+                functions: 95,
+                lines: 90,
             },
         },
     },

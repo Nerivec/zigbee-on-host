@@ -129,6 +129,104 @@ describe("NWK GP Handler", () => {
 
             expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
         });
+
+        it("returns false when no duplicate key can be derived", () => {
+            const macHeader = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.NONE, MACFrameAddressMode.NONE);
+            macHeader.source64 = undefined;
+            macHeader.sequenceNumber = undefined;
+            delete (macHeader as { fcs?: number }).fcs;
+            macHeader.destination16 = undefined;
+
+            const nwkHeader = createNWKGPHeader();
+            nwkHeader.sourceId = undefined;
+            nwkHeader.source64 = undefined;
+            nwkHeader.securityFrameCounter = undefined;
+
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
+        });
+
+        it("returns false when fallback key lacks sequence number", () => {
+            const macHeader = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.NONE, MACFrameAddressMode.SHORT);
+            macHeader.source64 = undefined;
+            macHeader.source16 = 0x3344;
+            macHeader.sequenceNumber = undefined;
+
+            const nwkHeader = createNWKGPHeader();
+            nwkHeader.sourceId = undefined;
+            nwkHeader.source64 = undefined;
+            nwkHeader.securityFrameCounter = undefined;
+
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
+        });
+
+        it("treats missing IEEE endpoint as zero for duplicate tracking", () => {
+            const macHeader = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.EXT, MACFrameAddressMode.EXT);
+            const nwkHeader = createNWKGPHeader();
+
+            nwkHeader.sourceId = undefined;
+            nwkHeader.frameControl.frameType = ZigbeeNWKGPFrameType.DATA;
+            nwkHeader.frameControl.nwkFrameControlExtension = true;
+            nwkHeader.frameControlExt = {
+                appId: ZigbeeNWKGPAppId.ZGP,
+                securityLevel: 0,
+                securityKey: false,
+                rxAfterTx: false,
+                direction: 0,
+            };
+            nwkHeader.source64 = 0x00124b0000778899n;
+            nwkHeader.endpoint = undefined;
+
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(true);
+        });
+
+        it("falls back to MAC IEEE address when NWK identifiers are absent", () => {
+            const macHeader = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.EXT, MACFrameAddressMode.NONE);
+            macHeader.sequenceNumber = 0x22;
+
+            const nwkHeader = createNWKGPHeader();
+            nwkHeader.sourceId = undefined;
+            nwkHeader.source64 = undefined;
+            nwkHeader.securityFrameCounter = undefined;
+
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(true);
+        });
+
+        it("falls back to MAC short address when IEEE address is unavailable", () => {
+            const macHeader = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT);
+            macHeader.source64 = undefined;
+            macHeader.source16 = 0x5566;
+            macHeader.sequenceNumber = 0x44;
+
+            const nwkHeader = createNWKGPHeader();
+            nwkHeader.sourceId = undefined;
+            nwkHeader.source64 = undefined;
+            nwkHeader.securityFrameCounter = undefined;
+
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(true);
+        });
+
+        it("uses MAC sequence number with default FCS when no address identifiers exist", () => {
+            const macHeader = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.NONE, MACFrameAddressMode.NONE);
+            macHeader.source64 = undefined;
+            macHeader.source16 = undefined;
+            macHeader.sequenceNumber = 0x55;
+            delete (macHeader as { fcs?: number }).fcs;
+
+            const nwkHeader = createNWKGPHeader();
+            nwkHeader.sourceId = undefined;
+            nwkHeader.source64 = undefined;
+            nwkHeader.securityFrameCounter = undefined;
+
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(true);
+
+            macHeader.sequenceNumber = 0x56;
+
+            expect(nwkgpHandler.isDuplicateFrame(macHeader, nwkHeader)).toStrictEqual(false);
+        });
     });
 
     describe("Green Power Frame Processing", () => {
