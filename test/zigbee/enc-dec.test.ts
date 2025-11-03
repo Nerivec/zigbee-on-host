@@ -59,7 +59,7 @@ import {
     NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0,
 } from "../data.js";
 
-describe("Zigbee", () => {
+describe("Encoding-Decoding", () => {
     beforeAll(() => {
         registerDefaultHashedKeys(
             makeKeyedHashByType(ZigbeeKeyType.LINK, NETDEF_TC_KEY),
