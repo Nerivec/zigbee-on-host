@@ -1307,27 +1307,21 @@ function crc16CCITT(data: Buffer): number {
     return fcs;
 }
 
-function decryptPayload(data: Buffer, offset: number, frameControl: MACFrameControl): [Buffer, offset: number] {
+export function decodeMACPayload(data: Buffer, offset: number, frameControl: MACFrameControl, header: MACHeader): MACPayload {
     if (frameControl.securityEnabled) {
         // XXX: not needed for Zigbee
-        throw new Error("Unsupported MAC: security enabled");
+        throw new Error("Unsupported MAC frame: security enabled");
     }
 
     const endOffset = data.byteLength - ZigbeeMACConsts.FCS_LEN;
 
-    return [data.subarray(offset, endOffset), endOffset];
-}
-
-// function encryptPayload(data: Buffer, offset: number): number {}
-
-export function decodeMACPayload(data: Buffer, offset: number, frameControl: MACFrameControl, header: MACHeader): MACPayload {
-    const [payload, pOutOffset] = decryptPayload(data, offset, frameControl);
-
-    if (pOutOffset >= data.byteLength) {
+    if (endOffset - offset < 0) {
         throw new Error("Invalid MAC frame: no FCS");
     }
 
-    header.fcs = data.readUInt16LE(pOutOffset);
+    const payload = data.subarray(offset, endOffset);
+
+    header.fcs = data.readUInt16LE(endOffset);
 
     return payload;
 }

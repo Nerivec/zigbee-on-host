@@ -1586,7 +1586,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             const decoded = decodeMACFramePayload(frame);
 
             expect(() => decodeMACPayload(decoded.buffer, decoded.payloadOffset, decoded.frameControl, decoded.header)).toThrowError(
-                new Error("Unsupported MAC: security enabled"),
+                new Error("Unsupported MAC frame: security enabled"),
             );
         });
     });

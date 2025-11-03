@@ -1,7 +1,23 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MACAssociationStatus, MACCommandId, MACFrameAddressMode, MACFrameType, type MACHeader } from "../../src/zigbee/mac.js";
+import {
+    decodeMACFrameControl,
+    decodeMACHeader,
+    decodeMACPayload,
+    decodeMACZigbeeBeacon,
+    encodeMACFrame,
+    MACAssociationStatus,
+    MACCommandId,
+    MACFrameAddressMode,
+    type MACFrameControl,
+    MACFrameType,
+    MACFrameVersion,
+    type MACHeader,
+    ZigbeeMACConsts,
+} from "../../src/zigbee/mac.js";
+import { ZigbeeConsts } from "../../src/zigbee/zigbee.js";
+import { ZigbeeNWKConsts } from "../../src/zigbee/zigbee-nwk.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
 import { type NetworkParameters, StackContext, type StackContextCallbacks } from "../../src/zigbee-stack/stack-context.js";
 import { createMACFrameControl } from "../utils.js";
@@ -64,6 +80,8 @@ describe("MACHandler", () => {
 
         macHandler = new MACHandler(mockContext, mockCallbacks, NO_ACK_CODE);
     });
+
+    const getOnSendFrameMock = () => mockCallbacks.onSendFrame as ReturnType<typeof vi.fn>;
 
     afterEach(() => {
         rmSync(saveDir, { force: true, recursive: true });
@@ -151,7 +169,7 @@ describe("MACHandler", () => {
         it("should handle NO_ACK error", async () => {
             const dest16 = 0x1234;
             const error = new Error("MAC NO_ACK", { cause: NO_ACK_CODE });
-            (mockCallbacks.onSendFrame as ReturnType<typeof vi.fn>).mockRejectedValueOnce(error);
+            getOnSendFrameMock().mockRejectedValueOnce(error);
 
             const payload = Buffer.from([0x01, 0x02, 0x03]);
             const result = await macHandler.sendFrameDirect(1, payload, dest16, undefined);
@@ -166,7 +184,7 @@ describe("MACHandler", () => {
             mockContext.macNoACKs.set(dest16, 2);
 
             const error = new Error("MAC NO_ACK", { cause: NO_ACK_CODE });
-            (mockCallbacks.onSendFrame as ReturnType<typeof vi.fn>).mockRejectedValueOnce(error);
+            getOnSendFrameMock().mockRejectedValueOnce(error);
 
             const payload = Buffer.from([0x01, 0x02, 0x03]);
             await macHandler.sendFrameDirect(1, payload, dest16, undefined);
@@ -248,6 +266,55 @@ describe("MACHandler", () => {
             await macHandler.sendCommand(MACCommandId.ASSOC_RSP, undefined, 0x00124b0098765432n, true, cmdPayload);
 
             expect(mockCallbacks.onSendFrame).toHaveBeenCalledOnce();
+        });
+
+        it("encodes broadcast command without ACK and with PAN compression", async () => {
+            getOnSendFrameMock().mockClear();
+
+            const cmdPayload = Buffer.from([0x11, 0x22]);
+            await macHandler.sendCommand(MACCommandId.DATA_RQ, ZigbeeMACConsts.BCAST_ADDR, undefined, false, cmdPayload);
+
+            expect(mockCallbacks.onSendFrame).toHaveBeenCalledOnce();
+            const macFrame = getOnSendFrameMock().mock.calls[0][0] as Buffer;
+            const [frameControl, offsetAfterFCF] = decodeMACFrameControl(macFrame, 0);
+
+            expect(frameControl.ackRequest).toStrictEqual(false);
+            expect(frameControl.panIdCompression).toStrictEqual(true);
+            expect(frameControl.destAddrMode).toStrictEqual(MACFrameAddressMode.SHORT);
+
+            const [decodedHeader, payloadOffset] = decodeMACHeader(macFrame, offsetAfterFCF, frameControl);
+
+            expect(decodedHeader.destination16).toStrictEqual(ZigbeeMACConsts.BCAST_ADDR);
+            expect(decodedHeader.destinationPANId).toStrictEqual(mockContext.netParams.panId);
+            expect(decodedHeader.sourcePANId).toStrictEqual(mockContext.netParams.panId);
+            const payload = decodeMACPayload(macFrame, payloadOffset, frameControl, decodedHeader);
+
+            expect(payload.subarray(0, cmdPayload.length)).toStrictEqual(cmdPayload);
+        });
+
+        it("encodes extended command with ACK and extended source", async () => {
+            getOnSendFrameMock().mockClear();
+
+            const dest64 = 0x00124b0098765432n;
+            const cmdPayload = Buffer.from([0x33, 0x44, 0x55]);
+
+            await macHandler.sendCommand(MACCommandId.DISASSOC_NOTIFY, undefined, dest64, true, cmdPayload);
+
+            expect(mockCallbacks.onSendFrame).toHaveBeenCalledOnce();
+            const macFrame = getOnSendFrameMock().mock.calls[0][0] as Buffer;
+            const [frameControl, offsetAfterFCF] = decodeMACFrameControl(macFrame, 0);
+
+            expect(frameControl.ackRequest).toStrictEqual(true);
+            expect(frameControl.destAddrMode).toStrictEqual(MACFrameAddressMode.EXT);
+            expect(frameControl.sourceAddrMode).toStrictEqual(MACFrameAddressMode.EXT);
+
+            const [decodedHeader, payloadOffset] = decodeMACHeader(macFrame, offsetAfterFCF, frameControl);
+
+            expect(decodedHeader.destination64).toStrictEqual(dest64);
+            expect(decodedHeader.source64).toStrictEqual(mockContext.netParams.eui64);
+            const payload = decodeMACPayload(macFrame, payloadOffset, frameControl, decodedHeader);
+
+            expect(payload.subarray(0, cmdPayload.length)).toStrictEqual(cmdPayload);
         });
     });
 
@@ -402,6 +469,7 @@ describe("MACHandler", () => {
 
     describe("processBeaconReq", () => {
         it("should send beacon response", async () => {
+            getOnSendFrameMock().mockClear();
             const macHeader: MACHeader = {
                 frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
                 sequenceNumber: 1,
@@ -413,11 +481,31 @@ describe("MACHandler", () => {
 
             await macHandler.processBeaconReq(Buffer.alloc(0), 0, macHeader);
 
-            expect(mockCallbacks.onSendFrame).toHaveBeenCalled();
+            expect(mockCallbacks.onSendFrame).toHaveBeenCalledOnce();
+
+            const macFrame = getOnSendFrameMock().mock.calls[0][0] as Buffer;
+            const [frameControl, offsetAfterFCF] = decodeMACFrameControl(macFrame, 0);
+
+            expect(frameControl.frameType).toStrictEqual(MACFrameType.BEACON);
+            expect(frameControl.destAddrMode).toStrictEqual(MACFrameAddressMode.NONE);
+            expect(frameControl.sourceAddrMode).toStrictEqual(MACFrameAddressMode.SHORT);
+
+            const [decodedHeader, payloadOffset] = decodeMACHeader(macFrame, offsetAfterFCF, frameControl);
+
+            expect(decodedHeader.superframeSpec?.associationPermit).toStrictEqual(false);
+            expect(decodedHeader.superframeSpec?.panCoordinator).toStrictEqual(true);
+            expect(decodedHeader.gtsInfo?.permit).toStrictEqual(false);
+            expect(decodedHeader.pendAddr?.addr16List).toBeUndefined();
+            const payload = decodeMACPayload(macFrame, payloadOffset, frameControl, decodedHeader);
+            const beacon = decodeMACZigbeeBeacon(payload, 0);
+
+            expect(beacon.profile).toStrictEqual(0x2);
+            expect(beacon.extendedPANId).toStrictEqual(mockContext.netParams.extendedPanId);
         });
 
         it("should include association permit in beacon", async () => {
             mockContext.associationPermit = true;
+            getOnSendFrameMock().mockClear();
 
             const macHeader: MACHeader = {
                 frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
@@ -430,7 +518,17 @@ describe("MACHandler", () => {
 
             await macHandler.processBeaconReq(Buffer.alloc(0), 0, macHeader);
 
-            expect(mockCallbacks.onSendFrame).toHaveBeenCalled();
+            expect(mockCallbacks.onSendFrame).toHaveBeenCalledOnce();
+
+            const macFrame = getOnSendFrameMock().mock.calls[0][0] as Buffer;
+            const [frameControl, offsetAfterFCF] = decodeMACFrameControl(macFrame, 0);
+            const [decodedHeader, payloadOffset] = decodeMACHeader(macFrame, offsetAfterFCF, frameControl);
+
+            expect(decodedHeader.superframeSpec?.associationPermit).toStrictEqual(true);
+            const payload = decodeMACPayload(macFrame, payloadOffset, frameControl, decodedHeader);
+            const beacon = decodeMACZigbeeBeacon(payload, 0);
+
+            expect(beacon.routerCapacity).toStrictEqual(true);
         });
     });
 
@@ -572,6 +670,577 @@ describe("MACHandler", () => {
             await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
 
             expect(sendFrame).toHaveBeenCalledOnce();
+        });
+    });
+
+    describe("MAC frame encode/decode coverage", () => {
+        it("encodes command frames with short addressing using PAN compression", async () => {
+            getOnSendFrameMock().mockClear();
+            const payload = Buffer.from([0xaa, 0xbb]);
+
+            await macHandler.sendCommand(MACCommandId.DATA_RQ, 0x3456, undefined, false, payload);
+
+            const macFrame = getOnSendFrameMock().mock.calls.at(-1)?.[0] as Buffer;
+            expect(macFrame).toBeInstanceOf(Buffer);
+
+            const [fcf, headerOffset] = decodeMACFrameControl(macFrame, 0);
+            const [decodedHeader, payloadOffset] = decodeMACHeader(macFrame, headerOffset, fcf);
+
+            expect(decodedHeader.destinationPANId).toStrictEqual(netParams.panId);
+            expect(decodedHeader.sourcePANId).toStrictEqual(netParams.panId);
+            expect(decodedHeader.destination16).toStrictEqual(0x3456);
+            expect(decodedHeader.source16).toStrictEqual(ZigbeeConsts.COORDINATOR_ADDRESS);
+
+            const decodedPayload = decodeMACPayload(macFrame, payloadOffset, fcf, decodedHeader);
+            expect(decodedPayload.subarray(0, payload.length)).toStrictEqual(payload);
+        });
+
+        it("encodes association responses with extended addressing", async () => {
+            getOnSendFrameMock().mockClear();
+            const dest64 = 0x00124b0099998888n;
+
+            await macHandler.sendAssocRsp(dest64, 0x2468, MACAssociationStatus.SUCCESS);
+
+            const macFrame = getOnSendFrameMock().mock.calls.at(-1)?.[0] as Buffer;
+            expect(macFrame).toBeInstanceOf(Buffer);
+
+            const [fcf, headerOffset] = decodeMACFrameControl(macFrame, 0);
+            const [decodedHeader] = decodeMACHeader(macFrame, headerOffset, fcf);
+
+            expect(decodedHeader.destination64).toStrictEqual(dest64);
+            expect(decodedHeader.destinationPANId).toStrictEqual(netParams.panId);
+            expect(decodedHeader.source64).toStrictEqual(netParams.eui64);
+            expect(decodedHeader.sourcePANId).toStrictEqual(netParams.panId);
+        });
+
+        it("encodes beacon responses with Zigbee beacon payload", async () => {
+            getOnSendFrameMock().mockClear();
+
+            await macHandler.processBeaconReq(Buffer.alloc(0), 0, {
+                frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
+                sequenceNumber: 0,
+                destinationPANId: 0xffff,
+                destination16: ZigbeeMACConsts.BCAST_ADDR,
+                commandId: MACCommandId.BEACON_REQ,
+                fcs: 0,
+            });
+
+            const macFrame = getOnSendFrameMock().mock.calls.at(-1)?.[0] as Buffer;
+            expect(macFrame).toBeInstanceOf(Buffer);
+
+            const [fcf, headerOffset] = decodeMACFrameControl(macFrame, 0);
+            const [decodedHeader, payloadOffset] = decodeMACHeader(macFrame, headerOffset, fcf);
+
+            expect(decodedHeader.destinationPANId).toBeUndefined();
+            expect(decodedHeader.sourcePANId).toStrictEqual(netParams.panId);
+            expect(decodedHeader.superframeSpec?.panCoordinator).toStrictEqual(true);
+
+            const payload = decodeMACPayload(macFrame, payloadOffset, fcf, decodedHeader);
+            const beacon = decodeMACZigbeeBeacon(payload, 0);
+
+            expect(beacon.profile).toStrictEqual(0x2);
+            expect(beacon.version).toStrictEqual(ZigbeeNWKConsts.VERSION_2007);
+            expect(beacon.txOffset).toStrictEqual(0xffffff);
+            expect(beacon.updateId).toStrictEqual(netParams.nwkUpdateId);
+        });
+    });
+
+    describe("mac.ts direct coverage (non-Zigbee cases)", () => {
+        const dest16Value = 0x3344;
+        const source16Value = 0x5566;
+        const dest64Value = 0x00124b0000abcdden;
+        const source64Value = 0x00124b0000fedcban;
+        const destPanId = 0x1a62;
+        const sourcePanId = 0x1b63;
+
+        const makeHeader = (
+            frameControlOverrides: Partial<MACFrameControl>,
+            headerOverrides: Partial<Omit<MACHeader, "frameControl">> = {},
+        ): MACHeader => {
+            const frameControl: MACFrameControl = {
+                frameType: MACFrameType.DATA,
+                securityEnabled: false,
+                framePending: false,
+                ackRequest: false,
+                panIdCompression: false,
+                seqNumSuppress: false,
+                iePresent: false,
+                destAddrMode: MACFrameAddressMode.NONE,
+                frameVersion: MACFrameVersion.V2003,
+                sourceAddrMode: MACFrameAddressMode.NONE,
+                ...frameControlOverrides,
+            };
+
+            return {
+                frameControl,
+                sequenceNumber: 0x5a,
+                fcs: 0,
+                ...headerOverrides,
+            };
+        };
+
+        const decodeHeader = (frame: Buffer): MACHeader => {
+            const [fcf, headerOffset] = decodeMACFrameControl(frame, 0);
+            const [decodedHeader] = decodeMACHeader(frame, headerOffset, fcf);
+            return decodedHeader;
+        };
+
+        type PresenceCase = {
+            name: string;
+            frameControl: Partial<MACFrameControl>;
+            header: Partial<Omit<MACHeader, "frameControl">>;
+            expectDestPan: boolean;
+            expectSourcePan: boolean;
+        };
+
+        const ensureAddressFields = (frameControl: Partial<MACFrameControl>, header: PresenceCase["header"]): PresenceCase["header"] => {
+            const resolvedHeader = { ...header };
+
+            if (frameControl.destAddrMode === MACFrameAddressMode.SHORT && resolvedHeader.destination16 === undefined) {
+                resolvedHeader.destination16 = dest16Value;
+            } else if (frameControl.destAddrMode === MACFrameAddressMode.EXT && resolvedHeader.destination64 === undefined) {
+                resolvedHeader.destination64 = dest64Value;
+            }
+
+            if (frameControl.sourceAddrMode === MACFrameAddressMode.SHORT && resolvedHeader.source16 === undefined) {
+                resolvedHeader.source16 = source16Value;
+            } else if (frameControl.sourceAddrMode === MACFrameAddressMode.EXT && resolvedHeader.source64 === undefined) {
+                resolvedHeader.source64 = source64Value;
+            }
+
+            return resolvedHeader;
+        };
+
+        const v2003Cases: PresenceCase[] = [
+            {
+                name: "dest+source short without compression",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2003,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                    panIdCompression: false,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                    sourcePANId: sourcePanId,
+                },
+                expectDestPan: true,
+                expectSourcePan: true,
+            },
+            {
+                name: "dest+source short with compression",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2003,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                    panIdCompression: true,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                },
+                expectDestPan: true,
+                expectSourcePan: false,
+            },
+            {
+                name: "destination short only",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2003,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    sourceAddrMode: MACFrameAddressMode.NONE,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                },
+                expectDestPan: true,
+                expectSourcePan: false,
+            },
+            {
+                name: "source short only",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2003,
+                    destAddrMode: MACFrameAddressMode.NONE,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                },
+                header: {
+                    sourcePANId: sourcePanId,
+                },
+                expectDestPan: false,
+                expectSourcePan: true,
+            },
+            {
+                name: "no addressing",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2003,
+                    destAddrMode: MACFrameAddressMode.NONE,
+                    sourceAddrMode: MACFrameAddressMode.NONE,
+                },
+                header: {},
+                expectDestPan: false,
+                expectSourcePan: false,
+            },
+            {
+                name: "v2006 mirrored logic",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2006,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                    panIdCompression: false,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                    sourcePANId: sourcePanId,
+                },
+                expectDestPan: true,
+                expectSourcePan: true,
+            },
+        ];
+
+        it.each(v2003Cases)("encodes %s", ({ frameControl, header, expectDestPan, expectSourcePan }) => {
+            const macHeader = makeHeader(frameControl, ensureAddressFields(frameControl, header));
+            const frame = encodeMACFrame(macHeader, Buffer.alloc(0));
+            const decodedHeader = decodeHeader(frame);
+
+            if (expectDestPan) {
+                expect(decodedHeader.destinationPANId).toStrictEqual(destPanId);
+            } else {
+                expect(decodedHeader.destinationPANId).toBeUndefined();
+            }
+
+            const fallbackSourcePanId = expectDestPan ? destPanId : ZigbeeMACConsts.BCAST_PAN;
+
+            if (expectSourcePan) {
+                expect(decodedHeader.sourcePANId).toStrictEqual(sourcePanId);
+            } else {
+                expect(decodedHeader.sourcePANId).toStrictEqual(fallbackSourcePanId);
+            }
+        });
+
+        const v2015Cases: PresenceCase[] = [
+            {
+                name: "none/none no compression",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.NONE,
+                    sourceAddrMode: MACFrameAddressMode.NONE,
+                    panIdCompression: false,
+                },
+                header: {},
+                expectDestPan: false,
+                expectSourcePan: false,
+            },
+            {
+                name: "none/none with compression",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.NONE,
+                    sourceAddrMode: MACFrameAddressMode.NONE,
+                    panIdCompression: true,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                },
+                expectDestPan: true,
+                expectSourcePan: false,
+            },
+            {
+                name: "dest short only",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    sourceAddrMode: MACFrameAddressMode.NONE,
+                    panIdCompression: false,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                },
+                expectDestPan: true,
+                expectSourcePan: false,
+            },
+            {
+                name: "dest short compressed",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    sourceAddrMode: MACFrameAddressMode.NONE,
+                    panIdCompression: true,
+                },
+                header: {},
+                expectDestPan: false,
+                expectSourcePan: false,
+            },
+            {
+                name: "source short only",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.NONE,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                    panIdCompression: false,
+                },
+                header: {
+                    sourcePANId: sourcePanId,
+                },
+                expectDestPan: false,
+                expectSourcePan: true,
+            },
+            {
+                name: "source short compressed",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.NONE,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                    panIdCompression: true,
+                },
+                header: {},
+                expectDestPan: false,
+                expectSourcePan: false,
+            },
+            {
+                name: "ext/ext no compression",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.EXT,
+                    sourceAddrMode: MACFrameAddressMode.EXT,
+                    panIdCompression: false,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                },
+                expectDestPan: true,
+                expectSourcePan: false,
+            },
+            {
+                name: "ext/ext compressed",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.EXT,
+                    sourceAddrMode: MACFrameAddressMode.EXT,
+                    panIdCompression: true,
+                },
+                header: {},
+                expectDestPan: false,
+                expectSourcePan: false,
+            },
+            {
+                name: "short/short no compression",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                    panIdCompression: false,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                    sourcePANId: sourcePanId,
+                },
+                expectDestPan: true,
+                expectSourcePan: true,
+            },
+            {
+                name: "short/ext no compression",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    sourceAddrMode: MACFrameAddressMode.EXT,
+                    panIdCompression: false,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                    sourcePANId: sourcePanId,
+                },
+                expectDestPan: true,
+                expectSourcePan: true,
+            },
+            {
+                name: "ext/short no compression",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.EXT,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                    panIdCompression: false,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                    sourcePANId: sourcePanId,
+                },
+                expectDestPan: true,
+                expectSourcePan: true,
+            },
+            {
+                name: "short/ext compressed",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    sourceAddrMode: MACFrameAddressMode.EXT,
+                    panIdCompression: true,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                },
+                expectDestPan: true,
+                expectSourcePan: false,
+            },
+            {
+                name: "ext/short compressed",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.EXT,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                    panIdCompression: true,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                },
+                expectDestPan: true,
+                expectSourcePan: false,
+            },
+            {
+                name: "short/short compressed",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                    panIdCompression: true,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                },
+                expectDestPan: true,
+                expectSourcePan: false,
+            },
+            {
+                name: "non-standard frame type skips PAN identifiers",
+                frameControl: {
+                    frameVersion: MACFrameVersion.V2015,
+                    frameType: MACFrameType.FRAGMENT,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                    panIdCompression: false,
+                },
+                header: {
+                    destinationPANId: destPanId,
+                    sourcePANId: sourcePanId,
+                },
+                expectDestPan: false,
+                expectSourcePan: false,
+            },
+        ];
+
+        it.each(v2015Cases)("encodes v2015 case %s", ({ frameControl, header, expectDestPan, expectSourcePan }) => {
+            const macHeader = makeHeader({ frameType: MACFrameType.DATA, ...frameControl }, ensureAddressFields(frameControl, header));
+            const frame = encodeMACFrame(macHeader, Buffer.alloc(0));
+            const decodedHeader = decodeHeader(frame);
+
+            if (expectDestPan) {
+                expect(decodedHeader.destinationPANId).toStrictEqual(destPanId);
+            } else {
+                expect(decodedHeader.destinationPANId).toBeUndefined();
+            }
+
+            const fallbackSourcePanId = expectDestPan ? destPanId : ZigbeeMACConsts.BCAST_PAN;
+
+            if (expectSourcePan) {
+                expect(decodedHeader.sourcePANId).toStrictEqual(sourcePanId);
+            } else {
+                expect(decodedHeader.sourcePANId).toStrictEqual(fallbackSourcePanId);
+            }
+        });
+
+        it("throws on unexpected PAN compression for 2003 frames", () => {
+            const header = makeHeader(
+                {
+                    frameVersion: MACFrameVersion.V2003,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    sourceAddrMode: MACFrameAddressMode.NONE,
+                    panIdCompression: true,
+                },
+                {
+                    destination16: dest16Value,
+                },
+            );
+
+            expect(() => encodeMACFrame(header, Buffer.alloc(0))).toThrowError("Invalid MAC frame: unexpected PAN ID compression");
+        });
+
+        it("throws on unsupported frame type", () => {
+            const header = makeHeader({ frameType: MACFrameType.MULTIPURPOSE });
+
+            expect(() => encodeMACFrame(header, Buffer.alloc(0))).toThrowError("Unsupported MAC frame type MULTIPURPOSE (5)");
+        });
+
+        it("throws on reserved destination mode", () => {
+            const header = makeHeader({ destAddrMode: MACFrameAddressMode.RESERVED });
+
+            expect(() => encodeMACFrame(header, Buffer.alloc(0))).toThrowError("Invalid MAC frame: destination address mode 1");
+        });
+
+        it("throws on reserved source mode", () => {
+            const header = makeHeader({ sourceAddrMode: MACFrameAddressMode.RESERVED });
+
+            expect(() => encodeMACFrame(header, Buffer.alloc(0))).toThrowError("Invalid MAC frame: source address mode 1");
+        });
+
+        it("throws on invalid frame version", () => {
+            const header = makeHeader({ frameVersion: MACFrameVersion.RESERVED });
+
+            expect(() => encodeMACFrame(header, Buffer.alloc(0))).toThrowError("Invalid MAC frame: invalid version");
+        });
+
+        it("throws when MAC security is requested", () => {
+            const header = makeHeader({ securityEnabled: true, frameVersion: MACFrameVersion.V2003 });
+
+            expect(() => encodeMACFrame(header, Buffer.alloc(0))).toThrowError("Unsupported: securityEnabled");
+        });
+
+        it("throws when information elements are present", () => {
+            const header = makeHeader(
+                {
+                    frameVersion: MACFrameVersion.V2015,
+                    destAddrMode: MACFrameAddressMode.SHORT,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                    iePresent: true,
+                    panIdCompression: false,
+                },
+                {
+                    destinationPANId: destPanId,
+                    sourcePANId: sourcePanId,
+                    destination16: dest16Value,
+                    source16: source16Value,
+                },
+            );
+
+            expect(() => encodeMACFrame(header, Buffer.alloc(0))).toThrowError("Unsupported iePresent");
+        });
+
+        it("throws when decoding encrypted MAC payloads", () => {
+            const payload = Buffer.from([0x01, 0x02, 0x03, 0x04]);
+            const header = makeHeader({ destAddrMode: MACFrameAddressMode.NONE, sourceAddrMode: MACFrameAddressMode.NONE });
+            const frame = encodeMACFrame(header, payload);
+            const [fcf] = decodeMACFrameControl(frame, 0);
+
+            fcf.securityEnabled = true;
+
+            expect(() => decodeMACPayload(frame, frame.length - ZigbeeMACConsts.FCS_LEN - payload.length, fcf, header)).toThrowError(
+                "Unsupported MAC frame: security enabled",
+            );
+        });
+
+        it("throws when decoded payload lacks FCS", () => {
+            const frame = Buffer.from([0x61, 0x01]);
+            const frameControl: MACFrameControl = {
+                frameType: MACFrameType.DATA,
+                securityEnabled: false,
+                framePending: false,
+                ackRequest: false,
+                panIdCompression: false,
+                seqNumSuppress: false,
+                iePresent: false,
+                destAddrMode: MACFrameAddressMode.NONE,
+                frameVersion: MACFrameVersion.V2003,
+                sourceAddrMode: MACFrameAddressMode.NONE,
+            };
+            const header = makeHeader({});
+
+            expect(() => decodeMACPayload(frame, 1, frameControl, header)).toThrowError("Invalid MAC frame: no FCS");
         });
     });
 });
