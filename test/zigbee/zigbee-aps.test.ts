@@ -100,6 +100,53 @@ describe("Zigbee APS", () => {
         expect((fcf & ZigbeeAPSConsts.FCF_ACK_FORMAT) !== 0).toStrictEqual(true);
     });
 
+    it("encodes INTERPAN header without endpoints or counter", () => {
+        const header: ZigbeeAPSHeader = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.INTERPAN,
+                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                ackFormat: false,
+                security: false,
+                ackRequest: false,
+                extendedHeader: false,
+            },
+            clusterId: 0x3344,
+            profileId: 0x5566,
+        };
+
+        const buffer = Buffer.alloc(8);
+        const outOffset = encodeZigbeeAPSHeader(buffer, 0, header);
+
+        expect(outOffset).toStrictEqual(5);
+        expect(buffer.readUInt8(0) & ZigbeeAPSConsts.FCF_FRAME_TYPE).toStrictEqual(ZigbeeAPSFrameType.INTERPAN);
+        expect(buffer.readUInt16LE(1)).toStrictEqual(0x3344);
+        expect(buffer.readUInt16LE(3)).toStrictEqual(0x5566);
+    });
+
+    it("encodes extended header with default fragmentation metadata", () => {
+        const header: ZigbeeAPSHeader = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.DATA,
+                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                ackFormat: false,
+                security: false,
+                ackRequest: false,
+                extendedHeader: true,
+            },
+            destEndpoint: 0x11,
+            clusterId: 0x1122,
+            profileId: 0x3344,
+            sourceEndpoint: 0x22,
+            counter: 0x55,
+        };
+
+        const buffer = Buffer.alloc(16);
+        const outOffset = encodeZigbeeAPSHeader(buffer, 0, header);
+
+        expect(outOffset).toStrictEqual(9);
+        expect(buffer.readUInt8(outOffset - 1)).toStrictEqual(0x00);
+    });
+
     it("throws for invalid delivery mode during encoding", () => {
         const header: ZigbeeAPSHeader = {
             frameControl: {
