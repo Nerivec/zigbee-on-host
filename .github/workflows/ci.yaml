@@ -31,6 +31,9 @@ jobs:
       - name: Check
         run: npm run check:ci
 
+      - name: Test
+        run: npm run test:cov
+
       - name: Bench
         uses: Nerivec/action-ci-bench@main
         with:
