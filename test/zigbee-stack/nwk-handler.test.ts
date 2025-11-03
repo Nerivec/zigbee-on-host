@@ -1,5 +1,6 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { logger } from "../../src/utils/logger.js";
 import { MACAssociationStatus, type MACCapabilities, type MACHeader } from "../../src/zigbee/mac.js";
@@ -18,6 +19,8 @@ describe("NWK Handler", () => {
     let mockMACHandler: MACHandler;
     let mockCallbacks: NWKHandlerCallbacks;
     let netParams: NetworkParameters;
+    let associateSpy: MockInstance<StackContext["associate"]>;
+    let sendFrameSpy: MockInstance<MACHandler["sendFrame"]>;
 
     beforeEach(() => {
         // Register default hashed keys for encryption/decryption
@@ -55,7 +58,7 @@ describe("NWK Handler", () => {
         // Spy on context methods to track calls while preserving functionality
         vi.spyOn(mockContext, "nextNWKKeyFrameCounter");
         vi.spyOn(mockContext, "nextTCKeyFrameCounter");
-        vi.spyOn(mockContext, "associate").mockResolvedValue([MACAssociationStatus.SUCCESS, 0x1234]);
+        associateSpy = vi.spyOn(mockContext, "associate").mockResolvedValue([MACAssociationStatus.SUCCESS, 0x1234]);
         vi.spyOn(mockContext, "disassociate").mockResolvedValue(undefined);
 
         mockMACCallbacks = {
@@ -70,7 +73,7 @@ describe("NWK Handler", () => {
 
         // Spy on MACHandler methods to track calls
         vi.spyOn(mockMACHandler, "nextSeqNum");
-        vi.spyOn(mockMACHandler, "sendFrame");
+        sendFrameSpy = vi.spyOn(mockMACHandler, "sendFrame");
         vi.spyOn(mockMACHandler, "sendFrameDirect");
 
         mockCallbacks = {
@@ -473,6 +476,39 @@ describe("NWK Handler", () => {
             expect(routes![0].relayAddresses).toEqual([0x0001, 0x0002]);
             expect(routes![0].pathCost).toStrictEqual(3); // relayCount + 1
         });
+
+        it("ignores route record when addressing is missing", () => {
+            const initialSize = mockContext.sourceRouteTable.size;
+
+            nwkHandler.processCommand(
+                Buffer.from([ZigbeeNWKCommandId.ROUTE_RECORD, 0x00]),
+                {
+                    frameControl: {},
+                    source16: 0x2001,
+                    sequenceNumber: 7,
+                } as MACHeader,
+                {
+                    frameControl: {
+                        frameType: 1,
+                        protocolVersion: 2,
+                        discoverRoute: 0,
+                        multicast: false,
+                        security: false,
+                        sourceRoute: false,
+                        extendedDestination: false,
+                        extendedSource: false,
+                        endDeviceInitiator: false,
+                    },
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    source16: undefined,
+                    source64: undefined,
+                    radius: 1,
+                    seqNum: 8,
+                } as ZigbeeNWKHeader,
+            );
+
+            expect(mockContext.sourceRouteTable.size).toStrictEqual(initialSize);
+        });
     });
 
     describe("Rejoin Handling", () => {
@@ -527,7 +563,7 @@ describe("NWK Handler", () => {
             await nwkHandler.processCommand(payload, macHeader, nwkHeader);
 
             // Should have called associate callback
-            expect(mockContext.associate).toHaveBeenCalledWith(
+            expect(associateSpy).toHaveBeenCalledWith(
                 0x1234,
                 0x00124b0012345678n,
                 false, // rejoin (not initial join)
@@ -541,7 +577,78 @@ describe("NWK Handler", () => {
             );
 
             // Should have sent rejoin response
-            expect(mockMACHandler.sendFrame).toHaveBeenCalled();
+            expect(sendFrameSpy).toHaveBeenCalled();
+        });
+
+        it("drops rejoin request without source addressing", async () => {
+            associateSpy.mockClear();
+            sendFrameSpy.mockClear();
+
+            const offset = await nwkHandler.processRejoinReq(
+                Buffer.from([0x8e]),
+                0,
+                {
+                    frameControl: {},
+                    sequenceNumber: 0,
+                } as MACHeader,
+                {
+                    frameControl: {
+                        frameType: 1,
+                        protocolVersion: 2,
+                        discoverRoute: 0,
+                        multicast: false,
+                        security: false,
+                        sourceRoute: false,
+                        extendedDestination: false,
+                        extendedSource: false,
+                        endDeviceInitiator: false,
+                    },
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    source16: undefined,
+                    source64: undefined,
+                    radius: 1,
+                    seqNum: 6,
+                } as ZigbeeNWKHeader,
+            );
+
+            expect(offset).toStrictEqual(1);
+            expect(associateSpy).not.toHaveBeenCalled();
+            expect(sendFrameSpy).not.toHaveBeenCalled();
+        });
+
+        it("denies unsecured rejoin when IEEE address is unknown", async () => {
+            associateSpy.mockClear();
+
+            await nwkHandler.processRejoinReq(
+                Buffer.from([0x8e]),
+                0,
+                {
+                    frameControl: {},
+                    source16: 0x2002,
+                    sequenceNumber: 2,
+                } as MACHeader,
+                {
+                    frameControl: {
+                        frameType: 1,
+                        protocolVersion: 2,
+                        discoverRoute: 0,
+                        multicast: false,
+                        security: false,
+                        sourceRoute: false,
+                        extendedDestination: false,
+                        extendedSource: false,
+                        endDeviceInitiator: false,
+                    },
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    source16: 0x2002,
+                    source64: undefined,
+                    radius: 1,
+                    seqNum: 9,
+                } as ZigbeeNWKHeader,
+            );
+
+            expect(associateSpy).toHaveBeenCalled();
+            expect(associateSpy.mock.calls[0]?.[5]).toStrictEqual(true);
         });
     });
 
@@ -620,6 +727,73 @@ describe("NWK Handler", () => {
             expect(routes).toBeDefined();
             expect(routes![0].pathCost).toStrictEqual(3);
         });
+
+        it("updates existing source route using address map during link status", () => {
+            const device16 = 0x3344;
+            const device64 = 0x00124b0011223344n;
+
+            mockContext.address16ToAddress64.set(device16, device64);
+            mockContext.deviceTable.set(device64, {
+                address16: device16,
+                authorized: true,
+                capabilities: {
+                    alternatePANCoordinator: false,
+                    deviceType: 1,
+                    powerSource: 1,
+                    rxOnWhenIdle: true,
+                    securityCapability: true,
+                    allocateAddress: true,
+                },
+                neighbor: false,
+                recentLQAs: [],
+            });
+
+            const existing = nwkHandler.createSourceRouteEntry([], 5);
+            existing.pathCost = 5;
+            existing.failureCount = 4;
+            mockContext.sourceRouteTable.set(device16, [existing]);
+
+            const payload = Buffer.from([
+                0x21, // count=1, first frame=false, last frame=true
+                ZigbeeConsts.COORDINATOR_ADDRESS & 0xff,
+                (ZigbeeConsts.COORDINATOR_ADDRESS >> 8) & 0xff,
+                0x02, // incoming cost=2
+            ]);
+
+            nwkHandler.processLinkStatus(
+                payload,
+                0,
+                {
+                    frameControl: {},
+                    source16: device16,
+                    sequenceNumber: 6,
+                } as MACHeader,
+                {
+                    frameControl: {
+                        frameType: 1,
+                        protocolVersion: 2,
+                        discoverRoute: 0,
+                        multicast: false,
+                        security: false,
+                        sourceRoute: false,
+                        extendedDestination: false,
+                        extendedSource: false,
+                        endDeviceInitiator: false,
+                    },
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    source16: device16,
+                    source64: undefined,
+                    radius: 1,
+                    seqNum: 8,
+                } as ZigbeeNWKHeader,
+            );
+
+            const refreshed = mockContext.sourceRouteTable.get(device16)?.[0];
+
+            expect(refreshed?.pathCost).toStrictEqual(2);
+            expect(refreshed?.failureCount).toStrictEqual(0);
+            expect(mockContext.deviceTable.get(device64)?.neighbor).toStrictEqual(true);
+        });
     });
 
     describe("Additional NWK Commands", () => {
@@ -659,6 +833,57 @@ describe("NWK Handler", () => {
             );
 
             expect(offset).toBeGreaterThan(0);
+        });
+
+        it("refreshes existing source route entries when coordinator receives reply", () => {
+            const responder16 = 0x2468;
+            const nextHop = 0x3579;
+            const existing = nwkHandler.createSourceRouteEntry([nextHop], 4);
+            existing.failureCount = 3;
+            mockContext.sourceRouteTable.set(responder16, [existing]);
+            const markSuccessSpy = vi.spyOn(nwkHandler, "markRouteSuccess");
+
+            const payload = Buffer.from([
+                ZigbeeNWKCommandId.ROUTE_REPLY,
+                0x00,
+                0xaa,
+                ZigbeeConsts.COORDINATOR_ADDRESS & 0xff,
+                (ZigbeeConsts.COORDINATOR_ADDRESS >> 8) & 0xff,
+                responder16 & 0xff,
+                (responder16 >> 8) & 0xff,
+                0x04,
+            ]);
+
+            nwkHandler.processRouteReply(
+                payload,
+                1,
+                {
+                    frameControl: {},
+                    source16: nextHop,
+                    sequenceNumber: 11,
+                } as MACHeader,
+                {
+                    frameControl: {},
+                    source16: responder16,
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    relayAddresses: undefined,
+                    seqNum: 12,
+                } as ZigbeeNWKHeader,
+            );
+
+            const entries = mockContext.sourceRouteTable.get(responder16);
+            expect(entries).toBeDefined();
+            expect(entries?.length).toStrictEqual(1);
+            expect(entries?.[0]).toBe(existing);
+            expect(markSuccessSpy).toHaveBeenCalledWith(responder16);
+            markSuccessSpy.mockRestore();
+
+            const updated = entries?.[0];
+
+            expect(updated?.failureCount).toStrictEqual(0);
+            expect(existing.failureCount).toStrictEqual(0);
+            expect(updated?.pathCost).toStrictEqual(4);
+            expect(updated?.relayAddresses).toEqual([nextHop]);
         });
 
         it("should process network status", () => {
@@ -792,6 +1017,41 @@ describe("NWK Handler", () => {
 
             expect(result).toStrictEqual(true);
             expect(mockMACHandler.sendFrame).toHaveBeenCalled();
+        });
+
+        it("reports unsupported end device timeout when IEEE mapping missing", async () => {
+            const sendSpy = vi.spyOn(nwkHandler, "sendEdTimeoutResponse").mockResolvedValue(true);
+
+            await nwkHandler.processEdTimeoutRequest(
+                Buffer.from([0x01, 0x00]),
+                0,
+                {
+                    frameControl: {},
+                    source16: 0x4004,
+                    sequenceNumber: 9,
+                } as MACHeader,
+                {
+                    frameControl: {
+                        frameType: 1,
+                        protocolVersion: 2,
+                        discoverRoute: 0,
+                        multicast: false,
+                        security: false,
+                        sourceRoute: false,
+                        extendedDestination: false,
+                        extendedSource: false,
+                        endDeviceInitiator: false,
+                    },
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    source16: 0x4004,
+                    source64: undefined,
+                    radius: 1,
+                    seqNum: 19,
+                } as ZigbeeNWKHeader,
+            );
+
+            expect(sendSpy).toHaveBeenCalledWith(0x4004, 0x01, 0x02);
+            sendSpy.mockRestore();
         });
 
         it("should process network report", () => {
@@ -938,6 +1198,29 @@ describe("NWK Handler", () => {
             );
 
             expect(offset).toStrictEqual(3); // Command ID + new address (2 bytes) = 3 (status not read)
+        });
+
+        it("logs error when commissioning response indicates failure", () => {
+            const errorSpy = vi.spyOn(logger, "error");
+
+            nwkHandler.processCommissioningResponse(
+                Buffer.from([0x78, 0x56, MACAssociationStatus.PAN_FULL]),
+                0,
+                {
+                    frameControl: {},
+                    source16: 0x5005,
+                    sequenceNumber: 13,
+                } as MACHeader,
+                {
+                    frameControl: {},
+                    source16: 0x5005,
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    seqNum: 22,
+                } as ZigbeeNWKHeader,
+            );
+
+            expect(errorSpy).toHaveBeenCalled();
+            errorSpy.mockRestore();
         });
 
         it("should send commissioning response", async () => {
