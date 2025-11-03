@@ -554,7 +554,8 @@ function decodeMACGtsInfo(data: Buffer, offset: number): [MACGtsInfo, offset: nu
 function encodeMACGtsInfo(data: Buffer, offset: number, header: MACHeader): number {
     const info = header.gtsInfo!;
     const count = info.directions ? info.directions.length : 0;
-    offset = data.writeUInt8((count & ZigbeeMACConsts.GTS_COUNT_MASK) | ((info.permit ? 1 : 0) & ZigbeeMACConsts.GTS_PERMIT_MASK), offset);
+    const permitBit = info.permit ? ZigbeeMACConsts.GTS_PERMIT_MASK : 0;
+    offset = data.writeUInt8((count & ZigbeeMACConsts.GTS_COUNT_MASK) | permitBit, offset);
 
     if (count > 0) {
         // assert(info.directionByte !== undefined);

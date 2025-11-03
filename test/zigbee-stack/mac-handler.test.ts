@@ -7,13 +7,21 @@ import {
     decodeMACPayload,
     decodeMACZigbeeBeacon,
     encodeMACFrame,
+    encodeMACZigbeeBeacon,
+    getMICLength,
     MACAssociationStatus,
     MACCommandId,
     MACFrameAddressMode,
     type MACFrameControl,
     MACFrameType,
     MACFrameVersion,
+    type MACGtsInfo,
     type MACHeader,
+    type MACPendAddr,
+    MACSecurityKeyIdMode,
+    MACSecurityLevel,
+    type MACSuperframeSpec,
+    type MACZigbeeBeacon,
     ZigbeeMACConsts,
 } from "../../src/zigbee/mac.js";
 import { ZigbeeConsts } from "../../src/zigbee/zigbee.js";
@@ -694,7 +702,6 @@ describe("MACHandler", () => {
             const decodedPayload = decodeMACPayload(macFrame, payloadOffset, fcf, decodedHeader);
             expect(decodedPayload.subarray(0, payload.length)).toStrictEqual(payload);
         });
-
         it("encodes association responses with extended addressing", async () => {
             getOnSendFrameMock().mockClear();
             const dest64 = 0x00124b0099998888n;
@@ -783,6 +790,13 @@ describe("MACHandler", () => {
             const [fcf, headerOffset] = decodeMACFrameControl(frame, 0);
             const [decodedHeader] = decodeMACHeader(frame, headerOffset, fcf);
             return decodedHeader;
+        };
+
+        const expectDecodeError = (fcfValue: number, body: number[], message: string): void => {
+            const frame = Buffer.from([fcfValue & 0xff, (fcfValue >> 8) & 0xff, ...body]);
+            const [fcf, headerOffset] = decodeMACFrameControl(frame, 0);
+
+            expect(() => decodeMACHeader(frame, headerOffset, fcf)).toThrowError(message);
         };
 
         type PresenceCase = {
@@ -959,6 +973,288 @@ describe("MACHandler", () => {
             const header = makeHeader({ securityEnabled: true, frameVersion: MACFrameVersion.V2003 });
 
             expect(() => encodeMACFrame(header, Buffer.alloc(0))).toThrowError("Unsupported: securityEnabled");
+        });
+
+        it("rejects decoding frames with reserved destination mode", () => {
+            expectDecodeError(0x0400, [0x00], "Invalid MAC frame: destination address mode 1");
+        });
+
+        it("rejects decoding frames with reserved source mode", () => {
+            expectDecodeError(0x4800, [0x00], "Invalid MAC frame: source address mode 1");
+        });
+
+        it("rejects decoding MULTIPURPOSE frames", () => {
+            const frame = Buffer.from([0x05, 0x00]);
+
+            expect(() => decodeMACFrameControl(frame, 0)).toThrowError("Unsupported MAC frame type MULTIPURPOSE (5)");
+        });
+
+        it("rejects decoding frames with unexpected PAN compression", () => {
+            expectDecodeError(0x0040, [0x00], "Invalid MAC frame: unexpected PAN ID compression");
+        });
+
+        it.each([MACFrameVersion.V2015, MACFrameVersion.RESERVED])("rejects decoding frames with invalid version %s", (version) => {
+            const versionBits = Number(version) << 12;
+
+            expectDecodeError(versionBits, [0x00], "Invalid MAC frame: invalid version");
+        });
+
+        it("rejects decoding frames when no payload remains", () => {
+            const frame = Buffer.from([0x01, 0x08, 0x00, destPanId & 0xff, (destPanId >> 8) & 0xff, dest16Value & 0xff, (dest16Value >> 8) & 0xff]);
+
+            const [fcf, headerOffset] = decodeMACFrameControl(frame, 0);
+
+            expect(() => decodeMACHeader(frame, headerOffset, fcf)).toThrowError("Invalid MAC frame: no payload");
+        });
+
+        it("throws when decoding multipurpose frames", () => {
+            const frameControl: MACFrameControl = {
+                frameType: MACFrameType.MULTIPURPOSE,
+                securityEnabled: false,
+                framePending: false,
+                ackRequest: false,
+                panIdCompression: false,
+                seqNumSuppress: true,
+                iePresent: false,
+                destAddrMode: MACFrameAddressMode.NONE,
+                frameVersion: MACFrameVersion.V2003,
+                sourceAddrMode: MACFrameAddressMode.NONE,
+            };
+
+            expect(() => decodeMACHeader(Buffer.alloc(0), 0, frameControl)).toThrowError("Unsupported MAC frame: MULTIPURPOSE");
+        });
+
+        it("encodes frame control with sequence suppression bit set", () => {
+            const header = makeHeader({ seqNumSuppress: true });
+            const frame = encodeMACFrame(header, Buffer.alloc(0));
+            const fcfValue = frame.readUInt16LE(0);
+
+            expect(fcfValue & ZigbeeMACConsts.FCF_SEQNO_SUPPRESSION).not.toStrictEqual(0);
+        });
+
+        it("encodes superframe spec without coordinator flags", () => {
+            const header = makeHeader(
+                {
+                    frameType: MACFrameType.BEACON,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                    frameVersion: MACFrameVersion.V2003,
+                },
+                {
+                    sourcePANId: sourcePanId,
+                    source16: source16Value,
+                    superframeSpec: {
+                        beaconOrder: 0x0f,
+                        superframeOrder: 0x00,
+                        finalCAPSlot: 0x07,
+                        batteryExtension: false,
+                        panCoordinator: false,
+                        associationPermit: false,
+                    },
+                    gtsInfo: { permit: false },
+                    pendAddr: {},
+                },
+            );
+
+            const frame = encodeMACFrame(header, Buffer.alloc(0));
+            const [fcf, offset] = decodeMACFrameControl(frame, 0);
+            const [decodedHeader] = decodeMACHeader(frame, offset, fcf);
+
+            expect(decodedHeader.superframeSpec?.panCoordinator).toBe(false);
+            expect(decodedHeader.superframeSpec?.associationPermit).toBe(false);
+        });
+
+        it("encodes Zigbee beacon capacity flags", () => {
+            const beacon: MACZigbeeBeacon = {
+                protocolId: ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_ID,
+                profile: 0x02,
+                version: ZigbeeNWKConsts.VERSION_2007,
+                routerCapacity: false,
+                deviceDepth: 0x03,
+                endDeviceCapacity: false,
+                extendedPANId: 0x00124b0000000011n,
+                txOffset: 0x000123,
+                updateId: 0x09,
+            };
+
+            const encoded = encodeMACZigbeeBeacon(beacon);
+            const decoded = decodeMACZigbeeBeacon(encoded, 0);
+
+            expect(decoded.routerCapacity).toBe(false);
+            expect(decoded.endDeviceCapacity).toBe(false);
+            expect(decoded.deviceDepth).toStrictEqual(beacon.deviceDepth);
+        });
+
+        it("computes MIC length per security level", () => {
+            const lengths = Array.from({ length: 8 }, (_, level) => getMICLength(level));
+
+            expect(lengths).toStrictEqual([0, 4, 8, 16, 0, 4, 8, 16]);
+        });
+
+        it("round-trips beacon header with GTS and pending address information", () => {
+            const superframeSpec = {
+                beaconOrder: 0x01,
+                superframeOrder: 0x02,
+                finalCAPSlot: 0x03,
+                batteryExtension: true,
+                panCoordinator: true,
+                associationPermit: true,
+            } satisfies MACSuperframeSpec;
+
+            const gtsInfo = {
+                permit: true,
+                directionByte: 0x03,
+                directions: [0x01, 0x02],
+                addresses: [0x1111, 0x2222],
+                timeLengths: [0x01, 0x02],
+                slots: [0x03, 0x04],
+            } satisfies MACGtsInfo;
+
+            const pendAddr = {
+                addr16List: [0x3001, 0x3002],
+                addr64List: [0x00124b0000000001n, 0x00124b0000000002n],
+            } satisfies MACPendAddr;
+
+            const beaconHeader = makeHeader(
+                {
+                    frameType: MACFrameType.BEACON,
+                    sourceAddrMode: MACFrameAddressMode.SHORT,
+                    frameVersion: MACFrameVersion.V2003,
+                },
+                {
+                    sourcePANId: sourcePanId,
+                    source16: source16Value,
+                    superframeSpec,
+                    gtsInfo,
+                    pendAddr,
+                },
+            );
+
+            const frame = encodeMACFrame(beaconHeader, Buffer.alloc(0));
+            const [fcf, offset] = decodeMACFrameControl(frame, 0);
+            const [decodedHeader] = decodeMACHeader(frame, offset, fcf);
+
+            expect(decodedHeader.superframeSpec).toStrictEqual(superframeSpec);
+            expect(decodedHeader.gtsInfo).toStrictEqual({
+                permit: true,
+                directionByte: 0x03,
+                directions: [0x01, 0x02],
+                addresses: [0x1111, 0x2222],
+                timeLengths: [0x01, 0x02],
+                slots: [0x03, 0x04],
+            });
+            expect(decodedHeader.pendAddr).toStrictEqual(pendAddr);
+        });
+
+        it("decodes auxiliary security header with 4-byte key source", () => {
+            const frameBytes: number[] = [];
+            frameBytes.push(0x09, 0x88); // DATA frame, security enabled, short dest+source
+            frameBytes.push(0x7a); // sequence number
+            frameBytes.push(destPanId & 0xff, (destPanId >> 8) & 0xff);
+            frameBytes.push(dest16Value & 0xff, (dest16Value >> 8) & 0xff);
+            frameBytes.push(sourcePanId & 0xff, (sourcePanId >> 8) & 0xff);
+            frameBytes.push(source16Value & 0xff, (source16Value >> 8) & 0xff);
+
+            const securityControl = MACSecurityLevel.ENC_MIC_32 | (MACSecurityKeyIdMode.EXPLICIT_4 << ZigbeeMACConsts.AUX_KEY_ID_MODE_SHIFT);
+            frameBytes.push(securityControl);
+
+            frameBytes.push(0x44, 0x33, 0x22, 0x11); // frame counter
+            frameBytes.push(0xef, 0xbe, 0xad, 0xde); // key source 32-bit
+            frameBytes.push(0x07); // key index
+
+            frameBytes.push(0x66, 0x77, 0x88, 0x99); // encrypted frame counter
+            frameBytes.push(0x22); // key sequence counter
+
+            frameBytes.push(0xaa, 0x00, 0x00); // payload byte + FCS placeholder
+
+            const frame = Buffer.from(frameBytes);
+            const [fcf, offset] = decodeMACFrameControl(frame, 0);
+            const [decodedHeader] = decodeMACHeader(frame, offset, fcf);
+
+            expect(decodedHeader.auxSecHeader).toStrictEqual({
+                securityLevel: MACSecurityLevel.ENC_MIC_32,
+                keyIdMode: MACSecurityKeyIdMode.EXPLICIT_4,
+                asn: undefined,
+                frameCounter: 0x11223344,
+                keySourceAddr32: 0xdeadbeef,
+                keySourceAddr64: undefined,
+                keyIndex: 0x07,
+            });
+            expect(decodedHeader.frameCounter).toStrictEqual(0x99887766);
+            expect(decodedHeader.keySeqCounter).toStrictEqual(0x22);
+        });
+
+        it("decodes auxiliary security header with 8-byte key source", () => {
+            const frameBytes: number[] = [];
+            frameBytes.push(0x09, 0x88);
+            frameBytes.push(0x33);
+            frameBytes.push(destPanId & 0xff, (destPanId >> 8) & 0xff);
+            frameBytes.push(dest16Value & 0xff, (dest16Value >> 8) & 0xff);
+            frameBytes.push(sourcePanId & 0xff, (sourcePanId >> 8) & 0xff);
+            frameBytes.push(source16Value & 0xff, (source16Value >> 8) & 0xff);
+
+            const securityControl = MACSecurityLevel.ENC_MIC_64 | (MACSecurityKeyIdMode.EXPLICIT_8 << ZigbeeMACConsts.AUX_KEY_ID_MODE_SHIFT);
+            frameBytes.push(securityControl);
+
+            frameBytes.push(0x11, 0x22, 0x33, 0x44);
+            const keySource64 = 0x1122334455667788n;
+            for (let i = 0; i < 8; i++) {
+                frameBytes.push(Number((keySource64 >> BigInt(i * 8)) & 0xffn));
+            }
+            frameBytes.push(0x09);
+
+            frameBytes.push(0xaa, 0xbb, 0xcc, 0xdd);
+            frameBytes.push(0x33);
+
+            frameBytes.push(0xaa, 0x00, 0x00);
+
+            const frame = Buffer.from(frameBytes);
+            const [fcf, offset] = decodeMACFrameControl(frame, 0);
+            const [decodedHeader] = decodeMACHeader(frame, offset, fcf);
+
+            expect(decodedHeader.auxSecHeader).toStrictEqual({
+                securityLevel: MACSecurityLevel.ENC_MIC_64,
+                keyIdMode: MACSecurityKeyIdMode.EXPLICIT_8,
+                asn: undefined,
+                frameCounter: 0x44332211,
+                keySourceAddr32: undefined,
+                keySourceAddr64: keySource64,
+                keyIndex: 0x09,
+            });
+            expect(decodedHeader.frameCounter).toStrictEqual(0xddccbbaa);
+            expect(decodedHeader.keySeqCounter).toStrictEqual(0x33);
+        });
+
+        it("decodes auxiliary security header with implicit key mode", () => {
+            const frameBytes: number[] = [];
+            frameBytes.push(0x09, 0x88);
+            frameBytes.push(0x21);
+            frameBytes.push(destPanId & 0xff, (destPanId >> 8) & 0xff);
+            frameBytes.push(dest16Value & 0xff, (dest16Value >> 8) & 0xff);
+            frameBytes.push(sourcePanId & 0xff, (sourcePanId >> 8) & 0xff);
+            frameBytes.push(source16Value & 0xff, (source16Value >> 8) & 0xff);
+
+            frameBytes.push(MACSecurityLevel.ENC);
+            frameBytes.push(0x01, 0x02, 0x03, 0x04);
+            frameBytes.push(0x55, 0x66, 0x77, 0x88);
+            frameBytes.push(0x44);
+
+            frameBytes.push(0xaa, 0x00, 0x00);
+
+            const frame = Buffer.from(frameBytes);
+            const [fcf, offset] = decodeMACFrameControl(frame, 0);
+            const [decodedHeader] = decodeMACHeader(frame, offset, fcf);
+
+            expect(decodedHeader.auxSecHeader).toStrictEqual({
+                securityLevel: MACSecurityLevel.ENC,
+                keyIdMode: MACSecurityKeyIdMode.IMPLICIT,
+                asn: undefined,
+                frameCounter: 0x04030201,
+                keySourceAddr32: undefined,
+                keySourceAddr64: undefined,
+                keyIndex: undefined,
+            });
+            expect(decodedHeader.frameCounter).toStrictEqual(0x88776655);
+            expect(decodedHeader.keySeqCounter).toStrictEqual(0x44);
         });
 
         it("throws when decoding encrypted MAC payloads", () => {
