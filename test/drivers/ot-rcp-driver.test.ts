@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { OTRCPDriver } from "../../src/drivers/ot-rcp-driver.js";
 import { SpinelCommandId } from "../../src/spinel/commands.js";
 import { SpinelPropertyId } from "../../src/spinel/properties.js";
@@ -224,7 +224,7 @@ describe("OT RCP Driver", () => {
 
     const mockStart = async (driver: OTRCPDriver, loadState = true, timeoutReset = false, frames = START_FRAMES_SILABS) => {
         if (driver) {
-            let loadStateSpy: ReturnType<typeof vi.spyOn> | undefined;
+            let loadStateSpy: Mock<() => Promise<void>> | undefined;
 
             if (!loadState) {
                 loadStateSpy = vi.spyOn(driver.context, "loadState").mockResolvedValue(undefined);
@@ -319,7 +319,7 @@ describe("OT RCP Driver", () => {
 
             driver.writer.on("data", reply);
 
-            let registerTimersSpy: ReturnType<typeof vi.spyOn> | undefined;
+            let registerTimersSpy: Mock<() => Promise<void>> | undefined;
 
             if (registerTimers) {
                 await mockStartStack(driver);
@@ -368,6 +368,10 @@ describe("OT RCP Driver", () => {
             expect(savePeriodicStateSpy).toHaveBeenCalledTimes(1);
             expect(sendLinkStatusSpy).toHaveBeenCalledTimes(1 + 1); // *2 by spy mock
             expect(sendRouteReqSpy).toHaveBeenCalledTimes(1 + 1); // *2 by spy mock
+
+            savePeriodicStateSpy?.mockRestore();
+            sendLinkStatusSpy?.mockRestore();
+            sendRouteReqSpy?.mockRestore();
 
             nextTidFromStartup = driver.currentSpinelTID + 1;
 

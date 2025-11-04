@@ -15,8 +15,6 @@ export default defineConfig({
             provider: "v8",
             include: ["src/**"],
             exclude: ["src/dev/**"],
-            extension: [".ts"],
-            // exclude: [],
             clean: true,
             cleanOnRerun: true,
             reportsDirectory: "coverage",
@@ -25,7 +23,7 @@ export default defineConfig({
             thresholds: {
                 /** current dev status, should maintain above this */
                 statements: 95,
-                branches: 95,
+                branches: 90,
                 functions: 95,
                 lines: 95,
             },

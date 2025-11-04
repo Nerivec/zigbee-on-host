@@ -1222,12 +1222,11 @@ export class StackContext {
         }
 
         // something went wrong above
-        /* v8 ignore start */
+        /* v8 ignore if -- @preserve */
         if (newAddress16 === undefined) {
             newAddress16 = 0xffff;
             status = MACAssociationStatus.PAN_ACCESS_DENIED;
         }
-        /* v8 ignore stop */
 
         // const existingDevice64 = source64 ?? (source16 !== undefined ? this.address16ToAddress64.get(source16) : undefined);
         // const existingEntry = existingDevice64 !== undefined ? this.deviceTable.get(existingDevice64) : undefined;

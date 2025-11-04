@@ -48,7 +48,7 @@ export class OTRCPParser extends Transform {
         cb();
     }
 
-    /* v8 ignore start */
+    /* v8 ignore next -- @preserve */
     override _flush(cb: TransformCallback): void {
         if (this.#buffer.byteLength > 0) {
             this.push(this.#buffer);
@@ -58,5 +58,4 @@ export class OTRCPParser extends Transform {
 
         cb();
     }
-    /* v8 ignore stop */
 }

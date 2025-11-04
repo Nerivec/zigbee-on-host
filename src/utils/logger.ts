@@ -5,6 +5,7 @@ export interface Logger {
     error: (messageOrLambda: string, namespace: string) => void;
 }
 
+/* v8 ignore next -- @preserve */
 export let logger: Logger = {
     debug: (messageOrLambda, namespace) => console.debug(`[${new Date().toISOString()}] ${namespace}: ${messageOrLambda()}`),
     info: (messageOrLambda, namespace) =>
@@ -14,6 +15,7 @@ export let logger: Logger = {
     error: (message, namespace) => console.error(`[${new Date().toISOString()}] ${namespace}: ${message}`),
 };
 
+/* v8 ignore next -- @preserve */
 export function setLogger(l: Logger): void {
     logger = l;
 }

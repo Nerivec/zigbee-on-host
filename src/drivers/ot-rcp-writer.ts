@@ -11,6 +11,6 @@ export class OTRCPWriter extends Readable {
         this.emit("data", buffer); // XXX: this is faster
     }
 
-    /* v8 ignore next */
+    /* v8 ignore next -- @preserve */
     public override _read(): void {}
 }
