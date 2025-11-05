@@ -19,16 +19,15 @@ import type { StackContext } from "./stack-context.js";
 const NS = "frame-handler";
 
 /**
- * Process raw MAC frame
- * HOT PATH: Decode frame
- * @param payload
- * @param context
- * @param macHandler
- * @param nwkHandler
- * @param nwkGPHandler
- * @param apsHandler
- * @param rssi
- * @returns
+ * 05-3474-23 (Zigbee PRO) multi-layer processing pipeline
+ *
+ * SPEC COMPLIANCE NOTES:
+ * - ✅ Decodes MAC CMD/DATA frames and dispatches according to IEEE 802.15.4 frame type
+ * - ✅ Validates PAN ID and destination addressing before NWK processing
+ * - ✅ Routes Green Power (GP) frames per Zigbee GP spec (14-0563-19) when protocol version indicates GP
+ * - ✅ Applies duplicate checks via respective handlers (MAC/NWK/APS/GP)
+ * - ⚠️  INTERPAN frame type not supported (throws) - optional for coordinator
+ * - ⚠️  Beacon/Other MAC frame types ignored (logged at debug level)
  */
 /* @__INLINE__ */
 export async function processFrame(

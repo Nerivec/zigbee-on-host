@@ -262,20 +262,28 @@ export class APSHandler {
     }
 
     /**
+     * 05-3474-23 #4.4.1 (APS data service)
+     *
      * Send a Zigbee APS DATA frame and track pending ACK if necessary.
-     * Throws if could not send.
-     * @param finalPayload
-     * @param macDest16
-     * @param nwkDiscoverRoute
-     * @param nwkDest16
-     * @param nwkDest64
-     * @param apsDeliveryMode
-     * @param clusterId
-     * @param profileId
-     * @param destEndpoint
-     * @param sourceEndpoint
-     * @param group
-     * @returns The APS counter of the sent frame.
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Builds APS frame with ackRequest flag and delivery mode per parameters
+     * - ✅ Tracks pending acknowledgements per spec timeout (CONFIG_APS_ACK_WAIT_DURATION_MS ≈ 1.5s)
+     * - ✅ Applies fragmentation when payload exceeds APS maximum (CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX)
+     * - ⚠️  Fragment reassembly timer configurable but not spec-driven (CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS)
+     * - ⚠️  Route discovery hint (nwkDiscoverRoute) passed to NWK handler without additional validation
+     *
+     * @param finalPayload Encoded APS payload
+     * @param nwkDiscoverRoute NWK discovery mode
+     * @param nwkDest16 Destination short address (if known)
+     * @param nwkDest64 Destination IEEE (optional)
+     * @param apsDeliveryMode Delivery mode (unicast/group/broadcast)
+     * @param clusterId Cluster identifier
+     * @param profileId Profile identifier
+     * @param destEndpoint Destination endpoint
+     * @param sourceEndpoint Source endpoint
+     * @param group Group identifier (when group addressed)
+     * @returns The APS counter of the sent frame
      */
     public async sendData(
         finalPayload: Buffer,
@@ -774,6 +782,16 @@ export class APSHandler {
         }
     }
 
+    /**
+     * 05-3474-23 #4.4.2.3 (APS acknowledgement)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Mirrors counter and cluster metadata per spec Table 4-10
+     * - ✅ Selects unicast delivery mode and suppresses retransmit (ackRequest=false)
+     * - ✅ Reuses NWK/MAC sequence numbers from incoming frame to satisfy reliability requirements
+     * - ⚠️  Fragment ACK format limited to simple bitfield (supports first block only)
+     * - ⚠️  Does not retry failed acknowledgements; relies on NWK retransmissions
+     */
     public async sendACK(macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Promise<void> {
         logger.debug(
             () =>
@@ -902,6 +920,16 @@ export class APSHandler {
         await this.#macHandler.sendFrame(macHeader.sequenceNumber!, ackMACFrame, macHeader.source16, undefined);
     }
 
+    /**
+     * 05-3474-23 #4.4 (APS layer processing)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Handles DATA, ACK, INTERPAN frame types per spec definitions
+     * - ✅ Performs duplicate rejection using APS counter + source addressing
+     * - ✅ Performs fragmentation reassembly and forwards completed payloads upward
+     * - ⚠️  INTERPAN frames not supported (throws) - spec optional for coordinators
+     * - ⚠️  Fragment reassembly lacks payload size guard (tracked via CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS)
+     */
     public async processFrame(
         data: Buffer,
         macHeader: MACHeader,
@@ -1006,15 +1034,24 @@ export class APSHandler {
     // #region Commands
 
     /**
-     * 05-3474-R #4.4.11
+     * 05-3474-23 #4.4.11 (APS command frames)
      *
-     * @param cmdId
-     * @param finalPayload expected to contain the full payload (including cmdId)
-     * @param macDest16
-     * @param nwkDest16
-     * @param nwkDest64
-     * @param nwkRadius
-     * @param apsDeliveryMode
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Encodes APS command header with appropriate delivery mode and security bit per parameters
+     * - ✅ Integrates with NWK/ MAC handlers for routing + source routing
+     * - ✅ Supports APS security header injection (LOAD/TRANSPORT keys) as required by TC flows
+     * - ⚠️  disableACKRequest used for certain commands (e.g., TRANSPORT_KEY) despite spec recommending ACKs
+     * - ⚠️  TLV extensions not yet supported (R23 features)
+     *
+     * @param cmdId APS command identifier
+     * @param finalPayload Fully encoded APS command payload (including cmdId)
+     * @param nwkDiscoverRoute NWK discovery mode
+     * @param nwkSecurity Whether to apply NWK security
+     * @param nwkDest16 Destination network address
+     * @param nwkDest64 Destination IEEE address (optional)
+     * @param apsDeliveryMode Delivery mode (unicast/broadcast)
+     * @param apsSecurityHeader Optional APS security header definition
+     * @param disableACKRequest Whether to suppress APS ACK request
      * @returns True if success sending (or indirect transmission)
      */
     public async sendCommand(
@@ -1831,7 +1868,12 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.4
+     * 05-3474-23 #4.4.11.4 (APS Request Key)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Encodes keyType and optional partner64 fields per Table 4-18
+     * - ✅ Uses UNICAST delivery with NWK security as mandated
+     * - ⚠️  Application key partner validation limited to lookup in device table
      *
      * @param nwkDest16
      * @param keyType SHALL be set to the key being requested
@@ -2051,7 +2093,12 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.7
+     * 05-3474-23 #4.4.11.7 (APS Verify Key)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Sends verification hash payload (16 bytes) together with keyType and source64
+     * - ✅ Unicast delivery with NWK security as required by Trust Center procedures
+     * - ⚠️  Caller responsible for providing correct hash derived per Annex B
      *
      * @param nwkDest16
      * @param keyType type of key being verified
@@ -2083,7 +2130,12 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.8
+     * 05-3474-23 #4.4.11.8 (APS Confirm Key)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Parses status, keyType, destination64 per Table 4-19
+     * - ✅ Used primarily for logging; state updates happen in sendConfirmKey
+     * - ⚠️  No validation of status/keyType beyond logging (TC expects follow-up handling elsewhere)
      */
     public processConfirmKey(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const status = data.readUInt8(offset);

@@ -141,7 +141,15 @@ export class NWKGPHandler {
     }
 
     /**
-     * See 14-0563-19 #A.3.8.2
+     * 14-0563-19 (Green Power) #A.3.8.2
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Parses NWK GP command identifier and forwards payload to Stack callbacks
+     * - ✅ Enforces commissioning-mode requirement for commissioning/success/channel request commands
+     * - ✅ Applies duplicate filtering prior to forwarding (isDuplicateFrame)
+     * - ⚠️  Does not validate security parameters beyond duplicate table (future enhancement)
+     * - ⚠️  TLV decoding delegated to consumer (payload forwarded raw)
+     *
      * @param data
      * @param macHeader
      * @param nwkHeader

@@ -89,6 +89,14 @@ export class MACHandler {
 
     /**
      * Send 802.15.4 MAC frame without checking for need to use indirect transmission.
+     *
+     * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.7.1 / #6.7.4):
+     * - ✅ Transmits MAC payloads via MLME-DATA.request semantics with caller-provided sequence number
+     * - ✅ Clears macNoACKs table on successful unicast (spec #6.7.4.3 requires reset after acknowledged delivery)
+     * - ✅ Marks routes successful on unicast delivery to keep NWK path metrics aligned with MAC status
+     * - ⚠️  Implements retry/ACK handling upstream; assumes caller respected macMaxFrameRetries configuration
+     * - ⚠️  No security processing here (handled by caller when frames are pre-encoded)
+     *
      * @param seqNum MAC sequence number
      * @param payload MAC frame payload
      * @param dest16 Destination 16-bit address
@@ -132,6 +140,14 @@ export class MACHandler {
     /**
      * Send 802.15.4 MAC frame.
      * Checks if indirect transmission is needed for devices with rxOnWhenIdle=false.
+     *
+     * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.7.3 / #6.3.4):
+     * - ✅ Detects non-RX-on-when-idle children and queues frames for indirect transmission (spec #6.7.3.1)
+     * - ✅ Uses MLME data queue semantics (first-in-first-out) when storing in indirectTransmissions
+     * - ✅ Falls back to direct transmission when destination capabilities unknown, satisfying spec SHALL clauses
+     * - ⚠️  Queue pruning relies on DATA_REQUEST processing (see processDataReq) to enforce macTransactionPersistenceTime
+     * - ⚠️  Does not expose queue depth upper bound; relies on higher layers to avoid overflow
+     *
      * @param seqNum MAC sequence number
      * @param payload MAC frame payload
      * @param dest16 Destination 16-bit address
@@ -174,6 +190,14 @@ export class MACHandler {
 
     /**
      * Send 802.15.4 MAC command
+     *
+     * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.3 (MAC command frames)):
+     * - ✅ Constructs command frame with frameType=CMD and securityDisabled per caller intent (spec #6.3.1)
+     * - ✅ Selects source addressing mode based on extSource flag, aligning with ASSOC_RSP requirements
+     * - ✅ Applies PAN ID compression rules for coordinator origin (spec #5.2.1.11)
+     * - ✅ Delegates security and payload composition to caller, keeping command encoder generic
+     * - ⚠️  MAC command retry policy inherited from sendFrame; no per-command overrides
+     *
      * @param cmdId MAC command ID
      * @param dest16 Destination 16-bit address
      * @param dest64 Destination 64-bit address
@@ -223,8 +247,15 @@ export class MACHandler {
 
     /**
      * Process 802.15.4 MAC command.
-     * @param data Command data
-     * @param macHeader MAC header
+     *
+     * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.3):
+     * - ✅ Dispatches supported command identifiers (ASSOC_REQ/RSP, BEACON_REQ, DATA_REQ, DISASSOC_NOTIFY)
+     * - ✅ Rejects unsupported commands with error log, mirroring spec requirement to ignore unknown MAC commands
+     * - ✅ Preserves payload ordering by passing offset between handlers
+     * - ⚠️  TODO: Implement COORD_REALIGN, ORPHAN_NOTIFY, PANID_CONFLICT handling per spec Annex B
+     *
+     * @param data Command payload (without MAC header)
+     * @param macHeader Decoded MAC header for context
      */
     public async processCommand(data: Buffer, macHeader: MACHeader): Promise<void> {
         let offset = 0;
@@ -334,6 +365,12 @@ export class MACHandler {
 
     /**
      * Process 802.15.4 MAC association response.
+     *
+     * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.3.2.4):
+     * - ✅ Extracts short address and status per Table 6-4
+     * - ✅ Leaves further handling to higher layers (coordinator ignores downstream response)
+     * - ⚠️  No validation of pending association map since coordinator is responder (not requester)
+     *
      * @param data Command data
      * @param offset Current offset in data
      * @param macHeader MAC header
@@ -354,9 +391,9 @@ export class MACHandler {
     }
 
     /**
-     * IEEE 802.15.4-2015 #6.4.3.3 (Disassociation Notification command)
+     * Process disassociation motification
      *
-     * SPEC COMPLIANCE:
+     * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.4.3.3):
      * - ✅ Handles both coordinator- and device-initiated reasons
      * - ✅ Removes device state through StackContext.disassociate
      * - ⚠️ Does not emit confirmation back to child (not required for coordinator role)
@@ -380,6 +417,13 @@ export class MACHandler {
 
     /**
      * Send 802.15.4 MAC association response
+     *
+     * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.3.2.5):
+     * - ✅ Formats payload with short address + status per Table 6-5
+     * - ✅ Uses extended source address (extSource=true) as mandated for coordinators
+     * - ✅ Sends unicast command secured according to caller (none for initial association)
+     * - ⚠️  Relies on pendingAssociations bookkeeping to ensure indirect delivery, matching spec requirement
+     *
      * @param dest64 Destination IEEE address
      * @param newAddress16 Assigned network address
      * @param status Association status
