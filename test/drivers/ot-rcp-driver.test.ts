@@ -908,12 +908,15 @@ describe("OT RCP Driver", () => {
             expect(newAddr16).toStrictEqual(network16);
 
             // conflict, already present
-            network16 = driver.context.deviceTable.values().next().value!.address16;
+            let device = driver.context.deviceTable.values().next().value!;
+            device.authorized = true;
+            network16 = device.address16;
             network64 = driver.context.address16ToAddress64.get(network16)!;
             [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_RFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
             expect(newAddr16).toStrictEqual(0xffff);
+            device.authorized = false;
 
             // conflict, on network16
             network16 = driver.context.deviceTable.values().next().value!.address16;
@@ -925,12 +928,15 @@ describe("OT RCP Driver", () => {
             expect(newAddr16).not.toStrictEqual(0xffff);
 
             // conflict, on network16/network64
-            network16 = driver.context.deviceTable.values().next().value!.address16;
+            device = driver.context.deviceTable.values().next().value!;
+            device.authorized = true;
+            network16 = device.address16;
             network64 = driver.context.address16ToAddress64.get(network16)!;
             [status, newAddr16] = await driver.context.associate(network16, network64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
 
             expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
             expect(newAddr16).toStrictEqual(0xffff);
+            device.authorized = false;
 
             // by network64 only
             network64 = randomBigInt();

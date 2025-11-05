@@ -421,7 +421,7 @@ describe("MACHandler", () => {
             mockContext.deviceTable.set(dest64, {
                 address16: dest16,
                 capabilities: undefined,
-                authorized: false,
+                authorized: true,
                 neighbor: false,
                 recentLQAs: [],
             });

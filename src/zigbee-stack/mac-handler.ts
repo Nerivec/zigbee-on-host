@@ -300,12 +300,13 @@ export class MACHandler {
         if (macHeader.source64 === undefined) {
             logger.debug(() => `<=x= MAC ASSOC_REQ[macSrc=${macHeader.source16}:${macHeader.source64} cap=${capabilities}] Invalid source64`, NS);
         } else {
-            const address16 = this.#context.deviceTable.get(macHeader.source64)?.address16;
+            const device = this.#context.deviceTable.get(macHeader.source64);
+            const address16 = device?.address16;
             const decodedCap = decodeMACCapabilities(capabilities);
             const [status, newAddress16] = await this.#context.associate(
                 address16,
                 macHeader.source64,
-                address16 === undefined /* initial join if unknown device, else rejoin */,
+                !device?.authorized /* rejoin only if was previously authorized */,
                 decodedCap,
                 true /* neighbor */,
                 address16 === undefined && !this.#context.associationPermit,

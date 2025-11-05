@@ -469,9 +469,11 @@ export class StackContext {
         this.deviceTable.clear();
         this.address16ToAddress64.clear();
         this.sourceRouteTable.clear();
-        this.indirectTransmissions.clear();
         this.appLinkKeyTable.clear();
         this.installCodeTable.clear();
+        this.macNoACKs.clear();
+        this.pendingAssociations.clear();
+        this.indirectTransmissions.clear();
     }
 
     /**
@@ -1160,22 +1162,28 @@ export class StackContext {
                         if (newAddress16 === 0xffff) {
                             status = MACAssociationStatus.PAN_FULL;
                         }
-                    } else if (source64 !== undefined && this.deviceTable.get(source64) !== undefined) {
-                        // initial join should not conflict on 64, don't allow join if it does
-                        newAddress16 = 0xffff;
-                        status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
                     } else {
-                        const existingAddress64 = this.address16ToAddress64.get(source16);
+                        const device = source64 !== undefined ? this.deviceTable.get(source64) : undefined;
 
-                        if (existingAddress64 !== undefined && source64 !== existingAddress64) {
-                            // join with already taken source16
-                            newAddress16 = this.assignNetworkAddress();
-
-                            if (newAddress16 === 0xffff) {
-                                status = MACAssociationStatus.PAN_FULL;
-                            } else {
-                                // tell device to use the newly generated value
+                        if (device !== undefined) {
+                            if (device.authorized) {
+                                // initial join should not conflict on 64, don't allow join if it does
+                                newAddress16 = 0xffff;
                                 status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                            }
+                        } else {
+                            const existingAddress64 = this.address16ToAddress64.get(source16);
+
+                            if (existingAddress64 !== undefined && source64 !== existingAddress64) {
+                                // join with already taken source16
+                                newAddress16 = this.assignNetworkAddress();
+
+                                if (newAddress16 === 0xffff) {
+                                    status = MACAssociationStatus.PAN_FULL;
+                                } else {
+                                    // tell device to use the newly generated value
+                                    status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                                }
                             }
                         }
                     }

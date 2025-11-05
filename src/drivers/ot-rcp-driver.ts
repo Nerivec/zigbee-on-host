@@ -578,7 +578,6 @@ export class OTRCPDriver {
         }
 
         await this.context.clear();
-        this.context.pendingAssociations.clear();
 
         logger.info("======== Network reset ========", NS);
     }
