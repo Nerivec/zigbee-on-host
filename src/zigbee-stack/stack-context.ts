@@ -1242,12 +1242,6 @@ export class StackContext {
         //     }
         // }
 
-        logger.debug(
-            () =>
-                `DEVICE_JOINING[src=${source16}:${source64} newAddr16=${newAddress16} initialJoin=${initialJoin} deviceType=${capabilities?.deviceType} powerSource=${capabilities?.powerSource} rxOnWhenIdle=${capabilities?.rxOnWhenIdle}] replying with status=${status}`,
-            NS,
-        );
-
         if (
             status === MACAssociationStatus.SUCCESS &&
             initialJoin &&
@@ -1257,6 +1251,12 @@ export class StackContext {
             newAddress16 = 0xffff;
             status = MACAssociationStatus.PAN_ACCESS_DENIED;
         }
+
+        logger.debug(
+            () =>
+                `DEVICE_JOINING[src=${source16}:${source64} newAddr16=${newAddress16} initialJoin=${initialJoin} deviceType=${capabilities?.deviceType} powerSource=${capabilities?.powerSource} rxOnWhenIdle=${capabilities?.rxOnWhenIdle}] replying with status=${status}`,
+            NS,
+        );
 
         if (status === MACAssociationStatus.SUCCESS) {
             if (initialJoin || unknownRejoin) {
