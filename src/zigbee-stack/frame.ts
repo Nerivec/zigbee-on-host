@@ -93,7 +93,10 @@ export async function processFrame(
                 }
 
                 // Delegate GP duplicate check to NWK GP handler
-                if (nwkGPHandler.isDuplicateFrame(macHeader, nwkGPHeader)) {
+                if (
+                    nwkGPHeader.frameControl.frameType !== ZigbeeNWKGPFrameType.MAINTENANCE &&
+                    nwkGPHandler.isDuplicateFrame(macHeader, nwkGPHeader)
+                ) {
                     logger.debug(
                         () => `<-~- NWKGP Ignoring duplicate frame macSeqNum=${macHeader.sequenceNumber} nwkGPFC=${nwkGPHeader.securityFrameCounter}`,
                         NS,

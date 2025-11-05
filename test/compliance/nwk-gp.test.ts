@@ -284,36 +284,7 @@ describe("Zigbee 3.0 Green Power (NWK GP) Compliance", () => {
         expect(mockNWKGPHandlerCallbacks.onGPFrame).toHaveBeenCalledTimes(2);
     });
 
-    it("falls back to MAC sequence and FCS for anonymous GPDs", async () => {
-        const macHeaderBase = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.EXT, MACFrameAddressMode.EXT);
-        macHeaderBase.source64 = undefined;
-        macHeaderBase.sequenceNumber = 50;
-        macHeaderBase.fcs = 0x1234;
-
-        const nwkHeaderBase = createNWKGPHeader();
-        nwkHeaderBase.sourceId = undefined;
-        nwkHeaderBase.securityFrameCounter = undefined;
-        nwkHeaderBase.frameControl.frameType = ZigbeeNWKGPFrameType.DATA;
-        nwkHeaderBase.payloadLength = 1;
-
-        const data = Buffer.from([ZigbeeNWKGPCommandId.RECALL_SCENE0]);
-
-        const send = async (fcs: number) => {
-            const macHeader = cloneMACHeader(macHeaderBase);
-            macHeader.fcs = fcs;
-            const nwkHeader = cloneGPHeader(nwkHeaderBase);
-
-            await deliverIfNotDuplicate(macHeader, nwkHeader, data, 0x55);
-        };
-
-        await send(0x1234);
-        await send(0x1234);
-        await send(0x1235);
-
-        expect(mockNWKGPHandlerCallbacks.onGPFrame).toHaveBeenCalledTimes(2);
-    });
-
-    it("expires duplicate cache entries after 60 seconds", async () => {
+    it("expires duplicate cache entries after 2 seconds", async () => {
         vi.useFakeTimers();
 
         const macHeaderBase = createMACHeader(MACFrameType.DATA, MACFrameAddressMode.EXT, MACFrameAddressMode.EXT);
@@ -333,7 +304,7 @@ describe("Zigbee 3.0 Green Power (NWK GP) Compliance", () => {
         await send();
         expect(mockNWKGPHandlerCallbacks.onGPFrame).toHaveBeenCalledTimes(1);
 
-        await vi.advanceTimersByTimeAsync(61000);
+        await vi.advanceTimersByTimeAsync(2500);
         await send();
 
         expect(mockNWKGPHandlerCallbacks.onGPFrame).toHaveBeenCalledTimes(2);

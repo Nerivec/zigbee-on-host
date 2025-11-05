@@ -540,7 +540,7 @@ This report provides a meticulous analysis of the zigbee-on-host implementation'
 2. **Duplicate Detection**
    - Tracks most-recent security frame counter per GPD and rejects `<=` values ✅
    - Falls back to MAC sequence number + FCS when GPD identifiers are absent ✅
-   - Purges stale entries after 60 s to bound memory ✅
+   - Purges stale entries after 2 s to bound memory ✅
 
 3. **Frame Filtering**
    - Blocks commissioning commands when not in commissioning mode ✅

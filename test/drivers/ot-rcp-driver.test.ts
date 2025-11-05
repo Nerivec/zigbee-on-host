@@ -3805,10 +3805,10 @@ describe("OT RCP Driver", () => {
             driver.parser._transform(makeSpinelStreamRaw(1, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(100);
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
+            driver.parser._transform(makeSpinelStreamRaw(2, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(100);
 
-            expect(mockCallbacks.onGPFrame).toHaveBeenCalledTimes(1);
+            expect(mockCallbacks.onGPFrame).toHaveBeenCalledTimes(2); // no identifier for MAINTENANCE frames
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(2);
 
             // dupe notification frames from live logs
@@ -3832,7 +3832,7 @@ describe("OT RCP Driver", () => {
             );
             await vi.advanceTimersByTimeAsync(100);
 
-            expect(mockCallbacks.onGPFrame).toHaveBeenCalledTimes(2);
+            expect(mockCallbacks.onGPFrame).toHaveBeenCalledTimes(3);
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(4);
         });
     });
