@@ -116,27 +116,27 @@ export class NWKGPHandler {
     // Zigbee Green Power 14-0563-19 §A.1.4.1 requires sinks to track the latest GPD security frame counter per device.
     #makeDuplicateKey(macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader): string | undefined {
         if (nwkHeader.sourceId !== undefined) {
-            return `gpd32:${nwkHeader.sourceId.toString(16)}`;
+            return `gpd32:${nwkHeader.sourceId}`;
         }
 
         if (nwkHeader.source64 !== undefined) {
             const endpoint = nwkHeader.endpoint ?? 0;
 
-            return `gpd64:${nwkHeader.source64.toString(16)}:${endpoint}`;
+            return `gpd64:${nwkHeader.source64}:${endpoint}`;
         }
 
         if (macHeader.source64 !== undefined) {
-            return `mac64:${macHeader.source64.toString(16)}`;
+            return `mac64:${macHeader.source64}`;
         }
 
         if (macHeader.source16 !== undefined) {
-            return `mac16:${macHeader.source16.toString(16)}`;
+            return `mac16:${macHeader.source16}`;
         }
 
         if (macHeader.sequenceNumber !== undefined) {
             const fcs = macHeader.fcs ?? 0;
 
-            return `macseq:${macHeader.sequenceNumber.toString(16)}:${fcs.toString(16)}`;
+            return `macseq:${macHeader.sequenceNumber}:${fcs}`;
         }
 
         return undefined;
