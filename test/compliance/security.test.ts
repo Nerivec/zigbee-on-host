@@ -944,48 +944,61 @@ describe("Zigbee 3.0 Security Compliance", () => {
      * Install codes SHALL be used to derive preconfigured link keys.
      */
     describe("Install Codes (Zigbee §4.6.3.4)", () => {
-        function makeInstallCodeBuffer(data: Buffer): Buffer {
-            const buffer = Buffer.allocUnsafe(data.length + 2);
-            const crc = computeInstallCodeCRC(data);
+        let codeVector: Buffer;
+        let linkKeyVector: Buffer;
 
-            data.copy(buffer, 0);
-            buffer.writeUInt16LE(crc, data.length);
+        beforeEach(() => {
+            codeVector = Buffer.from("83FED3407A939723A5C639B26916D505C3B5", "hex");
+            linkKeyVector = Buffer.from("66B6900981E1EE3CA4206B6B861C02BB", "hex");
+        });
 
-            return buffer;
-        }
+        it("validates install code", () => {
+            const device64 = 0x00124b00ffee0101n;
+
+            expect(codeVector.readUInt16LE(16)).toStrictEqual(0xb5c3);
+            expect(computeInstallCodeCRC(codeVector.subarray(0, -2))).toStrictEqual(0xb5c3);
+            expect(aes128MmoHash(codeVector)).toStrictEqual(linkKeyVector);
+            expect(context.addInstallCode(device64, codeVector)).toStrictEqual(linkKeyVector);
+        });
 
         it("rejects install codes when the trust center policy does not support them", () => {
             const device64 = 0x00124b00ffee0000n;
-            const code = Buffer.from("00112233445566778899aabbccddeeff", "hex");
-            const installCode = makeInstallCodeBuffer(code);
 
             context.trustCenterPolicies.installCode = InstallCodePolicy.NOT_SUPPORTED;
 
-            expect(() => context.addInstallCode(device64, installCode)).toThrowError(
+            expect(() => context.addInstallCode(device64, codeVector)).toThrowError(
                 "Install codes are not supported by the current Trust Center policy",
             );
         });
 
         it("derives link keys from install codes using AES-128 MMO hash", () => {
             const device64 = 0x00124b00ffee0101n;
-            const code = Buffer.from("112233445566778899aabbccddeeff00", "hex");
-            const installCode = makeInstallCodeBuffer(code);
-            const derived = context.addInstallCode(device64, installCode);
-            const expected = aes128MmoHash(code);
-            const stored = context.installCodeTable.get(device64)?.key;
+            const derived = context.addInstallCode(device64, codeVector);
+            const storedCode = context.installCodeTable.get(device64);
             const linkKey = context.getAppLinkKey(device64, context.netParams.eui64);
 
-            expect(derived.equals(expected)).toStrictEqual(true);
-            expect(stored?.equals(expected)).toStrictEqual(true);
-            expect(linkKey?.equals(expected)).toStrictEqual(true);
+            expect(storedCode?.equals(codeVector)).toStrictEqual(true);
+            expect(derived.equals(linkKeyVector)).toStrictEqual(true);
+            expect(linkKey?.equals(linkKeyVector)).toStrictEqual(true);
+        });
+
+        it("accepts already hashed link key", () => {
+            const device64 = 0x00124b00ffee0101n;
+            const code = Buffer.from("66B6900981E1EE3CA4206B6B861C02BB", "hex");
+            const derived = context.addInstallCode(device64, code, true);
+            const storedCode = context.installCodeTable.get(device64);
+            const linkKey = context.getAppLinkKey(device64, context.netParams.eui64);
+
+            expect(storedCode?.equals(code)).toStrictEqual(true);
+            expect(derived.equals(code)).toStrictEqual(true);
+            expect(linkKey?.equals(code)).toStrictEqual(true);
         });
 
         it("rejects install codes with invalid CRC", () => {
             const device64 = 0x00124b00ffee0202n;
-            const code = Buffer.from("8899aabbccddeeff0011223344556677", "hex");
-            const invalid = Buffer.concat([code, Buffer.from([0x00, 0x00])]);
+            Buffer.from([0x00, 0x00]).copy(codeVector, codeVector.byteLength - 2);
 
-            expect(() => context.addInstallCode(device64, invalid)).toThrowError("Invalid install code CRC");
+            expect(() => context.addInstallCode(device64, codeVector)).toThrowError("Invalid install code CRC");
         });
 
         it("enforces install code policy when required by the trust center", async () => {
@@ -1006,15 +1019,13 @@ describe("Zigbee 3.0 Security Compliance", () => {
 
             expect(statusWithoutCode).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
 
-            const code = Buffer.from("0102030405060708090a0b0c0d0e0f10", "hex");
-            const installCode = makeInstallCodeBuffer(code);
-            context.addInstallCode(device64, installCode);
+            context.addInstallCode(device64, codeVector);
 
             const [statusWithCode, assignedAddress] = await context.associate(undefined, device64, true, caps, true);
 
             expect(statusWithCode).toStrictEqual(MACAssociationStatus.SUCCESS);
             expect(assignedAddress).not.toStrictEqual(0xffff);
-            expect(context.getAppLinkKey(device64, context.netParams.eui64)).toBeDefined();
+            expect(context.getAppLinkKey(device64, context.netParams.eui64)).toStrictEqual(linkKeyVector);
         });
 
         it("allows joins without install codes when policy is not required", async () => {

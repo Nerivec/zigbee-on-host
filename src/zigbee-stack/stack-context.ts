@@ -62,12 +62,6 @@ export enum InstallCodePolicy {
     REQUIRED = 0x02,
 }
 
-export type InstallCodeEntry = {
-    code: Buffer;
-    crc: number;
-    key: Buffer;
-};
-
 export enum TrustCenterKeyRequestPolicy {
     DISALLOWED = 0x00,
     /** Any device MAY request */
@@ -382,7 +376,7 @@ export class StackContext {
     /** Application link keys stored for device pairs (ordered by IEEE address) */
     readonly appLinkKeyTable = new Map<string, AppLinkKeyStoreEntry>();
     /** Install code metadata per device (mapped by IEEE address) */
-    readonly installCodeTable = new Map<bigint, InstallCodeEntry>();
+    readonly installCodeTable = new Map<bigint, Buffer>();
     /** Trust Center policies */
     readonly trustCenterPolicies: TrustCenterPolicies = {
         allowJoins: false,
@@ -825,33 +819,34 @@ export class StackContext {
         this.appLinkKeyTable.set(this.#makeAppLinkKeyId(canonicalA, canonicalB), stored);
     }
 
-    public addInstallCode(device64: bigint, installCode: Buffer): Buffer {
+    public addInstallCode(device64: bigint, installCode: Buffer, hashed = false): Buffer {
         if (this.trustCenterPolicies.installCode === InstallCodePolicy.NOT_SUPPORTED) {
             throw new Error("Install codes are not supported by the current Trust Center policy");
         }
 
-        const payloadLength = installCode.byteLength - 2;
+        const keyLength = hashed ? installCode.byteLength : installCode.byteLength - 2;
 
-        if (!INSTALL_CODE_VALID_SIZES.some((size) => size === payloadLength)) {
-            throw new Error(`Invalid install code length ${payloadLength}`);
+        if (!INSTALL_CODE_VALID_SIZES.some((size) => size === keyLength)) {
+            throw new Error(`Invalid install code length ${keyLength}`);
         }
 
-        const code = installCode.subarray(0, payloadLength);
-        const providedCRC = installCode.readUInt16LE(payloadLength);
-        const computedCRC = computeInstallCodeCRC(code);
+        if (hashed) {
+            this.installCodeTable.set(device64, installCode);
+            this.setAppLinkKey(device64, this.netParams.eui64, installCode);
+
+            return installCode;
+        }
+
+        const providedCRC = installCode.readUInt16LE(keyLength);
+        const computedCRC = computeInstallCodeCRC(installCode.subarray(0, keyLength));
 
         if (providedCRC !== computedCRC) {
             throw new Error("Invalid install code CRC");
         }
 
-        const key = aes128MmoHash(code);
-        const entry: InstallCodeEntry = {
-            code: Buffer.from(code),
-            crc: providedCRC,
-            key,
-        };
+        const key = aes128MmoHash(installCode);
 
-        this.installCodeTable.set(device64, entry);
+        this.installCodeTable.set(device64, installCode);
         this.setAppLinkKey(device64, this.netParams.eui64, key);
 
         return key;
