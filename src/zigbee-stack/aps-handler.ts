@@ -76,6 +76,12 @@ type PendingAckEntry = {
     fragment?: OutgoingFragmentContext;
 };
 
+type DuplicateEntry = {
+    counter: number;
+    expiresAt: number;
+    fragments?: Set<number>;
+};
+
 /**
  * Callbacks for APS handler to communicate with driver
  */
@@ -114,11 +120,13 @@ export class APSHandler {
     #counter = 0;
     #zdoSeqNum = 0;
 
-    /** Recently seen APS frames for duplicate rejection */
-    readonly #apsDuplicateTable = new Map<string, { counter: number; expiresAt: number; fragments?: Set<number> }>();
-    /** Pending APS acknowledgments waiting for retransmission */
+    /** Recently seen frames for duplicate rejection by NWK 16 */
+    readonly #duplicateTable16 = new Map<number, DuplicateEntry>();
+    /** Recently seen frames for duplicate rejection by NWK 64 */
+    readonly #duplicateTable64 = new Map<bigint, DuplicateEntry>();
+    /** Pending acknowledgments waiting for retransmission */
     readonly #pendingAcks = new Map<string, PendingAckEntry>();
-    /** Incoming APS fragment reassembly buffers */
+    /** Incoming fragment reassembly buffers */
     readonly #incomingFragments = new Map<string, IncomingFragmentState>();
 
     constructor(context: StackContext, macHandler: MACHandler, nwkHandler: NWKHandler, callbacks: APSHandlerCallbacks) {
@@ -139,6 +147,8 @@ export class APSHandler {
 
         this.#pendingAcks.clear();
         this.#incomingFragments.clear();
+        this.#duplicateTable16.clear();
+        this.#duplicateTable64.clear();
     }
 
     /**
@@ -191,12 +201,26 @@ export class APSHandler {
             return false;
         }
 
-        this.#pruneExpiredDuplicates(now);
+        const hasSource16 = nwkHeader.source16 !== undefined;
+
+        // prune expired duplicates, only for relevant table to avoid pointless looping for current frame
+        if (hasSource16) {
+            for (const [key, entry] of this.#duplicateTable16) {
+                if (entry.expiresAt <= now) {
+                    this.#duplicateTable16.delete(key);
+                }
+            }
+        } else {
+            for (const [key, entry] of this.#duplicateTable64) {
+                if (entry.expiresAt <= now) {
+                    this.#duplicateTable64.delete(key);
+                }
+            }
+        }
 
         const isFragmented = apsHeader.fragmentation !== undefined && apsHeader.fragmentation !== ZigbeeAPSFragmentation.NONE;
-        // XXX: perf: string of bigint/number, this is called a lot
-        const sourceKey = nwkHeader.source64 !== undefined ? `64:${nwkHeader.source64}` : `16:${nwkHeader.source16}`;
-        const entry = this.#apsDuplicateTable.get(sourceKey);
+        // frames are dropped in `processFrame` if neither source available
+        const entry = hasSource16 ? this.#duplicateTable16.get(nwkHeader.source16!) : this.#duplicateTable64.get(nwkHeader.source64!);
 
         if (entry !== undefined && entry.counter === apsHeader.counter && entry.expiresAt > now) {
             if (isFragmented) {
@@ -219,7 +243,7 @@ export class APSHandler {
             return true;
         }
 
-        const newEntry: { counter: number; expiresAt: number; fragments?: Set<number> } = {
+        const newEntry: DuplicateEntry = {
             counter: apsHeader.counter,
             expiresAt: now + CONFIG_APS_DUPLICATE_TIMEOUT_MS,
         };
@@ -228,17 +252,13 @@ export class APSHandler {
             newEntry.fragments = new Set([apsHeader.fragBlockNumber ?? 0]);
         }
 
-        this.#apsDuplicateTable.set(sourceKey, newEntry);
+        if (hasSource16) {
+            this.#duplicateTable16.set(nwkHeader.source16!, newEntry);
+        } else {
+            this.#duplicateTable64.set(nwkHeader.source64!, newEntry);
+        }
 
         return false;
-    }
-
-    #pruneExpiredDuplicates(now: number): void {
-        for (const [sourceKey, entry] of this.#apsDuplicateTable) {
-            if (entry.expiresAt <= now) {
-                this.#apsDuplicateTable.delete(sourceKey);
-            }
-        }
     }
 
     /**
