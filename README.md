@@ -26,25 +26,23 @@ _This library can also serve as a base for pentesting Zigbee networks thanks to 
 | Spinel & HDLC | 100% | — |
 | IEEE 802.15.4 MAC | 100% | — |
 | Zigbee NWK | 90% | Route discovery table, TLV parsing |
-| Zigbee APS | 85% | TLV parsing, niche control frames, counter persistence |
+| Zigbee APS | 85% | TLV parsing, APS security enablement, fragment sizing/ack heuristics, counter persistence |
 | Zigbee Green Power | 80% | Commissioning TLVs, security checking, counter persistence, security review (MIC/auth tag flows & key usage) |
 
 | Feature | Status | Pending |
 | --- | --- | --- |
-| Network forming | 100% | — |
-| Network state saving & restore | 100% | — |
-| Network state reset | 100% | — |
-| Joining & rejoining workflow | 90% | Key update detection |
+| Network forming & state | 100% | — |
+| Joining & rejoining workflow | 90% | Key update detection, apsTrustCenterAddress validation |
 | Indirect transmission mechanism | 90% | Queue depth/back-pressure heuristics |
 | Source routing | 75% | Discovery table enforcement, single-entry normalization, pruning policy |
 | Route repairing | 55% | Automated path rebuild, repair acknowledgements telemetry |
 | Coordinator LQI/routing | 85% | Age/diversity metrics, reporting hooks |
 | LQI reporting & mapping | 70% | Adaptive calibration, exposure via metrics interface |
 | Install code | 100% | — |
-| APS application link keys | 80% | Usage (currently `DISALLOWED`), attribute persistence, rotation tooling |
+| APS application link keys | 80% | Usage (currently `DISALLOWED`), per-pair derivation, attribute persistence, rotation tooling |
 | InterPAN / Touchlink | 0% | Entire feature set |
 | R23 compliance (commissioning & TLVs) | 40% | Commissioning TLVs, Zigbee Direct, optional behaviors |
-| Trust Center key rotation | 15% | Scheduler, alerting |
+| Trust Center key rotation | 15% | Scheduler, counter telemetry, alerting |
 | Security hardening | 65% | Rejoin anomaly detection, Trust Center policy gating, alert fan-out |
 | Metrics & statistics | 0% | Collection/export of all pending telemetry items |
 

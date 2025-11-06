@@ -176,7 +176,15 @@ export class APSHandler {
     }
 
     /**
+     * 05-3474-23 #4.4.11.1 (Application Link Key establishment)
+     *
      * Get or generate application link key for a device pair
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Retrieves stored link key when present to satisfy apsDeviceKeyPairSet lookup
+     * - ✅ Derives fallback key from Trust Center link key when absent (per spec default)
+     * - ✅ Persists generated key via StackContext helper for future requests
+     * - ⚠️  Derived key currently mirrors TC key; unique per-pair derivation still TODO
      */
     #getOrGenerateAppLinkKey(deviceA: bigint, deviceB: bigint): Buffer {
         const existing = this.#context.getAppLinkKey(deviceA, deviceB);
@@ -186,13 +194,24 @@ export class APSHandler {
         }
 
         const derived = Buffer.from(this.#context.netParams.tcKey);
+
         this.#context.setAppLinkKey(deviceA, deviceB, derived);
 
         return derived;
     }
 
     /**
+     * 05-3474-23 #2.2.6.5 (APS duplicate rejection)
+     *
      * Check whether an incoming APS frame is a duplicate and update the duplicate table accordingly.
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Uses {src64, dstEndpoint, clusterId, apsCounter} tuple per spec to detect duplicates
+     * - ✅ Applies configurable timeout window (DEFAULT ≈ 8s) after which entries expire
+     * - ✅ Tracks fragment block numbers explicitly so out-of-order fragment retransmissions are accepted
+     * - ✅ Drops duplicates before generating APS ACKs, matching required ordering
+     * - ⚠️  Duplicate table stored in-memory only; persistence across restart is not implemented
+     *
      * @returns true when the frame was already seen within the duplicate removal timeout.
      */
     public isDuplicateFrame(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader, now = Date.now()): boolean {
@@ -325,12 +344,22 @@ export class APSHandler {
     }
 
     /**
+     * 05-3474-23 #4.4.1 (APS data service)
+     *
      * Send a Zigbee APS DATA frame.
      * Throws if could not send.
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Encodes APS/NWK/MAC headers according to delivery mode and security requirements
+     * - ✅ Engages NWK source routing when available via `findBestSourceRoute`
+     * - ✅ Requests APS ACKs on non-broadcast destinations and tracks MAC pending bit for sleepy children
+     * - ⚠️  APS security flag hardcoded to false (link-key encryption pending future work)
+     * - ⚠️  Relies on caller to provide valid route discovery hint; no additional validation here
+     *
      * @param params
      * @param apsCounter
      * @param attempt
-     * @returns Destination 16 data was sent to (undefined if bcast)
+     * @returns Destination short address (undefined for broadcast)
      */
     async #sendDataInternal(params: SendDataParams, apsCounter: number, attempt: number): Promise<number | undefined> {
         const { finalPayload, nwkDiscoverRoute, apsDeliveryMode, clusterId, profileId, destEndpoint, sourceEndpoint, group } = params;
@@ -493,6 +522,15 @@ export class APSHandler {
         return nwkDest16;
     }
 
+    /**
+     * 05-3474-23 #4.4.5 (APS fragmentation)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Splits payload into first/remaining chunks respecting fragment overhead constants
+     * - ✅ Stores fragmentation context to coordinate sequential block transmission
+     * - ✅ Requires unicast ACKs per spec before advancing to later blocks
+     * - ⚠️  Does not yet adapt fragment size based on MAC MTU or user configuration
+     */
     async #sendFragmentedData(params: SendDataParams, apsCounter: number): Promise<number> {
         const payload = params.finalPayload;
         if (payload.byteLength <= CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX) {
@@ -572,6 +610,14 @@ export class APSHandler {
         return { dest16, params: fragmentParams };
     }
 
+    /**
+     * 05-3474-23 #4.4.5 (APS fragmentation)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Advances to next fragment only after prior block acknowledged
+     * - ✅ Reuses shared context to maintain block numbering and chunk references
+     * - ⚠️  Throws for broadcast destinations; spec restricts fragmentation to unicast
+     */
     async #sendNextFragmentBlock(context: OutgoingFragmentContext, previousEntry: PendingAckEntry): Promise<void> {
         context.awaitingBlock += 1;
 
@@ -588,6 +634,15 @@ export class APSHandler {
         this.#trackPendingAck(dest16, previousEntry.apsCounter, params, context);
     }
 
+    /**
+     * 05-3474-23 #4.4.5 (APS fragmentation reassembly)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Initializes fragment state on FIRST block and records meta fields
+     * - ✅ Tracks expected block count from LAST fragment index
+     * - ✅ Clears extended header bits once reassembly completes per spec requirement
+     * - ⚠️  Reassembly timeout configurable via constant (30s); spec leaves timing vendor-specific
+     */
     #handleIncomingFragment(data: Buffer, nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Buffer | undefined {
         const now = Date.now();
         this.#pruneExpiredFragmentStates(now);
@@ -663,6 +718,14 @@ export class APSHandler {
         return `${source}:${profile}:${cluster}:${sourceEndpoint}:${destEndpoint}:${counter}`;
     }
 
+    #pruneExpiredFragmentStates(now: number): void {
+        for (const [key, state] of this.#incomingFragments) {
+            if (now - state.lastActivity >= CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS) {
+                this.#incomingFragments.delete(key);
+            }
+        }
+    }
+
     #updateSourceRouteForChild(child16: number, parent16: number | undefined, parent64: bigint | undefined): void {
         if (parent16 === undefined) {
             return;
@@ -681,14 +744,14 @@ export class APSHandler {
         }
     }
 
-    #pruneExpiredFragmentStates(now: number): void {
-        for (const [key, state] of this.#incomingFragments) {
-            if (now - state.lastActivity >= CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS) {
-                this.#incomingFragments.delete(key);
-            }
-        }
-    }
-
+    /**
+     * 05-3474-23 #4.4.2.3 (APS acknowledgement management)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Starts ack-wait timer using spec default (~1.5 s) and resets on retransmit
+     * - ✅ Stores fragment context so subsequent blocks send only after ACK
+     * - ⚠️  Pending table keyed by {dest16,counter}; no IEEE64 fallback if short address unknown
+     */
     #trackPendingAck(dest16: number, apsCounter: number, params: SendDataParams, fragment?: OutgoingFragmentContext): void {
         const key = `${dest16}:${apsCounter}`;
         const existing = this.#pendingAcks.get(key);
@@ -709,6 +772,14 @@ export class APSHandler {
         });
     }
 
+    /**
+     * 05-3474-23 #4.4.2.3 (APS acknowledgement management)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Retries DATA up to CONFIG_APS_MAX_FRAME_RETRIES per spec guidance (default 3)
+     * - ✅ Re-arms ack timer after each retransmission
+     * - ⚠️  Does not escalate failure beyond logging; higher layers must react to exhausted retries
+     */
     async #handleAckTimeout(key: string): Promise<void> {
         const entry = this.#pendingAcks.get(key);
 
@@ -743,6 +814,15 @@ export class APSHandler {
         }, CONFIG_APS_ACK_WAIT_DURATION_MS);
     }
 
+    /**
+     * 05-3474-23 #4.4.2.3 (APS acknowledgement management)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Matches ACKs using source short address and APS counter per spec tuple
+     * - ✅ Clears timers promptly to avoid dangling callbacks
+     * - ✅ Triggers next fragment block when outstanding
+     * - ⚠️  No handling for duplicate ACKs; silently ignored once entry removed
+     */
     async #resolvePendingAck(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Promise<void> {
         if (apsHeader.counter === undefined) {
             return;
@@ -1192,6 +1272,15 @@ export class APSHandler {
         return result !== false;
     }
 
+    /**
+     * 05-3474-23 #4.4.11 (APS command processing)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Dispatches APS command IDs to the appropriate handler per Table 4-28
+     * - ✅ Logs unsupported commands for diagnostics without crashing the stack
+     * - ✅ Passes MAC/NWK headers to downstream handlers for security context decisions
+     * - ⚠️  TLV parsing for extended commands still TODO (handlers emit TODO markers)
+     */
     public async processCommand(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Promise<void> {
         let offset = 0;
         const cmdId = data.readUInt8(offset);
@@ -1254,7 +1343,14 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.1
+     * 05-3474-23 #4.4.11.1
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Handles all mandated key types (NWK, Trust Center, Application) and logs metadata
+     * - ✅ Stages pending network key when addressed to coordinator or wildcard destination
+     * - ✅ Preserves raw key material for subsequent SWITCH_KEY activation
+     * - ⚠️  TLV extensions for enhanced security fields remain unparsed (TODO markers)
+     * - ⚠️  Application key handling currently limited to storage; partner attribute updates pending
      */
     public processTransportKey(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const keyType = data.readUInt8(offset);
@@ -1324,7 +1420,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.1
+     * 05-3474-23 #4.4.11.1
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Correctly uses CMD_KEY_TC_LINK type (0x01) per spec Table 4-17
@@ -1383,7 +1479,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.1 #4.4.11.1.3.2
+     * 05-3474-23 #4.4.11.1 #4.4.11.1.3.2
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Correctly uses CMD_KEY_STANDARD_NWK type (0x00) per spec Table 4-17
@@ -1464,7 +1560,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.1 #4.4.11.1.3.3
+     * 05-3474-23 #4.4.11.1 #4.4.11.1.3.3
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Sets CMD_KEY_APP_LINK (0x03) and includes partner64 + initiator flag per Table 4-17
@@ -1511,7 +1607,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.2
+     * 05-3474-23 #4.4.11.2
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Correctly decodes all mandatory fields: device64, device16, status
@@ -1651,7 +1747,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.2
+     * 05-3474-23 #4.4.11.2
      *
      * @param nwkDest16 device that SHALL be sent the update information
      * @param device64 device whose status is being updated
@@ -1696,7 +1792,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.3
+     * 05-3474-23 #4.4.11.3
      *
      * SPEC COMPLIANCE:
      * - ✅ Correctly decodes target IEEE address (childInfo)
@@ -1738,7 +1834,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.3
+     * 05-3474-23 #4.4.11.3
      *
      * SPEC COMPLIANCE:
      * - ✅ Includes target IEEE address
@@ -1772,7 +1868,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.4 #4.4.5.2.3
+     * 05-3474-23 #4.4.11.4 #4.4.5.2.3
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Rejects unencrypted APS frames as mandated (request MUST be APS secured)
@@ -1912,7 +2008,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.3
+     * 05-3474-23 #4.4.11.3
      *
      * SPEC COMPLIANCE:
      * - ✅ Decodes sequence number identifying the pending network key
@@ -1938,7 +2034,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.5
+     * 05-3474-23 #4.4.11.5
      *
      * SPEC COMPLIANCE:
      * - ✅ Includes sequence number associated with staged network key
@@ -1968,7 +2064,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.6
+     * 05-3474-23 #4.4.11.6
      *
      * SPEC COMPLIANCE:
      * - ✅ Correctly decodes destination address
@@ -1997,7 +2093,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.6
+     * 05-3474-23 #4.4.11.6
      *
      * SPEC COMPLIANCE:
      * - ✅ Includes destination64
@@ -2033,7 +2129,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.7
+     * 05-3474-23 #4.4.11.7
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Decodes keyType, source64, and keyHash correctly
@@ -2155,7 +2251,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-R #4.4.11.8
+     * 05-3474-23 #4.4.11.8
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Sends CONFIRM_KEY with all required fields: status, keyType, destination64
@@ -2229,7 +2325,7 @@ export class APSHandler {
     }
 
     /**
-     * R23 FEATURE - 05-3474-R #4.4.11.9
+     * R23 FEATURE - 05-3474-23 #4.4.11.9
      *
      * SPEC COMPLIANCE:
      * - ⚠️ R23 feature with minimal implementation
@@ -2270,7 +2366,7 @@ export class APSHandler {
     // TODO: send RELAY_MESSAGE_DOWNSTREAM
 
     /**
-     * R23 FEATURE - 05-3474-R #4.4.11.10
+     * R23 FEATURE - 05-3474-23 #4.4.11.10
      *
      * SPEC COMPLIANCE:
      * - ⚠️ R23 feature with minimal implementation
@@ -2315,9 +2411,17 @@ export class APSHandler {
     // #region ZDO Helpers
 
     /**
+     * 05-3474-23 #2.4.4.2.3
+     *
      * Generate LQI (Link Quality Indicator) table response for coordinator.
      * ZDO response to LQI_TABLE_REQUEST.
-     * @see 05-3474-23 #2.4.4.2.3
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Produces response header fields (status, totalEntries, startIndex, entryCount)
+     * - ✅ Encodes per-neighbor records with device type, permit-join, depth, and LQI
+     * - ⚠️  Relationship/permit-join/depth fields currently stubbed with TODO markers
+     * - ⚠️  Table truncated to 255 entries without pagination continuation handling
+     *
      * @param startIndex The index to start the table entries from
      * @returns Buffer containing the LQI table response
      */
@@ -2403,10 +2507,18 @@ export class APSHandler {
     }
 
     /**
+     * 05-3474-23 #2.4.4.3.3
+     *
      * Generate routing table response for coordinator.
      * ZDO response to ROUTING_TABLE_REQUEST.
      * NOTE: Only outputs the best source route for each entry in the table (clipped to max 255 entries).
-     * @see 05-3474-23 #2.4.4.3.3
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Populates routing table response header and entry layout per Table 2-80
+     * - ✅ Derives next hop from best known source route for each destination
+     * - ⚠️  Status flags (memoryConstrained, manyToOne, routeRecordRequired) currently fixed to 0/TODO
+     * - ⚠️  Response clipped to 255 entries without continuation index support
+     *
      * @param startIndex The index to start the table entries from
      * @returns Buffer containing the routing table response
      */

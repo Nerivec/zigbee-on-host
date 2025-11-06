@@ -47,7 +47,16 @@ export class NWKGPHandler {
     }
 
     /**
+     * 14-0563-19 #A.3.8.2 (Commissioning mode control)
+     *
      * Put the coordinator in Green Power commissioning mode.
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Enables commissioning for bounded window (defaults to 180 s, clamped to 0xfe)
+     * - ✅ Clears existing timer before starting new session to avoid overlap
+     * - ✅ Logs entry for diagnostics; required commands are gated on this flag elsewhere
+     * - ⚠️  Does not broadcast commissioning state to sinks; assumes host-only coordination
+     *
      * @param commissioningWindow Defaults to 180 if unspecified. Max 254. 0 means exit.
      */
     public enterCommissioningMode(commissioningWindow = 180): void {
@@ -63,6 +72,15 @@ export class NWKGPHandler {
         }
     }
 
+    /**
+     * 14-0563-19 #A.3.8.2 (Commissioning mode control)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Cancels active commissioning timer and resets state flag
+     * - ✅ Logs exit for diagnostics, matching spec recommendation for operator visibility
+     * - ✅ Clears duplicate tables only when stop() invoked to preserve replay protection during window
+     * - ⚠️  Additional cleanup (e.g., pending key distribution) not yet triggered here
+     */
     public exitCommissioningMode(): void {
         clearTimeout(this.#commissioningWindowTimeout);
         this.#commissioningWindowTimeout = undefined;
@@ -71,6 +89,16 @@ export class NWKGPHandler {
         logger.info("Exited Green Power commissioning mode", NS);
     }
 
+    /**
+     * 14-0563-19 #A.3.5.2 (Duplicate filtering)
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Maintains per-source security frame counter as primary replay protection metric
+     * - ✅ Falls back to MAC sequence number when security not in use, per spec guidance
+     * - ✅ Applies timeout window to age entries out of duplicate tables
+     * - ✅ Handles both source ID and IEEE/endpoint addressing forms
+     * - ⚠️  Does not persist counters across restarts; relies on runtime tables only
+     */
     public isDuplicateFrame(macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, now = Date.now()): boolean {
         const hasSourceId = nwkHeader.sourceId !== undefined;
 

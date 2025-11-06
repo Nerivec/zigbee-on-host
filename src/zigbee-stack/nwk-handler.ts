@@ -410,7 +410,15 @@ export class NWKHandler {
     }
 
     /**
+     * 05-3474-23 #3.6.3.3
+     *
      * Mark a route as successfully used
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Resets failure counter and updates last-used timestamp after successful forwarding
+     * - ✅ Operates on currently selected best route entry to keep metrics coherent
+     * - ⚠️  Multi-entry route table means only first entry updated; others remain untouched
+     *
      * @param destination16 Network address of the destination
      */
     public markRouteSuccess(destination16: number): void {
@@ -424,8 +432,16 @@ export class NWKHandler {
     }
 
     /**
+     * 05-3474-23 #3.6.3.3
+     *
      * Mark a route as failed and handle route repair if needed.
      * Consolidates failure tracking and MTORR triggering per Zigbee spec.
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Increments failure counter and triggers Many-to-One route discovery after threshold
+     * - ✅ Purges routes that rely on failed relay as required for repair
+     * - ✅ Supports explicit repair trigger (e.g., NWK_STATUS link failure)
+     * - ⚠️  Failure threshold configurable (CONFIG_NWK_ROUTE_MAX_FAILURES) rather than spec constant
      *
      * @param destination16 Network address of the destination
      * @param triggerRepair If true, will purge routes using this destination as relay and trigger MTORR
@@ -493,7 +509,14 @@ export class NWKHandler {
     }
 
     /**
+     * 05-3474-23 #3.6.3.3
+     *
      * Check if a source route already exists in the table
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Compares relay hop list and cost to detect duplicate paths before insertion
+     * - ✅ Accepts optional pre-fetched entry array to avoid redundant map lookups
+     * - ⚠️  Formally spec route table holds single entry per destination; this helper assumes multi-entry model
      */
     public hasSourceRoute(address16: number, newEntry: SourceRouteTableEntry, existingEntries?: SourceRouteTableEntry[]): boolean {
         if (!existingEntries) {
@@ -997,7 +1020,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-R #3.4.3
+     * 05-3474-23 #3.4.3
      *
      * SPEC COMPLIANCE:
      * - ✅ Correctly decodes status code
@@ -1050,7 +1073,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-R #3.4.3
+     * 05-3474-23 #3.4.3
      *
      * SPEC COMPLIANCE:
      * - ✅ Sends to appropriate destination (broadcast or unicast)
@@ -1151,7 +1174,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-R #3.4.5
+     * 05-3474-23 #3.4.5
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Correctly decodes relayCount and relay addresses
@@ -1223,7 +1246,7 @@ export class NWKHandler {
     // NOTE: sendRouteRecord not for coordinator
 
     /**
-     * 05-3474-R #3.4.6
+     * 05-3474-23 #3.4.6
      * Optional
      *
      * SPEC COMPLIANCE NOTES:
@@ -1322,8 +1345,15 @@ export class NWKHandler {
     // NOTE: sendRejoinReq not for coordinator
 
     /**
-     * 05-3474-R #3.4.7
+     * 05-3474-23 #3.4.7
+     *
      * Optional
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Parses status and new short address per Table 3-19
+     * - ✅ Logs success/failure for Trust Center auditing
+     * - ⚠️  Does not currently update device tables; caller expected to handle
+     * - ⚠️  TLV extensions (R23) not parsed yet
      */
     public processRejoinResp(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const newAddress = data.readUInt16LE(offset);
@@ -1395,7 +1425,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-R #3.4.8
+     * 05-3474-23 #3.4.8
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Correctly decodes options byte, link count, and link entries
@@ -1599,7 +1629,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-R #3.4.9 (deprecated in R23)
+     * 05-3474-23 #3.4.9 (deprecated in R23)
      *
      * SPEC COMPLIANCE:
      * - ✅ Correctly decodes options, EPID, updateID, panID
@@ -1645,7 +1675,7 @@ export class NWKHandler {
     // NOTE: sendReport deprecated in R23
 
     /**
-     * 05-3474-R #3.4.10
+     * 05-3474-23 #3.4.10
      *
      * SPEC COMPLIANCE:
      * - ✅ Correctly decodes options, EPID, updateID, panID
@@ -1693,7 +1723,7 @@ export class NWKHandler {
     // NOTE: sendUpdate PAN ID change not supported
 
     /**
-     * 05-3474-R #3.4.11
+     * 05-3474-23 #3.4.11
      *
      * SPEC COMPLIANCE:
      * - ✅ Decodes requested timeout index and configuration octet per spec Table 3-54
@@ -1744,7 +1774,7 @@ export class NWKHandler {
     // NOTE: sendEdTimeoutRequest not for coordinator
 
     /**
-     * 05-3474-R #3.4.12
+     * 05-3474-23 #3.4.12
      *
      * SPEC COMPLIANCE:
      * - ✅ Correctly decodes status (SUCCESS, INCORRECT_VALUE, UNSUPPORTED_FEATURE)
@@ -1778,7 +1808,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-R #3.4.12
+     * 05-3474-23 #3.4.12
      *
      * SPEC COMPLIANCE:
      * - ✅ Populates status field with SUCCESS/INCORRECT_VALUE/UNSUPPORTED_FEATURE based on request validation
@@ -1815,7 +1845,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-R #3.4.13
+     * 05-3474-23 #3.4.13
      *
      * SPEC COMPLIANCE:
      * - ✅ Decodes transmit power delta

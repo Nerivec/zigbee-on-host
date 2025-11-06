@@ -416,7 +416,7 @@ export class StackContext {
     /** MAC association permit flag */
     associationPermit = false;
 
-    //---- Trust Center (see 05-3474-R #4.7.1)
+    //---- Trust Center (see 05-3474-23 #4.7.1)
 
     #allowJoinTimeout: NodeJS.Timeout | undefined;
 
@@ -1256,17 +1256,17 @@ export class StackContext {
     }
 
     /**
-     * @param duration The length of time in seconds during which the trust center will allow joins.
-     * The value 0x00 and 0xff indicate that permission is disabled or enabled, respectively, without a specified time limit.
-     * 0xff is clamped to 0xfe for security reasons
-     * @param macAssociationPermit If true, also allow association on coordinator itself. Ignored if duration 0.
-     *
      * SPEC COMPLIANCE:
      * - ✅ Implements timed join window per spec
      * - ✅ Updates Trust Center policies
      * - ✅ Sets MAC associationPermit flag
      * - ✅ Clamps 0xff to 0xfe for security
      * - ✅ Auto-disallows after timeout
+     *
+     * @param duration The length of time in seconds during which the trust center will allow joins.
+     * The value 0x00 and 0xff indicate that permission is disabled or enabled, respectively, without a specified time limit.
+     * 0xff is clamped to 0xfe for security reasons
+     * @param macAssociationPermit If true, also allow association on coordinator itself. Ignored if duration 0.
      */
     public allowJoins(duration: number, macAssociationPermit: boolean): void {
         if (duration > 0) {
