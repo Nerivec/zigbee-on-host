@@ -52,13 +52,14 @@ You can also contribute by submitting sniffs/captures. [More information here](h
 
 ### OpenThread RCP firmware notes
 
+- [Texas Instruments] Some CC13xx/CC26xx boards require skipping the bootloader on startup. If ZoH does not want to start (timeout on first contact), set `"tiSerialSkipBootloader": true` in [custom stack config](#custom-stack-config).
 - [Texas Instruments] Does not currently implement `PHY_CCA_THRESHOLD` (cannot read or write value)
 
 ## Testing
 
 #### Current Status
 
-- CI: ~80-85% coverage
+- CI: ~95% coverage
 - Stress-testing: pending
 - Firmware stability:
   - Silicon Labs: ongoing
@@ -97,7 +98,36 @@ serial:
 > This file contains everything needed to re-establish the network on start, hence, a `coordinator_backup.json` is never created by Zigbee2MQTT. It is located alongside the `database.db` in the `data` folder.
 
 > [!TIP]
-> The EUI64 (IEEE address) in the firmware of the coordinator is ignored in this mode. A static one is used instead (set by Zigbee2MQTT), allowing you to change coordinators at will on the same network (although you may encounter device-related troubles when radio specs vary wildly).
+> The EUI64 (IEEE address) in the firmware of the coordinator is ignored in this mode. One is set by Zigbee2MQTT instead, allowing you to change coordinators at will on the same network (although you may encounter device-related troubles when radio specs vary wildly).
+
+#### Custom stack config
+
+Starting with [zigbee-herdsman 6.4.0](https://github.com/Koenkk/zigbee-herdsman/releases/tag/v6.4.0), it is possible to provide a custom stack configuration via JSON (similar to [ember's](https://www.zigbee2mqtt.io/guide/adapters/emberznet.html#expert-customizing-stack-configuration)).
+
+```ts
+interface StackConfigJSON {
+    /** for TI hw only, required for some CC13xx/CC26xx with auto-entering of bootloader on plug in */
+    tiSerialSkipBootloader: boolean;
+    /** EUI64 used for the adapter -- 0x${hex} format */
+    eui64: string;
+    /** @see https://nerivec.github.io/zigbee-on-host/types/spinel_spinel.StreamRawConfig.html */
+    ccaBackoffAttempts: number;
+    /** @see https://nerivec.github.io/zigbee-on-host/types/spinel_spinel.StreamRawConfig.html */
+    ccaRetries: number;
+    /** @see https://nerivec.github.io/zigbee-on-host/types/spinel_spinel.StreamRawConfig.html */
+    enableCSMACA: boolean;
+}
+```
+Defaults are:
+```json
+{
+    "tiSerialSkipBootloader": false,
+    "eui64": "0x4d325a6e6f486f5a",
+    "ccaBackoffAttempts": 1,
+    "ccaRetries": 4,
+    "enableCSMACA": true
+}
+```
 
 ### CLI & Utils
 
