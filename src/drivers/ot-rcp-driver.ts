@@ -54,8 +54,8 @@ const CONFIG_HIGHWATER_MARK = HDLC_TX_CHUNK_SIZE * 4;
 export class OTRCPDriver {
     readonly #onMACFrame: StackCallbacks["onMACFrame"];
     readonly #streamRawConfig: StreamRawConfig;
-    readonly writer: OTRCPWriter;
-    readonly parser: OTRCPParser;
+    readonly writer = new OTRCPWriter({ highWaterMark: CONFIG_HIGHWATER_MARK });
+    readonly parser = new OTRCPParser({ readableHighWaterMark: CONFIG_HIGHWATER_MARK });
 
     #protocolVersionMajor = 0;
     #protocolVersionMinor = 0;
@@ -80,21 +80,21 @@ export class OTRCPDriver {
      *
      * NOTE: 0 is used for "no response expected/needed" (e.g. unsolicited update commands from NCP to host)
      */
-    #spinelTID: number;
+    #spinelTID = -1; // start at 0 but effectively 1 returned by first `nextSpinelTID` call
 
     /** If defined, indicates we're waiting for the property with the specific payload to come in */
     #resetWaiter: { timer: NodeJS.Timeout | undefined; resolve: (frame: SpinelFrame) => void } | undefined;
     /** TID currently being awaited */
-    readonly #tidWaiters: Map<
+    readonly #tidWaiters = new Map<
         number,
         {
             timer: NodeJS.Timeout | undefined;
             resolve: (frame: SpinelFrame) => void;
             reject: (error: Error) => void;
         }
-    >;
+    >();
 
-    #networkUp: boolean;
+    #networkUp = false;
 
     #pendingChangeChannel: NodeJS.Timeout | undefined;
 
@@ -105,14 +105,6 @@ export class OTRCPDriver {
 
         this.#onMACFrame = callbacks.onMACFrame;
         this.#streamRawConfig = streamRawConfig;
-        this.writer = new OTRCPWriter({ highWaterMark: CONFIG_HIGHWATER_MARK });
-        this.parser = new OTRCPParser({ readableHighWaterMark: CONFIG_HIGHWATER_MARK });
-
-        this.#spinelTID = -1; // start at 0 but effectively 1 returned by first nextTID() call
-        this.#resetWaiter = undefined;
-        this.#tidWaiters = new Map();
-
-        this.#networkUp = false;
 
         const contextCallbacks: StackContextCallbacks = {
             onDeviceLeft: callbacks.onDeviceLeft,
