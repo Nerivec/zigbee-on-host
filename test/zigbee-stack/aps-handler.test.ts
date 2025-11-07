@@ -682,6 +682,200 @@ describe("APS Handler", () => {
             isZDOSpy.mockRestore();
             respondZDOSpy.mockRestore();
         });
+
+        it("ignores APS data frames without payload", async () => {
+            (mockCallbacks.onFrame as Mock).mockClear();
+
+            const macHeader = { frameControl: {}, source16: 0x2010, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
+            const nwkHeader = { frameControl: {}, source16: 0x2010, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as ZigbeeNWKHeader;
+            const apsHeader = {
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: false,
+                    extendedHeader: false,
+                },
+                destEndpoint: 0x04,
+                clusterId: 0x1234,
+                profileId: 0x0104,
+                sourceEndpoint: 0x01,
+                counter: 0x10,
+            } as ZigbeeAPSHeader;
+
+            await apsHandler.processFrame(Buffer.alloc(0), macHeader, nwkHeader, apsHeader, 160);
+
+            expect(mockCallbacks.onFrame).not.toHaveBeenCalled();
+        });
+
+        it("ignores end device announcements from unknown devices", async () => {
+            (mockCallbacks.onDeviceJoined as Mock).mockClear();
+            (mockCallbacks.onDeviceRejoined as Mock).mockClear();
+
+            const announcePayload = Buffer.alloc(12);
+            let offset = 0;
+            announcePayload.writeUInt8(0x01, offset);
+            offset += 1;
+            const device16 = 0x3322;
+            const device64 = 0x00124b0000003322n;
+            announcePayload.writeUInt16LE(device16, offset);
+            offset += 2;
+            announcePayload.writeBigUInt64LE(device64, offset);
+            offset += 8;
+            announcePayload.writeUInt8(0x8e, offset);
+
+            const macHeader = { frameControl: {}, source16: device16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
+            const nwkHeader = { frameControl: {}, source16: device16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as ZigbeeNWKHeader;
+            const apsHeader = {
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: false,
+                    extendedHeader: false,
+                },
+                destEndpoint: ZigbeeConsts.ZDO_ENDPOINT,
+                clusterId: ZigbeeConsts.END_DEVICE_ANNOUNCE,
+                profileId: ZigbeeConsts.ZDO_PROFILE_ID,
+                sourceEndpoint: ZigbeeConsts.ZDO_ENDPOINT,
+                counter: 0x11,
+            } as ZigbeeAPSHeader;
+
+            await apsHandler.processFrame(announcePayload, macHeader, nwkHeader, apsHeader, 150);
+            await new Promise((resolve) => setImmediate(resolve));
+
+            expect(mockCallbacks.onDeviceJoined).not.toHaveBeenCalled();
+            expect(mockCallbacks.onDeviceRejoined).not.toHaveBeenCalled();
+        });
+
+        it("reports authorized devices as rejoining on end device announce", async () => {
+            (mockCallbacks.onDeviceJoined as Mock).mockClear();
+            (mockCallbacks.onDeviceRejoined as Mock).mockClear();
+
+            const device16 = 0x4422;
+            const device64 = 0x00124b0000004422n;
+
+            mockContext.deviceTable.set(device64, {
+                address16: device16,
+                capabilities: undefined,
+                authorized: true,
+                neighbor: false,
+                recentLQAs: [],
+            });
+
+            const payload = Buffer.alloc(12);
+            let offset = 0;
+            payload.writeUInt8(0x02, offset);
+            offset += 1;
+            payload.writeUInt16LE(device16, offset);
+            offset += 2;
+            payload.writeBigUInt64LE(device64, offset);
+            offset += 8;
+            payload.writeUInt8(0x8e, offset);
+
+            const macHeader = { frameControl: {}, source16: device16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
+            const nwkHeader = { frameControl: {}, source16: device16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as ZigbeeNWKHeader;
+            const apsHeader = {
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: false,
+                    extendedHeader: false,
+                },
+                destEndpoint: ZigbeeConsts.ZDO_ENDPOINT,
+                clusterId: ZigbeeConsts.END_DEVICE_ANNOUNCE,
+                profileId: ZigbeeConsts.ZDO_PROFILE_ID,
+                sourceEndpoint: ZigbeeConsts.ZDO_ENDPOINT,
+                counter: 0x12,
+            } as ZigbeeAPSHeader;
+
+            await apsHandler.processFrame(payload, macHeader, nwkHeader, apsHeader, 140);
+            await new Promise((resolve) => setImmediate(resolve));
+
+            expect(mockCallbacks.onDeviceJoined).not.toHaveBeenCalled();
+            expect(mockCallbacks.onDeviceRejoined).toHaveBeenCalledWith(
+                device16,
+                device64,
+                expect.objectContaining({ rxOnWhenIdle: expect.any(Boolean) }),
+            );
+        });
+
+        it("reports unauthorized devices as newly joined on end device announce", async () => {
+            (mockCallbacks.onDeviceJoined as Mock).mockClear();
+            (mockCallbacks.onDeviceRejoined as Mock).mockClear();
+
+            const device16 = 0x5522;
+            const device64 = 0x00124b0000005522n;
+
+            mockContext.deviceTable.set(device64, {
+                address16: device16,
+                capabilities: undefined,
+                authorized: false,
+                neighbor: false,
+                recentLQAs: [],
+            });
+
+            const payload = Buffer.alloc(12);
+            let offset = 0;
+            payload.writeUInt8(0x03, offset);
+            offset += 1;
+            payload.writeUInt16LE(device16, offset);
+            offset += 2;
+            payload.writeBigUInt64LE(device64, offset);
+            offset += 8;
+            payload.writeUInt8(0x8c, offset);
+
+            const macHeader = { frameControl: {}, source16: device16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
+            const nwkHeader = { frameControl: {}, source16: device16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as ZigbeeNWKHeader;
+            const apsHeader = {
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: false,
+                    extendedHeader: false,
+                },
+                destEndpoint: ZigbeeConsts.ZDO_ENDPOINT,
+                clusterId: ZigbeeConsts.END_DEVICE_ANNOUNCE,
+                profileId: ZigbeeConsts.ZDO_PROFILE_ID,
+                sourceEndpoint: ZigbeeConsts.ZDO_ENDPOINT,
+                counter: 0x13,
+            } as ZigbeeAPSHeader;
+
+            await apsHandler.processFrame(payload, macHeader, nwkHeader, apsHeader, 130);
+            await new Promise((resolve) => setImmediate(resolve));
+
+            expect(mockCallbacks.onDeviceJoined).toHaveBeenCalledWith(
+                device16,
+                device64,
+                expect.objectContaining({ rxOnWhenIdle: expect.any(Boolean) }),
+            );
+            expect(mockCallbacks.onDeviceRejoined).not.toHaveBeenCalled();
+        });
+
+        it("throws when APS frame type is unsupported", async () => {
+            const macHeader = { frameControl: {}, source16: 0x6611, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
+            const nwkHeader = { frameControl: {}, source16: 0x6611, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as ZigbeeNWKHeader;
+            const apsHeader = {
+                frameControl: {
+                    frameType: 0x7f as unknown as ZigbeeAPSFrameType,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: false,
+                    extendedHeader: false,
+                },
+            } as ZigbeeAPSHeader;
+
+            await expect(apsHandler.processFrame(Buffer.from([0x01]), macHeader, nwkHeader, apsHeader, 120)).rejects.toThrow(
+                "Illegal frame type 127",
+            );
+        });
     });
 
     describe("ZDO Response Helpers", () => {
@@ -1204,6 +1398,22 @@ describe("APS Handler", () => {
         });
     });
 
+    it("skips duplicate detection when APS counter is absent", () => {
+        const nwkHeader = { source16: 0x4f01 } as ZigbeeNWKHeader;
+        const header = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.DATA,
+                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                ackFormat: false,
+                security: false,
+                ackRequest: false,
+                extendedHeader: false,
+            },
+        } as ZigbeeAPSHeader;
+
+        expect(apsHandler.isDuplicateFrame(nwkHeader, header)).toStrictEqual(false);
+    });
+
     it("tracks duplicate APS fragments", () => {
         const now = Date.now();
         const nwkHeader = { source16: 0x1111 } as ZigbeeNWKHeader;
@@ -1233,6 +1443,150 @@ describe("APS Handler", () => {
         } as ZigbeeAPSHeader;
 
         expect(apsHandler.isDuplicateFrame(nwkHeader, nextHeader, now + 2)).toStrictEqual(false);
+    });
+
+    it("uses IEEE source table when short address is unknown", () => {
+        const start = Date.now();
+        const source64 = 0x00124b0000004001n;
+        const nwkHeader = { source64 } as ZigbeeNWKHeader;
+        const header = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.DATA,
+                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                ackFormat: false,
+                security: false,
+                ackRequest: false,
+                extendedHeader: false,
+            },
+            counter: 0x22,
+        } as ZigbeeAPSHeader;
+
+        expect(apsHandler.isDuplicateFrame(nwkHeader, header, start)).toStrictEqual(false);
+        expect(apsHandler.isDuplicateFrame(nwkHeader, { ...header }, start + 1000)).toStrictEqual(true);
+        expect(apsHandler.isDuplicateFrame(nwkHeader, { ...header }, start + 9000)).toStrictEqual(false);
+    });
+
+    it("drops fragment blocks when the first fragment is missing", async () => {
+        (mockCallbacks.onFrame as Mock).mockClear();
+
+        const macHeader = { frameControl: {}, source16: 0x6201, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
+        const nwkHeader = {
+            frameControl: {},
+            source16: 0x6201,
+            source64: 0x00124b0000006201n,
+            destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+        } as ZigbeeNWKHeader;
+        const apsHeader = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.DATA,
+                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                ackFormat: false,
+                security: false,
+                ackRequest: false,
+                extendedHeader: true,
+            },
+            destEndpoint: 0x05,
+            sourceEndpoint: 0x06,
+            profileId: 0x0104,
+            clusterId: 0x0006,
+            counter: 0x31,
+            fragmentation: ZigbeeAPSFragmentation.MIDDLE,
+            fragBlockNumber: 1,
+        } as ZigbeeAPSHeader;
+
+        await apsHandler.processFrame(Buffer.from([0x10, 0x11]), macHeader, nwkHeader, apsHeader, 190);
+
+        expect((mockCallbacks.onFrame as Mock).mock.calls).toHaveLength(0);
+    });
+
+    it("waits for missing fragments before delivering payload", async () => {
+        (mockCallbacks.onFrame as Mock).mockClear();
+
+        const macHeader = { frameControl: {}, source16: 0x6202, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
+        const nwkHeader = {
+            frameControl: {},
+            source16: 0x6202,
+            source64: 0x00124b0000006202n,
+            destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+        } as ZigbeeNWKHeader;
+        const frameControl = {
+            frameType: ZigbeeAPSFrameType.DATA,
+            deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+            ackFormat: false,
+            security: false,
+            ackRequest: false,
+            extendedHeader: true,
+        };
+        const firstHeader = {
+            frameControl,
+            destEndpoint: 0x05,
+            sourceEndpoint: 0x06,
+            profileId: 0x0104,
+            clusterId: 0x0006,
+            counter: 0x32,
+            fragmentation: ZigbeeAPSFragmentation.FIRST,
+            fragBlockNumber: 0,
+        } as ZigbeeAPSHeader;
+
+        await apsHandler.processFrame(Buffer.from([0x01, 0x02, 0x03]), macHeader, nwkHeader, firstHeader, 185);
+
+        const lastHeader = {
+            frameControl,
+            destEndpoint: 0x05,
+            sourceEndpoint: 0x06,
+            profileId: 0x0104,
+            clusterId: 0x0006,
+            counter: 0x32,
+            fragmentation: ZigbeeAPSFragmentation.LAST,
+            fragBlockNumber: 2,
+        } as ZigbeeAPSHeader;
+
+        await apsHandler.processFrame(Buffer.from([0x07]), macHeader, nwkHeader, lastHeader, 184);
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect((mockCallbacks.onFrame as Mock).mock.calls).toHaveLength(0);
+    });
+
+    it("prunes stale fragment reassembly state after timeout", async () => {
+        (mockCallbacks.onFrame as Mock).mockClear();
+
+        let now = 1000;
+        const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+
+        const macHeader = { frameControl: {}, source16: 0x6203, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
+        const nwkHeader = {
+            frameControl: {},
+            source16: 0x6203,
+            source64: 0x00124b0000006203n,
+            destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+        } as ZigbeeNWKHeader;
+        const baseHeaders = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.DATA,
+                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                ackFormat: false,
+                security: false,
+                ackRequest: false,
+                extendedHeader: true,
+            },
+            destEndpoint: 0x05,
+            sourceEndpoint: 0x06,
+            profileId: 0x0104,
+            clusterId: 0x0006,
+            counter: 0x33,
+        } as ZigbeeAPSHeader;
+
+        const firstHeader = { ...baseHeaders, fragmentation: ZigbeeAPSFragmentation.FIRST, fragBlockNumber: 0 } as ZigbeeAPSHeader;
+        await apsHandler.processFrame(Buffer.from([0x20, 0x21]), macHeader, nwkHeader, firstHeader, 183);
+
+        now = 40000;
+        const lastHeader = { ...baseHeaders, fragmentation: ZigbeeAPSFragmentation.LAST, fragBlockNumber: 1 } as ZigbeeAPSHeader;
+        await apsHandler.processFrame(Buffer.from([0x30, 0x31]), macHeader, nwkHeader, lastHeader, 182);
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect((mockCallbacks.onFrame as Mock).mock.calls).toHaveLength(0);
+
+        dateSpy.mockRestore();
     });
 
     it("resolves IEEE destination when sending data", async () => {
@@ -1593,6 +1947,296 @@ describe("APS Handler", () => {
         clearSpy.mockRestore();
     });
 
+    it("resolves APS ACKs via IEEE mapping when short address is absent", async () => {
+        const sendFrameMock = mockMACHandler.sendFrame as Mock;
+        sendFrameMock.mockClear();
+        vi.useFakeTimers();
+
+        const dest16 = 0x7002;
+        const dest64 = 0x00124b0000007002n;
+
+        mockContext.deviceTable.set(dest64, {
+            address16: dest16,
+            capabilities: undefined,
+            authorized: true,
+            neighbor: true,
+            recentLQAs: [],
+        });
+        mockContext.address16ToAddress64.set(dest16, dest64);
+
+        const apsCounter = await apsHandler.sendData(
+            Buffer.from([0xaa]),
+            ZigbeeNWKRouteDiscovery.SUPPRESS,
+            dest16,
+            dest64,
+            ZigbeeAPSDeliveryMode.UNICAST,
+            0x0006,
+            0x0104,
+            0x02,
+            0x01,
+            undefined,
+        );
+
+        expect(sendFrameMock).toHaveBeenCalledTimes(1);
+
+        const ackMacHeader = { frameControl: {}, source16: dest16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
+        const ackNwkHeader = {
+            frameControl: {},
+            destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+            source64: dest64,
+            seqNum: 0x44,
+        } as ZigbeeNWKHeader;
+        const ackHeader = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.ACK,
+                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                ackFormat: false,
+                security: false,
+                ackRequest: false,
+                extendedHeader: false,
+            },
+            counter: apsCounter,
+        } as ZigbeeAPSHeader;
+
+        await apsHandler.processFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackHeader, 175);
+
+        await vi.advanceTimersByTimeAsync(1500);
+        await vi.runOnlyPendingTimersAsync();
+
+        expect(sendFrameMock).toHaveBeenCalledTimes(1);
+
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    it("ignores APS ACKs when IEEE mapping is unavailable", async () => {
+        const sendFrameMock = mockMACHandler.sendFrame as Mock;
+        sendFrameMock.mockClear();
+        vi.useFakeTimers();
+
+        const dest16 = 0x7003;
+        const dest64 = 0x00124b0000007003n;
+
+        const savedEntry = {
+            address16: dest16,
+            capabilities: undefined,
+            authorized: false,
+            neighbor: true,
+            recentLQAs: [],
+        };
+        mockContext.deviceTable.set(dest64, savedEntry);
+        mockContext.address16ToAddress64.set(dest16, dest64);
+
+        const apsCounter = await apsHandler.sendData(
+            Buffer.from([0xbb]),
+            ZigbeeNWKRouteDiscovery.SUPPRESS,
+            dest16,
+            dest64,
+            ZigbeeAPSDeliveryMode.UNICAST,
+            0x0008,
+            0x0104,
+            0x03,
+            0x01,
+            undefined,
+        );
+
+        expect(sendFrameMock).toHaveBeenCalledTimes(1);
+
+        mockContext.deviceTable.delete(dest64);
+        mockContext.address16ToAddress64.delete(dest16);
+
+        const ackMacHeader = { frameControl: {}, source16: dest16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
+        const ackNwkHeader = {
+            frameControl: {},
+            destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+            source64: dest64,
+            seqNum: 0x45,
+        } as ZigbeeNWKHeader;
+        const ackHeader = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.ACK,
+                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                ackFormat: false,
+                security: false,
+                ackRequest: false,
+                extendedHeader: false,
+            },
+            counter: apsCounter,
+        } as ZigbeeAPSHeader;
+
+        await apsHandler.processFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackHeader, 170);
+
+        mockContext.deviceTable.set(dest64, savedEntry);
+        mockContext.address16ToAddress64.set(dest16, dest64);
+
+        await vi.advanceTimersByTimeAsync(1500);
+        await vi.runOnlyPendingTimersAsync();
+
+        expect(sendFrameMock.mock.calls.length).toBeGreaterThan(1);
+
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    it("ignores APS ACKs for unknown pending entries", async () => {
+        const sendFrameMock = mockMACHandler.sendFrame as Mock;
+        sendFrameMock.mockClear();
+        const clearSpy = vi.spyOn(global, "clearTimeout");
+
+        const ackMacHeader = { frameControl: {}, source16: 0x7fff, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
+        const ackNwkHeader = {
+            frameControl: {},
+            source16: 0x7fff,
+            destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+            seqNum: 0x50,
+        } as ZigbeeNWKHeader;
+        const ackHeader = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.ACK,
+                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                ackFormat: false,
+                security: false,
+                ackRequest: false,
+                extendedHeader: false,
+            },
+            counter: 0x99,
+        } as ZigbeeAPSHeader;
+
+        await apsHandler.processFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackHeader, 160);
+
+        expect(sendFrameMock).not.toHaveBeenCalled();
+        expect(clearSpy).not.toHaveBeenCalled();
+
+        clearSpy.mockRestore();
+    });
+
+    it("replaces pending ACK timers when retransmitting identical counters", async () => {
+        vi.useFakeTimers();
+
+        const dest16 = 0x7004;
+        const dest64 = 0x00124b0000007004n;
+
+        mockContext.deviceTable.set(dest64, {
+            address16: dest16,
+            capabilities: undefined,
+            authorized: true,
+            neighbor: true,
+            recentLQAs: [],
+        });
+        mockContext.address16ToAddress64.set(dest16, dest64);
+
+        const counterSpy = vi.spyOn(apsHandler, "nextCounter").mockReturnValue(0x55);
+        const clearSpy = vi.spyOn(global, "clearTimeout");
+
+        await apsHandler.sendData(
+            Buffer.from([0xcc]),
+            ZigbeeNWKRouteDiscovery.SUPPRESS,
+            dest16,
+            dest64,
+            ZigbeeAPSDeliveryMode.UNICAST,
+            0x0009,
+            0x0104,
+            0x04,
+            0x01,
+            undefined,
+        );
+
+        await apsHandler.sendData(
+            Buffer.from([0xcd]),
+            ZigbeeNWKRouteDiscovery.SUPPRESS,
+            dest16,
+            dest64,
+            ZigbeeAPSDeliveryMode.UNICAST,
+            0x0009,
+            0x0104,
+            0x04,
+            0x01,
+            undefined,
+        );
+
+        expect(clearSpy).toHaveBeenCalled();
+
+        counterSpy.mockRestore();
+        clearSpy.mockRestore();
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    it("handles pending ACK timeout after entry removal", async () => {
+        const dest16 = 0x7005;
+        const dest64 = 0x00124b0000007005n;
+        const scheduled: Array<() => Promise<void> | void> = [];
+
+        const setTimeoutSpy = vi.spyOn(global, "setTimeout").mockImplementation(((
+            handler: (...args: unknown[]) => unknown,
+            timeout?: number,
+            ...callbackArgs: unknown[]
+        ) => {
+            void timeout;
+            const callback = handler.bind(undefined, ...callbackArgs);
+            scheduled.push(callback as () => Promise<void> | void);
+
+            return 1 as unknown as NodeJS.Timeout;
+        }) as unknown as typeof setTimeout);
+        const clearTimeoutSpy = vi.spyOn(global, "clearTimeout").mockImplementation(() => {});
+
+        mockContext.deviceTable.set(dest64, {
+            address16: dest16,
+            capabilities: undefined,
+            authorized: true,
+            neighbor: true,
+            recentLQAs: [],
+        });
+        mockContext.address16ToAddress64.set(dest16, dest64);
+
+        const apsCounter = await apsHandler.sendData(
+            Buffer.from([0xde]),
+            ZigbeeNWKRouteDiscovery.SUPPRESS,
+            dest16,
+            dest64,
+            ZigbeeAPSDeliveryMode.UNICAST,
+            0x000a,
+            0x0104,
+            0x05,
+            0x01,
+            undefined,
+        );
+
+        const ackMacHeader = { frameControl: {}, source16: dest16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
+        const ackNwkHeader = {
+            frameControl: {},
+            source16: dest16,
+            destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+            seqNum: 0x46,
+        } as ZigbeeNWKHeader;
+        const ackHeader = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.ACK,
+                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                ackFormat: false,
+                security: false,
+                ackRequest: false,
+                extendedHeader: false,
+            },
+            counter: apsCounter,
+        } as ZigbeeAPSHeader;
+
+        await apsHandler.processFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackHeader, 165);
+
+        expect(scheduled.length).toBeGreaterThan(0);
+
+        const timeoutHandler = scheduled[0];
+        if (timeoutHandler !== undefined) {
+            const result = timeoutHandler();
+            if (result instanceof Promise) {
+                await result;
+            }
+        }
+
+        setTimeoutSpy.mockRestore();
+        clearTimeoutSpy.mockRestore();
+    });
+
     it("updates source route mapping when child rejoins securely", async () => {
         const macHeader = { frameControl: {}, source16: 0x7101, source64: 0x00124b0000007101n } as MACHeader;
         const nwkHeader = { frameControl: {}, source16: 0x7101, source64: 0x00124b0000007101n } as ZigbeeNWKHeader;
@@ -1610,6 +2254,28 @@ describe("APS Handler", () => {
         await apsHandler.processUpdateDevice(payload, 0, macHeader, nwkHeader, {} as ZigbeeAPSHeader);
 
         expect(mockContext.sourceRouteTable.get(child16)).toBeDefined();
+
+        routeSpy.mockRestore();
+    });
+
+    it("skips source route updates when parent short address is unknown", async () => {
+        const macHeader = { frameControl: {}, source64: 0x00124b0000007102n } as MACHeader;
+        const nwkHeader = { frameControl: {}, source64: 0x00124b0000007102n } as ZigbeeNWKHeader;
+
+        const payload = Buffer.alloc(11);
+        let offset = 0;
+        const child64 = 0x00124b0000008101n;
+        const child16 = 0x8101;
+        offset = payload.writeBigUInt64LE(child64, offset);
+        offset = payload.writeUInt16LE(child16, offset);
+        payload.writeUInt8(0x00, offset);
+
+        const routeSpy = vi.spyOn(mockNWKHandler, "findBestSourceRoute");
+
+        await apsHandler.processUpdateDevice(payload, 0, macHeader, nwkHeader, {} as ZigbeeAPSHeader);
+
+        expect(routeSpy).not.toHaveBeenCalled();
+        expect(mockContext.sourceRouteTable.has(child16)).toStrictEqual(false);
 
         routeSpy.mockRestore();
     });

@@ -2934,6 +2934,33 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             expect(payload.length - 5).toStrictEqual(descriptorLength);
         });
 
+        it("returns coordinator LQI table responses with neighbor entries", () => {
+            const neighbor16 = 0x4b01;
+            const neighbor64 = 0x00124b00ffee0001n;
+            registerNeighborDevice(context, neighbor16, neighbor64);
+
+            const request = Buffer.from([0x21, 0x00]);
+            const response = apsHandler.getCoordinatorZDOResponse(ZigbeeConsts.LQI_TABLE_REQUEST, request);
+
+            expect(response).toBeDefined();
+            const payload = response!;
+            expect(payload.readUInt8(0)).toStrictEqual(0x00);
+            expect(payload.readUInt8(4)).toBeGreaterThan(0);
+        });
+
+        it("returns coordinator routing table responses with discovered routes", () => {
+            const destination16 = 0x6a01;
+            context.sourceRouteTable.set(destination16, [nwkHandler.createSourceRouteEntry([0x1a02], 2)]);
+
+            const request = Buffer.from([0x31, 0x00]);
+            const response = apsHandler.getCoordinatorZDOResponse(ZigbeeConsts.ROUTING_TABLE_REQUEST, request);
+
+            expect(response).toBeDefined();
+            const payload = response!;
+            expect(payload.readUInt8(0)).toStrictEqual(0x00);
+            expect(payload.length).toBeGreaterThanOrEqual(5);
+        });
+
         it("limits unfragmented APS frames to apscMaxFrameSize", () => {
             const payload = Buffer.alloc(ZigbeeAPSConsts.PAYLOAD_MAX_SIZE, 0x5a);
             const header: ZigbeeAPSHeader = {
