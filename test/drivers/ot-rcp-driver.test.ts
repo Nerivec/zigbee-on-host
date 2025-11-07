@@ -6,8 +6,20 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, type 
 import { OTRCPDriver } from "../../src/drivers/ot-rcp-driver.js";
 import { SpinelCommandId } from "../../src/spinel/commands.js";
 import { SpinelPropertyId } from "../../src/spinel/properties.js";
-import { encodeSpinelFrame, SPINEL_HEADER_FLG_SPINEL } from "../../src/spinel/spinel.js";
+import {
+    encodeSpinelFrame,
+    SPINEL_HEADER_FLG_SPINEL,
+    type SpinelFrame,
+    SpinelResetReason,
+    type SpinelStreamRawMetadata,
+    writePropertyAC,
+    writePropertyb,
+    writePropertyC,
+    writePropertyc,
+    writePropertyS,
+} from "../../src/spinel/spinel.js";
 import { SpinelStatus } from "../../src/spinel/statuses.js";
+import { logger } from "../../src/utils/logger.js";
 import {
     decodeMACFrameControl,
     decodeMACHeader,
@@ -44,6 +56,7 @@ import {
     ZigbeeNWKStatus,
 } from "../../src/zigbee/zigbee-nwk.js";
 import type { ZigbeeNWKGPHeader } from "../../src/zigbee/zigbee-nwkgp.js";
+import * as frameHandler from "../../src/zigbee-stack/frame.js";
 import type { SourceRouteTableEntry, StackCallbacks } from "../../src/zigbee-stack/stack-context.js";
 import {
     A_CHANNEL,
@@ -1216,6 +1229,387 @@ describe("OT RCP Driver", () => {
             expect(driver.context.indirectTransmissions.get(network64)).toBeUndefined();
             expect(driver.context.sourceRouteTable.get(network16)).toBeUndefined();
             expect(driver.context.pendingAssociations.get(network64)).toBeUndefined();
+        });
+
+        it("handles broadcast NWK update request", async () => {
+            const sendDataSpy = vi.spyOn(driver.apsHandler, "sendData").mockResolvedValue(51);
+            const nextZDOSeqSpy = vi.spyOn(driver.apsHandler, "nextZDOSeqNum").mockReturnValue(13);
+            const savePeriodicStateSpy = vi.spyOn(driver.context, "savePeriodicState").mockResolvedValue();
+            const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
+
+            try {
+                const payload = Buffer.alloc(7);
+                payload.writeUInt32LE(2 ** 15, 1);
+                payload[5] = 0xfe;
+                payload[6] = 0x52;
+
+                const result = await driver.sendZDO(payload, ZigbeeConsts.BCAST_DEFAULT, undefined, ZigbeeConsts.NWK_UPDATE_REQUEST);
+
+                expect(result).toStrictEqual([51, 13]);
+                expect(driver.context.netParams.channel).toStrictEqual(15);
+                expect(driver.context.netParams.nwkUpdateId).toStrictEqual(0x52);
+                expect(savePeriodicStateSpy).toHaveBeenCalledTimes(1);
+
+                expect(setPropertySpy).not.toHaveBeenCalled();
+
+                await vi.advanceTimersByTimeAsync(ZigbeeConsts.BCAST_TIME_WINDOW);
+
+                expect(setPropertySpy).toHaveBeenCalledWith(writePropertyC(SpinelPropertyId.PHY_CHAN, 15));
+            } finally {
+                sendDataSpy.mockRestore();
+                nextZDOSeqSpy.mockRestore();
+                savePeriodicStateSpy.mockRestore();
+                setPropertySpy.mockRestore();
+            }
+        });
+
+        it("marks routes success and failure from MAC handler callbacks", async () => {
+            const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
+            const markSuccessSpy = vi.spyOn(driver.nwkHandler, "markRouteSuccess");
+            const markFailureSpy = vi.spyOn(driver.nwkHandler, "markRouteFailure");
+
+            try {
+                const payload = Buffer.from([0x01, 0x02]);
+
+                const success = await driver.macHandler.sendFrameDirect(1, payload, 0x1234, undefined);
+                expect(success).toBe(true);
+                expect(markSuccessSpy).toHaveBeenCalledWith(0x1234);
+
+                const error = Object.assign(new Error("no ack"), { cause: SpinelStatus.NO_ACK });
+                setPropertySpy.mockRejectedValueOnce(error);
+
+                const failure = await driver.macHandler.sendFrameDirect(2, payload, 0xabcd, undefined);
+                expect(failure).toBe(false);
+                expect(markFailureSpy).toHaveBeenCalledWith(0xabcd);
+                expect(driver.context.macNoACKs.get(0xabcd)).toStrictEqual(1);
+            } finally {
+                setPropertySpy.mockRestore();
+                markSuccessSpy.mockRestore();
+                markFailureSpy.mockRestore();
+            }
+        });
+
+        it("forwards NWK transport key requests to APS handler", async () => {
+            const destination16 = 0x2233;
+            const destination64 = 0x1122334455667788n;
+            const associateSpy = vi.spyOn(driver.context, "associate").mockImplementation(() => {
+                driver.context.address16ToAddress64.set(destination16, destination64);
+                return Promise.resolve([MACAssociationStatus.SUCCESS, destination16] as const);
+            });
+            const sendCommissioningResponseSpy = vi.spyOn(driver.nwkHandler, "sendCommissioningResponse").mockResolvedValue(true);
+            const apsSendSpy = vi.spyOn(driver.apsHandler, "sendTransportKeyNWK").mockResolvedValue(true);
+
+            try {
+                const data = Buffer.from([0x00, 0x8e]);
+                const macHeader = {
+                    source16: destination16,
+                    source64: destination64,
+                } as MACHeader;
+                const nwkHeader = {
+                    source16: destination16,
+                    source64: destination64,
+                    frameControl: {
+                        security: false,
+                    },
+                } as ZigbeeNWKHeader;
+
+                await driver.nwkHandler.processCommissioningRequest(data, 0, macHeader, nwkHeader);
+
+                expect(apsSendSpy).toHaveBeenCalledWith(
+                    destination16,
+                    driver.context.netParams.networkKey,
+                    driver.context.netParams.networkKeySequenceNumber,
+                    destination64,
+                );
+            } finally {
+                associateSpy.mockRestore();
+                sendCommissioningResponseSpy.mockRestore();
+                apsSendSpy.mockRestore();
+                driver.context.address16ToAddress64.delete(destination16);
+            }
+        });
+
+        it("logs onStreamRaw errors", async () => {
+            await mockStart(driver);
+            await mockFormNetwork(driver);
+
+            const error = new Error("process failure");
+            error.stack = "stack";
+            const processFrameSpy = vi.spyOn(frameHandler, "processFrame").mockRejectedValue(error);
+            const errorSpy = vi.spyOn(logger, "error");
+
+            await driver.onStreamRawFrame(Buffer.from([0xaa]), undefined);
+
+            expect(errorSpy).toHaveBeenCalledWith("stack", "ot-rcp-driver");
+
+            processFrameSpy.mockRestore();
+            errorSpy.mockRestore();
+        });
+
+        it("ignores stream raw frames when network is down", async () => {
+            const processFrameSpy = vi.spyOn(frameHandler, "processFrame");
+
+            await driver.onStreamRawFrame(Buffer.from([0x00]), undefined);
+
+            expect(processFrameSpy).not.toHaveBeenCalled();
+
+            processFrameSpy.mockRestore();
+        });
+
+        it("processes stream raw frames while network up", async () => {
+            await mockStart(driver);
+            await mockFormNetwork(driver);
+
+            const processFrameSpy = vi.spyOn(frameHandler, "processFrame").mockResolvedValue();
+
+            const metadata: SpinelStreamRawMetadata = {
+                rssi: -55,
+                noiseFloor: -110,
+                flags: 0x01,
+            };
+            const payload = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
+
+            await driver.onStreamRawFrame(payload, metadata);
+
+            expect(processFrameSpy).toHaveBeenCalledWith(
+                payload,
+                driver.context,
+                driver.macHandler,
+                driver.nwkHandler,
+                driver.nwkGPHandler,
+                driver.apsHandler,
+                metadata.rssi,
+            );
+
+            processFrameSpy.mockRestore();
+        });
+
+        it("resetStack resets radio and waits for reset when idle", async () => {
+            const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
+            const sendCommandSpy = vi.spyOn(driver, "sendCommand").mockImplementation(async () => undefined as unknown as SpinelFrame);
+            const waitForResetSpy = vi.spyOn(driver, "waitForReset").mockResolvedValue();
+            const stopSpy = vi.spyOn(driver, "stop");
+
+            try {
+                await driver.resetStack();
+
+                expect(setPropertySpy.mock.calls).toStrictEqual([
+                    [writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 0)],
+                    [writePropertyb(SpinelPropertyId.PHY_ENABLED, false)],
+                    [writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false)],
+                ]);
+                expect(stopSpy).not.toHaveBeenCalled();
+                expect(sendCommandSpy).toHaveBeenCalledWith(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.STACK]), false);
+                expect(waitForResetSpy).toHaveBeenCalledTimes(1);
+            } finally {
+                setPropertySpy.mockRestore();
+                sendCommandSpy.mockRestore();
+                waitForResetSpy.mockRestore();
+                stopSpy.mockRestore();
+            }
+        });
+
+        it("resetStack stops network when running", async () => {
+            await mockStart(driver);
+            await mockFormNetwork(driver);
+
+            const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
+            const sendCommandSpy = vi.spyOn(driver, "sendCommand").mockImplementation(async () => undefined as unknown as SpinelFrame);
+            const waitForResetSpy = vi.spyOn(driver, "waitForReset").mockResolvedValue();
+            const stopSpy = vi.spyOn(driver, "stop");
+
+            try {
+                await driver.resetStack();
+
+                expect(stopSpy).toHaveBeenCalledTimes(1);
+                expect(setPropertySpy.mock.calls.slice(0, 3)).toStrictEqual([
+                    [writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 0)],
+                    [writePropertyb(SpinelPropertyId.PHY_ENABLED, false)],
+                    [writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false)],
+                ]);
+                expect(sendCommandSpy).toHaveBeenCalledWith(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.STACK]), false);
+                expect(waitForResetSpy).toHaveBeenCalledTimes(1);
+            } finally {
+                setPropertySpy.mockRestore();
+                sendCommandSpy.mockRestore();
+                waitForResetSpy.mockRestore();
+                stopSpy.mockRestore();
+            }
+        });
+
+        it("resetIntoBootloader resets without stack first", async () => {
+            const sendCommandSpy = vi.spyOn(driver, "sendCommand").mockImplementation(async () => undefined as unknown as SpinelFrame);
+            const stopSpy = vi.spyOn(driver, "stop");
+
+            try {
+                await driver.resetIntoBootloader();
+
+                expect(stopSpy).not.toHaveBeenCalled();
+                expect(sendCommandSpy).toHaveBeenCalledWith(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.BOOTLOADER]), false);
+            } finally {
+                sendCommandSpy.mockRestore();
+                stopSpy.mockRestore();
+            }
+        });
+
+        it("resetIntoBootloader stops network before reset when running", async () => {
+            await mockStart(driver);
+            await mockFormNetwork(driver);
+
+            const sendCommandSpy = vi.spyOn(driver, "sendCommand").mockImplementation(async () => undefined as unknown as SpinelFrame);
+            const stopSpy = vi.spyOn(driver, "stop");
+
+            try {
+                await driver.resetIntoBootloader();
+
+                expect(stopSpy).toHaveBeenCalledTimes(1);
+                expect(sendCommandSpy).toHaveBeenCalledWith(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.BOOTLOADER]), false);
+            } finally {
+                sendCommandSpy.mockRestore();
+                stopSpy.mockRestore();
+            }
+        });
+
+        it("clamps PHY CCA threshold before setting property", async () => {
+            const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
+
+            await driver.setPHYCCAThreshold(200);
+            expect(setPropertySpy).toHaveBeenCalledWith(writePropertyc(SpinelPropertyId.PHY_CCA_THRESHOLD, 127));
+
+            setPropertySpy.mockClear();
+
+            await driver.setPHYCCAThreshold(-200);
+            expect(setPropertySpy).toHaveBeenCalledWith(writePropertyc(SpinelPropertyId.PHY_CCA_THRESHOLD, -128));
+
+            setPropertySpy.mockRestore();
+        });
+
+        it("logs energy scan results from Spinel notifications", async () => {
+            const infoSpy = vi.spyOn(logger, "info");
+
+            const channel = 18;
+            const rssi = -47;
+            const spinelFrame = {
+                header: {
+                    tid: 0,
+                    nli: 0,
+                    flg: SPINEL_HEADER_FLG_SPINEL,
+                },
+                commandId: SpinelCommandId.PROP_VALUE_IS,
+                payload: Buffer.from([SpinelPropertyId.MAC_ENERGY_SCAN_RESULT, channel, (rssi + 0x100) & 0xff]),
+            };
+            const enc = encodeSpinelFrame(spinelFrame);
+            driver.parser._transform(Buffer.from(enc.data.subarray(0, enc.length)), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(infoSpy).toHaveBeenCalledWith(`<=== ENERGY_SCAN[channel=${channel} rssi=${rssi}]`, "ot-rcp-driver");
+
+            infoSpy.mockRestore();
+        });
+
+        it("starts and stops energy scan when stack idle", async () => {
+            const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
+            const getRSSISpy = vi.spyOn(driver, "getPHYRSSI").mockResolvedValue(-42);
+            const getSensitivitySpy = vi.spyOn(driver, "getPHYRXSensitivity").mockResolvedValue(-96);
+            const setPHYTXPowerSpy = vi.spyOn(driver, "setPHYTXPower").mockResolvedValue();
+
+            try {
+                const channels = [11, 15];
+
+                await driver.startEnergyScan(channels, 128, -4);
+
+                expect(getRSSISpy).toHaveBeenCalledTimes(1);
+                expect(getSensitivitySpy).toHaveBeenCalledTimes(1);
+                expect(setPHYTXPowerSpy).toHaveBeenCalledWith(-4);
+
+                expect(setPropertySpy.mock.calls).toStrictEqual([
+                    [writePropertyb(SpinelPropertyId.PHY_ENABLED, true)],
+                    [writePropertyb(SpinelPropertyId.MAC_RX_ON_WHEN_IDLE_MODE, true)],
+                    [writePropertyAC(SpinelPropertyId.MAC_SCAN_MASK, channels)],
+                    [writePropertyS(SpinelPropertyId.MAC_SCAN_PERIOD, 128)],
+                    [writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 2)],
+                ]);
+
+                setPropertySpy.mockClear();
+
+                await driver.stopEnergyScan();
+
+                expect(setPropertySpy.mock.calls).toStrictEqual([
+                    [writePropertyS(SpinelPropertyId.MAC_SCAN_PERIOD, 100)],
+                    [writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 0)],
+                    [writePropertyb(SpinelPropertyId.PHY_ENABLED, false)],
+                ]);
+            } finally {
+                setPropertySpy.mockRestore();
+                getRSSISpy.mockRestore();
+                getSensitivitySpy.mockRestore();
+                setPHYTXPowerSpy.mockRestore();
+            }
+        });
+
+        it("skips energy scan when state already loaded", async () => {
+            await driver.context.loadState();
+
+            const setPropertySpy = vi.spyOn(driver, "setProperty");
+            const getRSSISpy = vi.spyOn(driver, "getPHYRSSI");
+
+            try {
+                await driver.startEnergyScan([11], 64, 0);
+
+                expect(getRSSISpy).not.toHaveBeenCalled();
+                expect(setPropertySpy).not.toHaveBeenCalled();
+            } finally {
+                setPropertySpy.mockRestore();
+                getRSSISpy.mockRestore();
+            }
+        });
+
+        it("starts sniffer and forwards frames when idle", async () => {
+            const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
+
+            try {
+                const payload = Buffer.from([0xde, 0xad]);
+
+                await driver.startSniffer(15);
+
+                expect(setPropertySpy.mock.calls).toStrictEqual([
+                    [writePropertyb(SpinelPropertyId.PHY_ENABLED, true)],
+                    [writePropertyC(SpinelPropertyId.PHY_CHAN, 15)],
+                    [writePropertyC(SpinelPropertyId.MAC_PROMISCUOUS_MODE, 2)],
+                    [writePropertyb(SpinelPropertyId.MAC_RX_ON_WHEN_IDLE_MODE, true)],
+                    [writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, true)],
+                ]);
+
+                setPropertySpy.mockClear();
+
+                await driver.onStreamRawFrame(payload, undefined);
+
+                expect(mockCallbacks.onMACFrame).toHaveBeenCalledWith(payload, undefined);
+
+                await driver.stopSniffer();
+
+                expect(setPropertySpy.mock.calls).toStrictEqual([
+                    [writePropertyC(SpinelPropertyId.MAC_PROMISCUOUS_MODE, 0)],
+                    [writePropertyb(SpinelPropertyId.PHY_ENABLED, false)],
+                    [writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false)],
+                ]);
+            } finally {
+                setPropertySpy.mockRestore();
+            }
+        });
+
+        it("skips sniffer when state already loaded", async () => {
+            await driver.context.loadState();
+
+            const setPropertySpy = vi.spyOn(driver, "setProperty");
+
+            try {
+                await driver.startSniffer(20);
+
+                expect(setPropertySpy).not.toHaveBeenCalled();
+            } finally {
+                setPropertySpy.mockRestore();
+            }
         });
     });
 

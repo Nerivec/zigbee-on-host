@@ -99,6 +99,7 @@ export class OTRCPDriver {
     #pendingChangeChannel: NodeJS.Timeout | undefined;
 
     constructor(callbacks: StackCallbacks, streamRawConfig: StreamRawConfig, netParams: NetworkParameters, saveDir: string, emitMACFrames = false) {
+        /* v8 ignore else -- @preserve */
         if (!existsSync(saveDir)) {
             mkdirSync(saveDir);
         }
@@ -268,6 +269,7 @@ export class OTRCPDriver {
             clearTimeout(waiter.timer);
         }
 
+        /* v8 ignore else -- @preserve */
         if (spinelFrame.commandId === SpinelCommandId.PROP_VALUE_IS) {
             const [propId, pOffset] = getPackedUInt(spinelFrame.payload, 0);
 
@@ -421,7 +423,6 @@ export class OTRCPDriver {
         return readPropertyc(SpinelPropertyId.PHY_RX_SENSITIVITY, response.payload);
     }
 
-    /* v8 ignore next -- @preserve */
     /**
      * Start an energy scan.
      * Cannot be used after state is loaded or network is up.
@@ -449,14 +450,12 @@ export class OTRCPDriver {
         await this.setProperty(writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 2 /* SCAN_STATE_ENERGY */));
     }
 
-    /* v8 ignore next -- @preserve */
     public async stopEnergyScan(): Promise<void> {
         await this.setProperty(writePropertyS(SpinelPropertyId.MAC_SCAN_PERIOD, 100));
         await this.setProperty(writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 0 /* SCAN_STATE_IDLE */));
         await this.setProperty(writePropertyb(SpinelPropertyId.PHY_ENABLED, false));
     }
 
-    /* v8 ignore next -- @preserve */
     /**
      * Start sniffing.
      * Cannot be used after state is loaded or network is up.
@@ -484,7 +483,6 @@ export class OTRCPDriver {
         };
     }
 
-    /* v8 ignore next -- @preserve */
     public async stopSniffer(): Promise<void> {
         await this.setProperty(writePropertyC(SpinelPropertyId.MAC_PROMISCUOUS_MODE, 0));
         await this.setProperty(writePropertyb(SpinelPropertyId.PHY_ENABLED, false)); // first, avoids BUSY signal
