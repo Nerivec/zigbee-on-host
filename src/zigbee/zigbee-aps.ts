@@ -126,6 +126,12 @@ export type ZigbeeAPSPayload = Buffer;
 /**
  * Decode Zigbee APS frame control field.
  * HOT PATH: Called for every incoming Zigbee APS frame.
+ * 05-3474-23 R23.1, Table 2-69 (APS frame control fields)
+ *
+ * SPEC COMPLIANCE NOTES:
+ * - ✅ Extracts frame type, delivery, security, and extended header bits per Zigbee 3.0 profile
+ * - ✅ Treats deprecated indirect bit as reserved, matching Zigbee 2007+ behaviour
+ * - ⚠️  Defers extended header parsing to caller since fragmentation format varies by frame type
  */
 /* @__INLINE__ */
 export function decodeZigbeeAPSFrameControl(data: Buffer, offset: number): [ZigbeeAPSFrameControl, offset: number] {
@@ -147,6 +153,14 @@ export function decodeZigbeeAPSFrameControl(data: Buffer, offset: number): [Zigb
     ];
 }
 
+/**
+ * 05-3474-23 R23.1, Table 2-69 (APS frame control fields)
+ *
+ * SPEC COMPLIANCE NOTES:
+ * - ✅ Encodes frame control bits according to Zigbee APS data/command frame requirements
+ * - ✅ Leaves deprecated indirect addressing bit cleared per Zigbee 2007+ specification
+ * - ⚠️  Assumes caller validated delivery mode compatibility with frame type
+ */
 function encodeZigbeeAPSFrameControl(data: Buffer, offset: number, fcf: ZigbeeAPSFrameControl): number {
     offset = data.writeUInt8(
         (fcf.frameType & ZigbeeAPSConsts.FCF_FRAME_TYPE) |
@@ -162,6 +176,14 @@ function encodeZigbeeAPSFrameControl(data: Buffer, offset: number, fcf: ZigbeeAP
     return offset;
 }
 
+/**
+ * 05-3474-23 R23.1, Tables 2-69/2-70 (APS data and command frame formats)
+ *
+ * SPEC COMPLIANCE NOTES:
+ * - ✅ Applies delivery-mode driven presence rules for endpoints, groups, cluster/profile IDs
+ * - ✅ Handles extended header fragmentation bits as defined for Zigbee fragmentation sublayer
+ * - ⚠️  Assumes caller already validated NWK header to supply addressing context
+ */
 export function decodeZigbeeAPSHeader(data: Buffer, offset: number, frameControl: ZigbeeAPSFrameControl): [ZigbeeAPSHeader, offset: number] {
     let hasEndpointAddressing = true;
     let destPresent = false;
@@ -273,6 +295,14 @@ export function decodeZigbeeAPSHeader(data: Buffer, offset: number, frameControl
     ];
 }
 
+/**
+ * 05-3474-23 R23.1, Tables 2-69/2-70 (APS data and command frame formats)
+ *
+ * SPEC COMPLIANCE NOTES:
+ * - ✅ Serialises endpoint/group fields following delivery-mode matrix mandated by spec
+ * - ✅ Emits fragmentation header only when requested, matching Zigbee fragmentation rules
+ * - ⚠️  Relies on caller to provide consistent fragmentation settings (block numbers, ACK bitmap)
+ */
 export function encodeZigbeeAPSHeader(data: Buffer, offset: number, header: ZigbeeAPSHeader): number {
     offset = encodeZigbeeAPSFrameControl(data, offset, header.frameControl);
     let hasEndpointAddressing = true;
@@ -356,6 +386,13 @@ export function encodeZigbeeAPSHeader(data: Buffer, offset: number, header: Zigb
 }
 
 /**
+ * 05-3474-23 R23.1, Annex B (APS security processing)
+ *
+ * SPEC COMPLIANCE NOTES:
+ * - ✅ Invokes APS encryption/decryption helpers when security bit is asserted, per spec flow
+ * - ✅ Preserves resulting security header for NWK/Trust Center auditing
+ * - ⚠️  Leaves key selection policy to caller (default hashed keys vs per-device link keys)
+ *
  * @param data
  * @param offset
  * @param decryptKey If undefined, use default pre-hashed
@@ -383,6 +420,13 @@ export function decodeZigbeeAPSPayload(
 }
 
 /**
+ * 05-3474-23 R23.1, Table 2-70 (APS data frame format) & Annex B (APS security)
+ *
+ * SPEC COMPLIANCE NOTES:
+ * - ✅ Builds full APS frame, invoking security helper when security flag set
+ * - ✅ Copies authentication tag per CCM* requirements when encryption enabled
+ * - ⚠️  Expects caller to enforce payload length vs. APS fragmentation strategy
+ *
  * @param header
  * @param payload
  * @param securityHeader
