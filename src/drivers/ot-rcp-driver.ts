@@ -361,6 +361,46 @@ export class OTRCPDriver {
     }
 
     /**
+     * @returns [SPINEL_PROTOCOL_VERSION_THREAD_MAJOR, SPINEL_PROTOCOL_VERSION_THREAD_MINOR]
+     */
+    public async getProtocolVersion(): Promise<[major: number, minor: number]> {
+        const response = await this.getProperty(SpinelPropertyId.PROTOCOL_VERSION);
+
+        return readPropertyii(SpinelPropertyId.PROTOCOL_VERSION, response.payload);
+    }
+
+    /**
+     * Recommended format: STACK-NAME/STACK-VERSION[BUILD_INFO][; OTHER_INFO]; BUILD_DATE_AND_TIME
+     * Encoded as a zero-terminated UTF-8 string.
+     */
+    public async getNCPVersion(): Promise<string> {
+        const response = await this.getProperty(SpinelPropertyId.NCP_VERSION);
+
+        return readPropertyU(SpinelPropertyId.NCP_VERSION, response.payload).replaceAll("\u0000", "");
+    }
+
+    /**
+     * @returns SPINEL_PROTOCOL_TYPE_*
+     */
+    public async getInterfaceType(): Promise<number> {
+        const response = await this.getProperty(SpinelPropertyId.INTERFACE_TYPE);
+
+        return readPropertyi(SpinelPropertyId.INTERFACE_TYPE, response.payload);
+    }
+
+    public async getRCPAPIVersion(): Promise<number> {
+        const response = await this.getProperty(SpinelPropertyId.RCP_API_VERSION);
+
+        return readPropertyi(SpinelPropertyId.RCP_API_VERSION, response.payload);
+    }
+
+    public async getRCPMinHostAPIVersion(): Promise<number> {
+        const response = await this.getProperty(SpinelPropertyId.RCP_MIN_HOST_API_VERSION);
+
+        return readPropertyi(SpinelPropertyId.RCP_MIN_HOST_API_VERSION, response.payload);
+    }
+
+    /**
      * The CCA (clear-channel assessment) threshold.
      * NOTE: Currently not implemented in: ot-ti
      * @returns dBm (int8)
@@ -630,32 +670,21 @@ export class OTRCPDriver {
         //   RCP min host API version: 4
 
         // check the protocol version to see if it is supported
-        let response = await this.getProperty(SpinelPropertyId.PROTOCOL_VERSION);
-        [this.#protocolVersionMajor, this.#protocolVersionMinor] = readPropertyii(SpinelPropertyId.PROTOCOL_VERSION, response.payload);
-
+        [this.#protocolVersionMajor, this.#protocolVersionMinor] = await this.getProtocolVersion();
         logger.info(`Protocol version: ${this.#protocolVersionMajor}.${this.#protocolVersionMinor}`, NS);
 
         // check the NCP version to see if a firmware update may be necessary
-        response = await this.getProperty(SpinelPropertyId.NCP_VERSION);
-        // recommended format: STACK-NAME/STACK-VERSION[BUILD_INFO][; OTHER_INFO]; BUILD_DATE_AND_TIME
-        this.#ncpVersion = readPropertyU(SpinelPropertyId.NCP_VERSION, response.payload).replaceAll("\u0000", "");
-
+        this.#ncpVersion = await this.getNCPVersion();
         logger.info(`NCP version: ${this.#ncpVersion}`, NS);
 
         // check interface type to make sure that it is what we expect
-        response = await this.getProperty(SpinelPropertyId.INTERFACE_TYPE);
-        this.#interfaceType = readPropertyi(SpinelPropertyId.INTERFACE_TYPE, response.payload);
-
+        this.#interfaceType = await this.getInterfaceType();
         logger.info(`Interface type: ${this.#interfaceType}`, NS);
 
-        response = await this.getProperty(SpinelPropertyId.RCP_API_VERSION);
-        this.#rcpAPIVersion = readPropertyi(SpinelPropertyId.RCP_API_VERSION, response.payload);
-
+        this.#rcpAPIVersion = await this.getRCPAPIVersion();
         logger.info(`RCP API version: ${this.#rcpAPIVersion}`, NS);
 
-        response = await this.getProperty(SpinelPropertyId.RCP_MIN_HOST_API_VERSION);
-        this.#rcpMinHostAPIVersion = readPropertyi(SpinelPropertyId.RCP_MIN_HOST_API_VERSION, response.payload);
-
+        this.#rcpMinHostAPIVersion = await this.getRCPMinHostAPIVersion();
         logger.info(`RCP min host API version: ${this.#rcpMinHostAPIVersion}`, NS);
 
         await this.sendCommand(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.STACK]), false);

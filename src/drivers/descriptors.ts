@@ -33,7 +33,7 @@ const EP_HA_INPUT_CLUSTERS = [
     0x0008, // Level Control
     0x000a, // Time
     0x0019, // Over the Air Bootloading
-    // Cluster.genPowerProfile.ID,// 0x001A, // Power Profile XXX: missing ZCL cluster def in Z2M?
+    0x001a, // Power Profile
     0x0300, // Color Control
 ];
 const EP_HA_OUTPUT_CLUSTERS = [
