@@ -144,20 +144,24 @@ export type DeviceTableEntry = {
     authorized: boolean;
     /** Indicates whether the device is a neighbor */
     neighbor: boolean;
+    /** Last network key sequence number successfully transported to the device */
+    lastTransportedNetworkKeySeq: number | undefined;
     /**
      * List of recently observed LQAs.
      * Note: this is runtime-only
      */
     recentLQAs: number[];
     /** Last accepted NWK security frame counter. Runtime-only. */
-    incomingNWKFrameCounter?: number;
+    incomingNWKFrameCounter: number | undefined;
     /** End device timeout metadata. Runtime-only. */
-    endDeviceTimeout?: {
-        timeoutIndex: number;
-        timeoutMs: number;
-        lastUpdated: number;
-        expiresAt: number;
-    };
+    endDeviceTimeout:
+        | {
+              timeoutIndex: number;
+              timeoutMs: number;
+              lastUpdated: number;
+              expiresAt: number;
+          }
+        | undefined;
 };
 
 export type SourceRouteTableEntry = {
@@ -542,6 +546,14 @@ export class StackContext {
         this.#pendingNetworkKeySequenceNumber = sequenceNumber & 0xff;
 
         logger.debug(() => `Staged pending network key seq=${this.#pendingNetworkKeySequenceNumber}`, NS);
+    }
+
+    public markNetworkKeyTransported(address64: bigint): void {
+        const device = this.deviceTable.get(address64);
+
+        if (device !== undefined) {
+            device.lastTransportedNetworkKeySeq = this.netParams.networkKeySequenceNumber;
+        }
     }
 
     /**
@@ -1057,6 +1069,7 @@ export class StackContext {
                 device.capabilities ? encodeMACCapabilities(device.capabilities) : 0x00,
                 device.authorized,
                 device.neighbor,
+                device.lastTransportedNetworkKeySeq,
                 sourceRouteEntries,
             );
             offset = writeTLV(state, offset, TLVTag.DEVICE_ENTRY, deviceEntry);
@@ -1150,7 +1163,7 @@ export class StackContext {
 
             for (const device of state.deviceEntries) {
                 // Device values already parsed - just destructure
-                const { address64, address16, capabilities, authorized, neighbor, sourceRouteEntries } = device;
+                const { address64, address16, capabilities, authorized, neighbor, sourceRouteEntries, lastTransportedNetworkKeySeq } = device;
                 const decodedCap = capabilities !== 0 ? decodeMACCapabilities(capabilities) : undefined;
 
                 this.deviceTable.set(address64, {
@@ -1158,6 +1171,7 @@ export class StackContext {
                     capabilities: decodedCap,
                     authorized,
                     neighbor,
+                    lastTransportedNetworkKeySeq,
                     recentLQAs: [],
                     incomingNWKFrameCounter: undefined, // TODO: record this (should persist across reboots)
                     endDeviceTimeout: undefined,
@@ -1297,8 +1311,7 @@ export class StackContext {
      * - ✅ Triggers state save after association
      * - ⚠️ Unknown rejoins succeed if allowOverride=true (potential security risk)
      * - ✅ Enforces install code requirement (denies initial join when missing)
-     * - ❌ NOT IMPLEMENTED: Network key change detection on rejoin
-     * - ❌ NOT IMPLEMENTED: Device announcement tracking
+     * - ✅ Detects network key changes on rejoin and schedules transport
      *
      * @param source16
      * @param source64 Assumed valid if assocType === 0x00
@@ -1317,11 +1330,12 @@ export class StackContext {
         neighbor: boolean,
         denyOverride?: boolean,
         allowOverride?: boolean,
-    ): Promise<[status: MACAssociationStatus | number, newAddress16: number]> {
+    ): Promise<[status: MACAssociationStatus | number, newAddress16: number, requiresTransportKey: boolean]> {
         // 0xffff when not successful and should not be retried
         let newAddress16 = source16;
         let status: MACAssociationStatus | number = MACAssociationStatus.SUCCESS;
         let unknownRejoin = false;
+        let requiresTransportKey = false;
 
         if (denyOverride) {
             newAddress16 = 0xffff;
@@ -1330,6 +1344,7 @@ export class StackContext {
             if ((source16 === undefined || !this.address16ToAddress64.has(source16)) && (source64 === undefined || !this.deviceTable.has(source64))) {
                 // device unknown
                 unknownRejoin = true;
+                requiresTransportKey = true;
             }
         } else {
             if (initialJoin) {
@@ -1453,6 +1468,7 @@ export class StackContext {
                     // on initial join success, device is considered joined but unauthorized after MAC Assoc / NWK Commissioning response is sent
                     authorized: false,
                     neighbor,
+                    lastTransportedNetworkKeySeq: undefined,
                     recentLQAs: [],
                     incomingNWKFrameCounter: undefined,
                     endDeviceTimeout: undefined,
@@ -1463,6 +1479,8 @@ export class StackContext {
                 if (capabilities && !capabilities.rxOnWhenIdle) {
                     this.indirectTransmissions.set(source64!, []);
                 }
+
+                requiresTransportKey = true;
             } else {
                 // update records on rejoin in case anything has changed (like neighbor for routing)
                 this.address16ToAddress64.set(newAddress16, source64!);
@@ -1470,13 +1488,17 @@ export class StackContext {
                 device.address16 = newAddress16;
                 device.capabilities = capabilities;
                 device.neighbor = neighbor;
+
+                if (device.lastTransportedNetworkKeySeq !== this.netParams.networkKeySequenceNumber) {
+                    requiresTransportKey = true;
+                }
             }
 
             // force saving after device change
             await this.savePeriodicState();
         }
 
-        return [status, newAddress16];
+        return [status, newAddress16, requiresTransportKey];
     }
 
     /**

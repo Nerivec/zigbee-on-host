@@ -546,28 +546,40 @@ describe("OT RCP Driver", () => {
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             driver.context.deviceTable.set(12656887476334n, {
                 address16: 3457,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             driver.context.deviceTable.set(12328965645634n, {
                 address16: 9674,
                 capabilities: structuredClone(COMMON_RFD_MAC_CAP),
                 authorized: true,
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             driver.context.deviceTable.set(234367481234n, {
                 address16: 54748,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: false,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             driver.context.sourceRouteTable.set(1, [
                 createTestSourceRouteEntry([], 1, sourceRouteLastUpdated1One),
@@ -618,36 +630,40 @@ describe("OT RCP Driver", () => {
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
-                endDeviceTimeout: undefined,
                 incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             expect(driver.context.deviceTable.get(12656887476334n)).toStrictEqual({
                 address16: 3457,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
-                endDeviceTimeout: undefined,
                 incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             expect(driver.context.deviceTable.get(12328965645634n)).toStrictEqual({
                 address16: 9674,
                 capabilities: structuredClone(COMMON_RFD_MAC_CAP),
                 authorized: true,
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
-                endDeviceTimeout: undefined,
                 incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             expect(driver.context.deviceTable.get(234367481234n)).toStrictEqual({
                 address16: 54748,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: false,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
-                endDeviceTimeout: undefined,
                 incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             expect(driver.context.address16ToAddress64.size).toStrictEqual(4);
             expect(driver.context.address16ToAddress64.get(1)).toStrictEqual(1234n);
@@ -1232,35 +1248,28 @@ describe("OT RCP Driver", () => {
         });
 
         it("handles broadcast NWK update request", async () => {
-            const sendDataSpy = vi.spyOn(driver.apsHandler, "sendData").mockResolvedValue(51);
-            const nextZDOSeqSpy = vi.spyOn(driver.apsHandler, "nextZDOSeqNum").mockReturnValue(13);
+            vi.spyOn(driver.apsHandler, "sendData").mockResolvedValue(51);
+            vi.spyOn(driver.apsHandler, "nextZDOSeqNum").mockReturnValue(13);
             const savePeriodicStateSpy = vi.spyOn(driver.context, "savePeriodicState").mockResolvedValue();
             const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
 
-            try {
-                const payload = Buffer.alloc(7);
-                payload.writeUInt32LE(2 ** 15, 1);
-                payload[5] = 0xfe;
-                payload[6] = 0x52;
+            const payload = Buffer.alloc(7);
+            payload.writeUInt32LE(2 ** 15, 1);
+            payload[5] = 0xfe;
+            payload[6] = 0x52;
 
-                const result = await driver.sendZDO(payload, ZigbeeConsts.BCAST_DEFAULT, undefined, ZigbeeConsts.NWK_UPDATE_REQUEST);
+            const result = await driver.sendZDO(payload, ZigbeeConsts.BCAST_DEFAULT, undefined, ZigbeeConsts.NWK_UPDATE_REQUEST);
 
-                expect(result).toStrictEqual([51, 13]);
-                expect(driver.context.netParams.channel).toStrictEqual(15);
-                expect(driver.context.netParams.nwkUpdateId).toStrictEqual(0x52);
-                expect(savePeriodicStateSpy).toHaveBeenCalledTimes(1);
+            expect(result).toStrictEqual([51, 13]);
+            expect(driver.context.netParams.channel).toStrictEqual(15);
+            expect(driver.context.netParams.nwkUpdateId).toStrictEqual(0x52);
+            expect(savePeriodicStateSpy).toHaveBeenCalledTimes(1);
 
-                expect(setPropertySpy).not.toHaveBeenCalled();
+            expect(setPropertySpy).not.toHaveBeenCalled();
 
-                await vi.advanceTimersByTimeAsync(ZigbeeConsts.BCAST_TIME_WINDOW);
+            await vi.advanceTimersByTimeAsync(ZigbeeConsts.BCAST_TIME_WINDOW);
 
-                expect(setPropertySpy).toHaveBeenCalledWith(writePropertyC(SpinelPropertyId.PHY_CHAN, 15));
-            } finally {
-                sendDataSpy.mockRestore();
-                nextZDOSeqSpy.mockRestore();
-                savePeriodicStateSpy.mockRestore();
-                setPropertySpy.mockRestore();
-            }
+            expect(setPropertySpy).toHaveBeenCalledWith(writePropertyC(SpinelPropertyId.PHY_CHAN, 15));
         });
 
         it("marks routes success and failure from MAC handler callbacks", async () => {
@@ -1268,65 +1277,50 @@ describe("OT RCP Driver", () => {
             const markSuccessSpy = vi.spyOn(driver.nwkHandler, "markRouteSuccess");
             const markFailureSpy = vi.spyOn(driver.nwkHandler, "markRouteFailure");
 
-            try {
-                const payload = Buffer.from([0x01, 0x02]);
+            const payload = Buffer.from([0x01, 0x02]);
 
-                const success = await driver.macHandler.sendFrameDirect(1, payload, 0x1234, undefined);
-                expect(success).toBe(true);
-                expect(markSuccessSpy).toHaveBeenCalledWith(0x1234);
+            const success = await driver.macHandler.sendFrameDirect(1, payload, 0x1234, undefined);
+            expect(success).toBe(true);
+            expect(markSuccessSpy).toHaveBeenCalledWith(0x1234);
 
-                const error = Object.assign(new Error("no ack"), { cause: SpinelStatus.NO_ACK });
-                setPropertySpy.mockRejectedValueOnce(error);
+            const error = Object.assign(new Error("no ack"), { cause: SpinelStatus.NO_ACK });
+            setPropertySpy.mockRejectedValueOnce(error);
 
-                const failure = await driver.macHandler.sendFrameDirect(2, payload, 0xabcd, undefined);
-                expect(failure).toBe(false);
-                expect(markFailureSpy).toHaveBeenCalledWith(0xabcd);
-                expect(driver.context.macNoACKs.get(0xabcd)).toStrictEqual(1);
-            } finally {
-                setPropertySpy.mockRestore();
-                markSuccessSpy.mockRestore();
-                markFailureSpy.mockRestore();
-            }
+            const failure = await driver.macHandler.sendFrameDirect(2, payload, 0xabcd, undefined);
+            expect(failure).toBe(false);
+            expect(markFailureSpy).toHaveBeenCalledWith(0xabcd);
+            expect(driver.context.macNoACKs.get(0xabcd)).toStrictEqual(1);
         });
 
         it("forwards NWK transport key requests to APS handler", async () => {
             const destination16 = 0x2233;
             const destination64 = 0x1122334455667788n;
-            const associateSpy = vi.spyOn(driver.context, "associate").mockImplementation(() => {
-                driver.context.address16ToAddress64.set(destination16, destination64);
-                return Promise.resolve([MACAssociationStatus.SUCCESS, destination16] as const);
-            });
-            const sendCommissioningResponseSpy = vi.spyOn(driver.nwkHandler, "sendCommissioningResponse").mockResolvedValue(true);
+            vi.spyOn(driver.nwkHandler, "sendCommissioningResponse").mockResolvedValue(true);
             const apsSendSpy = vi.spyOn(driver.apsHandler, "sendTransportKeyNWK").mockResolvedValue(true);
 
-            try {
-                const data = Buffer.from([0x00, 0x8e]);
-                const macHeader = {
-                    source16: destination16,
-                    source64: destination64,
-                } as MACHeader;
-                const nwkHeader = {
-                    source16: destination16,
-                    source64: destination64,
-                    frameControl: {
-                        security: false,
-                    },
-                } as ZigbeeNWKHeader;
+            driver.context.allowJoins(0xfe, true);
 
-                await driver.nwkHandler.processCommissioningRequest(data, 0, macHeader, nwkHeader);
+            const data = Buffer.from([0x00, 0x8e]);
+            const macHeader = {
+                source16: destination16,
+                source64: destination64,
+            } as MACHeader;
+            const nwkHeader = {
+                source16: destination16,
+                source64: destination64,
+                frameControl: {
+                    security: false,
+                },
+            } as ZigbeeNWKHeader;
 
-                expect(apsSendSpy).toHaveBeenCalledWith(
-                    destination16,
-                    driver.context.netParams.networkKey,
-                    driver.context.netParams.networkKeySequenceNumber,
-                    destination64,
-                );
-            } finally {
-                associateSpy.mockRestore();
-                sendCommissioningResponseSpy.mockRestore();
-                apsSendSpy.mockRestore();
-                driver.context.address16ToAddress64.delete(destination16);
-            }
+            await driver.nwkHandler.processCommissioningRequest(data, 0, macHeader, nwkHeader);
+
+            expect(apsSendSpy).toHaveBeenCalledWith(
+                destination16,
+                driver.context.netParams.networkKey,
+                driver.context.netParams.networkKeySequenceNumber,
+                destination64,
+            );
         });
 
         it("logs onStreamRaw errors", async () => {
@@ -1390,23 +1384,16 @@ describe("OT RCP Driver", () => {
             const waitForResetSpy = vi.spyOn(driver, "waitForReset").mockResolvedValue();
             const stopSpy = vi.spyOn(driver, "stop");
 
-            try {
-                await driver.resetStack();
+            await driver.resetStack();
 
-                expect(setPropertySpy.mock.calls).toStrictEqual([
-                    [writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 0)],
-                    [writePropertyb(SpinelPropertyId.PHY_ENABLED, false)],
-                    [writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false)],
-                ]);
-                expect(stopSpy).not.toHaveBeenCalled();
-                expect(sendCommandSpy).toHaveBeenCalledWith(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.STACK]), false);
-                expect(waitForResetSpy).toHaveBeenCalledTimes(1);
-            } finally {
-                setPropertySpy.mockRestore();
-                sendCommandSpy.mockRestore();
-                waitForResetSpy.mockRestore();
-                stopSpy.mockRestore();
-            }
+            expect(setPropertySpy.mock.calls).toStrictEqual([
+                [writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 0)],
+                [writePropertyb(SpinelPropertyId.PHY_ENABLED, false)],
+                [writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false)],
+            ]);
+            expect(stopSpy).not.toHaveBeenCalled();
+            expect(sendCommandSpy).toHaveBeenCalledWith(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.STACK]), false);
+            expect(waitForResetSpy).toHaveBeenCalledTimes(1);
         });
 
         it("resetStack stops network when running", async () => {
@@ -1418,38 +1405,26 @@ describe("OT RCP Driver", () => {
             const waitForResetSpy = vi.spyOn(driver, "waitForReset").mockResolvedValue();
             const stopSpy = vi.spyOn(driver, "stop");
 
-            try {
-                await driver.resetStack();
+            await driver.resetStack();
 
-                expect(stopSpy).toHaveBeenCalledTimes(1);
-                expect(setPropertySpy.mock.calls.slice(0, 3)).toStrictEqual([
-                    [writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 0)],
-                    [writePropertyb(SpinelPropertyId.PHY_ENABLED, false)],
-                    [writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false)],
-                ]);
-                expect(sendCommandSpy).toHaveBeenCalledWith(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.STACK]), false);
-                expect(waitForResetSpy).toHaveBeenCalledTimes(1);
-            } finally {
-                setPropertySpy.mockRestore();
-                sendCommandSpy.mockRestore();
-                waitForResetSpy.mockRestore();
-                stopSpy.mockRestore();
-            }
+            expect(stopSpy).toHaveBeenCalledTimes(1);
+            expect(setPropertySpy.mock.calls.slice(0, 3)).toStrictEqual([
+                [writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 0)],
+                [writePropertyb(SpinelPropertyId.PHY_ENABLED, false)],
+                [writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false)],
+            ]);
+            expect(sendCommandSpy).toHaveBeenCalledWith(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.STACK]), false);
+            expect(waitForResetSpy).toHaveBeenCalledTimes(1);
         });
 
         it("resetIntoBootloader resets without stack first", async () => {
             const sendCommandSpy = vi.spyOn(driver, "sendCommand").mockImplementation(async () => undefined as unknown as SpinelFrame);
             const stopSpy = vi.spyOn(driver, "stop");
 
-            try {
-                await driver.resetIntoBootloader();
+            await driver.resetIntoBootloader();
 
-                expect(stopSpy).not.toHaveBeenCalled();
-                expect(sendCommandSpy).toHaveBeenCalledWith(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.BOOTLOADER]), false);
-            } finally {
-                sendCommandSpy.mockRestore();
-                stopSpy.mockRestore();
-            }
+            expect(stopSpy).not.toHaveBeenCalled();
+            expect(sendCommandSpy).toHaveBeenCalledWith(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.BOOTLOADER]), false);
         });
 
         it("resetIntoBootloader stops network before reset when running", async () => {
@@ -1459,15 +1434,10 @@ describe("OT RCP Driver", () => {
             const sendCommandSpy = vi.spyOn(driver, "sendCommand").mockImplementation(async () => undefined as unknown as SpinelFrame);
             const stopSpy = vi.spyOn(driver, "stop");
 
-            try {
-                await driver.resetIntoBootloader();
+            await driver.resetIntoBootloader();
 
-                expect(stopSpy).toHaveBeenCalledTimes(1);
-                expect(sendCommandSpy).toHaveBeenCalledWith(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.BOOTLOADER]), false);
-            } finally {
-                sendCommandSpy.mockRestore();
-                stopSpy.mockRestore();
-            }
+            expect(stopSpy).toHaveBeenCalledTimes(1);
+            expect(sendCommandSpy).toHaveBeenCalledWith(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.BOOTLOADER]), false);
         });
 
         it("clamps PHY CCA threshold before setting property", async () => {
@@ -1480,8 +1450,6 @@ describe("OT RCP Driver", () => {
 
             await driver.setPHYCCAThreshold(-200);
             expect(setPropertySpy).toHaveBeenCalledWith(writePropertyc(SpinelPropertyId.PHY_CCA_THRESHOLD, -128));
-
-            setPropertySpy.mockRestore();
         });
 
         it("logs energy scan results from Spinel notifications", async () => {
@@ -1503,8 +1471,6 @@ describe("OT RCP Driver", () => {
             await vi.advanceTimersByTimeAsync(10);
 
             expect(infoSpy).toHaveBeenCalledWith(`<=== ENERGY_SCAN[channel=${channel} rssi=${rssi}]`, "ot-rcp-driver");
-
-            infoSpy.mockRestore();
         });
 
         it("starts and stops energy scan when stack idle", async () => {
@@ -1513,38 +1479,31 @@ describe("OT RCP Driver", () => {
             const getSensitivitySpy = vi.spyOn(driver, "getPHYRXSensitivity").mockResolvedValue(-96);
             const setPHYTXPowerSpy = vi.spyOn(driver, "setPHYTXPower").mockResolvedValue();
 
-            try {
-                const channels = [11, 15];
+            const channels = [11, 15];
 
-                await driver.startEnergyScan(channels, 128, -4);
+            await driver.startEnergyScan(channels, 128, -4);
 
-                expect(getRSSISpy).toHaveBeenCalledTimes(1);
-                expect(getSensitivitySpy).toHaveBeenCalledTimes(1);
-                expect(setPHYTXPowerSpy).toHaveBeenCalledWith(-4);
+            expect(getRSSISpy).toHaveBeenCalledTimes(1);
+            expect(getSensitivitySpy).toHaveBeenCalledTimes(1);
+            expect(setPHYTXPowerSpy).toHaveBeenCalledWith(-4);
 
-                expect(setPropertySpy.mock.calls).toStrictEqual([
-                    [writePropertyb(SpinelPropertyId.PHY_ENABLED, true)],
-                    [writePropertyb(SpinelPropertyId.MAC_RX_ON_WHEN_IDLE_MODE, true)],
-                    [writePropertyAC(SpinelPropertyId.MAC_SCAN_MASK, channels)],
-                    [writePropertyS(SpinelPropertyId.MAC_SCAN_PERIOD, 128)],
-                    [writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 2)],
-                ]);
+            expect(setPropertySpy.mock.calls).toStrictEqual([
+                [writePropertyb(SpinelPropertyId.PHY_ENABLED, true)],
+                [writePropertyb(SpinelPropertyId.MAC_RX_ON_WHEN_IDLE_MODE, true)],
+                [writePropertyAC(SpinelPropertyId.MAC_SCAN_MASK, channels)],
+                [writePropertyS(SpinelPropertyId.MAC_SCAN_PERIOD, 128)],
+                [writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 2)],
+            ]);
 
-                setPropertySpy.mockClear();
+            setPropertySpy.mockClear();
 
-                await driver.stopEnergyScan();
+            await driver.stopEnergyScan();
 
-                expect(setPropertySpy.mock.calls).toStrictEqual([
-                    [writePropertyS(SpinelPropertyId.MAC_SCAN_PERIOD, 100)],
-                    [writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 0)],
-                    [writePropertyb(SpinelPropertyId.PHY_ENABLED, false)],
-                ]);
-            } finally {
-                setPropertySpy.mockRestore();
-                getRSSISpy.mockRestore();
-                getSensitivitySpy.mockRestore();
-                setPHYTXPowerSpy.mockRestore();
-            }
+            expect(setPropertySpy.mock.calls).toStrictEqual([
+                [writePropertyS(SpinelPropertyId.MAC_SCAN_PERIOD, 100)],
+                [writePropertyC(SpinelPropertyId.MAC_SCAN_STATE, 0)],
+                [writePropertyb(SpinelPropertyId.PHY_ENABLED, false)],
+            ]);
         });
 
         it("skips energy scan when state already loaded", async () => {
@@ -1553,49 +1512,40 @@ describe("OT RCP Driver", () => {
             const setPropertySpy = vi.spyOn(driver, "setProperty");
             const getRSSISpy = vi.spyOn(driver, "getPHYRSSI");
 
-            try {
-                await driver.startEnergyScan([11], 64, 0);
+            await driver.startEnergyScan([11], 64, 0);
 
-                expect(getRSSISpy).not.toHaveBeenCalled();
-                expect(setPropertySpy).not.toHaveBeenCalled();
-            } finally {
-                setPropertySpy.mockRestore();
-                getRSSISpy.mockRestore();
-            }
+            expect(getRSSISpy).not.toHaveBeenCalled();
+            expect(setPropertySpy).not.toHaveBeenCalled();
         });
 
         it("starts sniffer and forwards frames when idle", async () => {
             const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
 
-            try {
-                const payload = Buffer.from([0xde, 0xad]);
+            const payload = Buffer.from([0xde, 0xad]);
 
-                await driver.startSniffer(15);
+            await driver.startSniffer(15);
 
-                expect(setPropertySpy.mock.calls).toStrictEqual([
-                    [writePropertyb(SpinelPropertyId.PHY_ENABLED, true)],
-                    [writePropertyC(SpinelPropertyId.PHY_CHAN, 15)],
-                    [writePropertyC(SpinelPropertyId.MAC_PROMISCUOUS_MODE, 2)],
-                    [writePropertyb(SpinelPropertyId.MAC_RX_ON_WHEN_IDLE_MODE, true)],
-                    [writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, true)],
-                ]);
+            expect(setPropertySpy.mock.calls).toStrictEqual([
+                [writePropertyb(SpinelPropertyId.PHY_ENABLED, true)],
+                [writePropertyC(SpinelPropertyId.PHY_CHAN, 15)],
+                [writePropertyC(SpinelPropertyId.MAC_PROMISCUOUS_MODE, 2)],
+                [writePropertyb(SpinelPropertyId.MAC_RX_ON_WHEN_IDLE_MODE, true)],
+                [writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, true)],
+            ]);
 
-                setPropertySpy.mockClear();
+            setPropertySpy.mockClear();
 
-                await driver.onStreamRawFrame(payload, undefined);
+            await driver.onStreamRawFrame(payload, undefined);
 
-                expect(mockCallbacks.onMACFrame).toHaveBeenCalledWith(payload, undefined);
+            expect(mockCallbacks.onMACFrame).toHaveBeenCalledWith(payload, undefined);
 
-                await driver.stopSniffer();
+            await driver.stopSniffer();
 
-                expect(setPropertySpy.mock.calls).toStrictEqual([
-                    [writePropertyC(SpinelPropertyId.MAC_PROMISCUOUS_MODE, 0)],
-                    [writePropertyb(SpinelPropertyId.PHY_ENABLED, false)],
-                    [writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false)],
-                ]);
-            } finally {
-                setPropertySpy.mockRestore();
-            }
+            expect(setPropertySpy.mock.calls).toStrictEqual([
+                [writePropertyC(SpinelPropertyId.MAC_PROMISCUOUS_MODE, 0)],
+                [writePropertyb(SpinelPropertyId.PHY_ENABLED, false)],
+                [writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false)],
+            ]);
         });
 
         it("skips sniffer when state already loaded", async () => {
@@ -1603,13 +1553,9 @@ describe("OT RCP Driver", () => {
 
             const setPropertySpy = vi.spyOn(driver, "setProperty");
 
-            try {
-                await driver.startSniffer(20);
+            await driver.startSniffer(20);
 
-                expect(setPropertySpy).not.toHaveBeenCalled();
-            } finally {
-                setPropertySpy.mockRestore();
-            }
+            expect(setPropertySpy).not.toHaveBeenCalled();
         });
     });
 
@@ -2065,7 +2011,10 @@ describe("OT RCP Driver", () => {
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: false,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             driver.context.address16ToAddress64.set(0xa18f, source64);
 
@@ -2177,9 +2126,10 @@ describe("OT RCP Driver", () => {
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: false,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: 0,
                 recentLQAs: [],
-                endDeviceTimeout: undefined,
                 incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_DEVICE_ANNOUNCE_BCAST, Buffer.from([0xd8, 0xff, 0x00, 0x00])), "utf8", () => {});
@@ -2218,6 +2168,7 @@ describe("OT RCP Driver", () => {
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: 0,
                 recentLQAs: [200, 153, 178, 188],
                 incomingNWKFrameCounter: 33498,
                 endDeviceTimeout: undefined,
@@ -2283,7 +2234,10 @@ describe("OT RCP Driver", () => {
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             driver.context.address16ToAddress64.set(0x3ab1, 6685525477083214058n);
             // not set on purpose to observe change from actual route record
@@ -3126,7 +3080,10 @@ describe("OT RCP Driver", () => {
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             driver.context.address16ToAddress64.set(0x96ba, 9244571720527165811n);
             // driver.context.sourceRouteTable.set(0x96ba, [{relayAddresses: [], pathCost: 1}]);
@@ -3136,7 +3093,10 @@ describe("OT RCP Driver", () => {
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             driver.context.address16ToAddress64.set(0x91d2, 8118874123826907736n);
             // driver.context.sourceRouteTable.set(0x91d2, [{relayAddresses: [], pathCost: 1}]);
@@ -3146,7 +3106,10 @@ describe("OT RCP Driver", () => {
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             driver.context.address16ToAddress64.set(0xcb47, 5149013569626593n);
             // mimic no source route entry for 0xcb47
@@ -3156,7 +3119,10 @@ describe("OT RCP Driver", () => {
                 capabilities: structuredClone(COMMON_RFD_MAC_CAP),
                 authorized: true,
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             driver.context.address16ToAddress64.set(0x6887, 5149013643361676n);
             // driver.context.sourceRouteTable.set(0x6887, [{relayAddresses: [0x96ba], pathCost: 2}]);
@@ -3166,7 +3132,10 @@ describe("OT RCP Driver", () => {
                 capabilities: structuredClone(COMMON_RFD_MAC_CAP),
                 authorized: true,
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             driver.context.address16ToAddress64.set(0x9ed5, 5149013578478658n);
             // driver.context.sourceRouteTable.set(0x9ed5, [{relayAddresses: [0x91d2], pathCost: 2}]);
@@ -3176,7 +3145,10 @@ describe("OT RCP Driver", () => {
                 capabilities: structuredClone(COMMON_RFD_MAC_CAP),
                 authorized: true,
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             driver.context.address16ToAddress64.set(0x4b8e, 5149013573816379n);
             // driver.context.sourceRouteTable.set(0x4b8e, [{relayAddresses: [0xcb47], pathCost: 2}]);

@@ -1062,18 +1062,29 @@ export class APSHandler {
 
                         const device = this.#context.deviceTable.get(address64);
 
-                        if (!device) {
+                        if (device === undefined) {
                             // unknown device, should have been added by `associate`, something's not right, ignore it
                             return;
                         }
 
                         const decodedCap = decodeMACCapabilities(capabilities);
+
+                        if (device.address16 !== address16) {
+                            this.#context.address16ToAddress64.delete(device.address16);
+                            this.#context.address16ToAddress64.set(address16, address64);
+
+                            device.address16 = address16;
+                        }
+
                         // just in case
                         device.capabilities = decodedCap;
+
+                        await this.#context.savePeriodicState();
 
                         // TODO: ideally, this shouldn't trigger (prevents early interview process from app) until AFTER authorized=true
                         setImmediate(() => {
                             // if device is authorized, it means it completed the TC link key update, so, a rejoin
+                            // TODO: could flip authorized to true before the announce and count as rejoin when it shouldn't
                             if (device.authorized) {
                                 this.#callbacks.onDeviceRejoined(address16, address64, decodedCap);
                             } else {
@@ -1627,7 +1638,7 @@ export class APSHandler {
      *       - Uses TUNNEL command per spec #4.6.3.7 ✅
      *       - Encrypts tunneled APS frame with TRANSPORT keyId ✅
      *       - However, should verify parent can relay before trusting join
-     * - ⚠️  Status 0x03 (TC Rejoin) handling appears correct but minimal
+     * - ✅ Status 0x03 (TC Rejoin) re-distributes NWK key when device lacks latest sequence
      * - ⚠️  Status 0x02 (Device Left) handling uses onDisassociate - spec says "informative only, should not take action"
      *       This may be non-compliant as it actively removes the device
      *
@@ -1691,13 +1702,13 @@ export class APSHandler {
             this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
 
             const tApsCmdPayload = Buffer.alloc(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
-            let offset = 0;
-            offset = tApsCmdPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
-            offset = tApsCmdPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK, offset);
-            offset += this.#context.netParams.networkKey.copy(tApsCmdPayload, offset);
-            offset = tApsCmdPayload.writeUInt8(this.#context.netParams.networkKeySequenceNumber, offset);
-            offset = tApsCmdPayload.writeBigUInt64LE(device64, offset);
-            offset = tApsCmdPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
+            let tunnelOffset = 0;
+            tunnelOffset = tApsCmdPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, tunnelOffset);
+            tunnelOffset = tApsCmdPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK, tunnelOffset);
+            tunnelOffset += this.#context.netParams.networkKey.copy(tApsCmdPayload, tunnelOffset);
+            tunnelOffset = tApsCmdPayload.writeUInt8(this.#context.netParams.networkKeySequenceNumber, tunnelOffset);
+            tunnelOffset = tApsCmdPayload.writeBigUInt64LE(device64, tunnelOffset);
+            tunnelOffset = tApsCmdPayload.writeBigUInt64LE(this.#context.netParams.eui64, tunnelOffset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
 
             const tApsCmdFrame = encodeZigbeeAPSFrame(
                 {
@@ -1726,9 +1737,11 @@ export class APSHandler {
             );
 
             await this.sendTunnel(nwkHeader.source16!, device64, tApsCmdFrame);
+
+            this.#context.markNetworkKeyTransported(device64);
         } else if (status === 0x03) {
             // rejoin
-            await this.#context.associate(
+            const [, , requiresTransportKey] = await this.#context.associate(
                 device16,
                 device64,
                 false, // rejoin
@@ -1737,6 +1750,16 @@ export class APSHandler {
                 false,
                 true, // was allowed by parent, expected valid
             );
+
+            if (requiresTransportKey) {
+                await this.sendTransportKeyNWK(
+                    device16,
+                    this.#context.netParams.networkKey,
+                    this.#context.netParams.networkKeySequenceNumber,
+                    device64,
+                );
+                this.#context.markNetworkKeyTransported(device64);
+            }
         } else if (status === 0x02) {
             // left
             // TODO: according to spec, this is "informative" only, should not take any action?

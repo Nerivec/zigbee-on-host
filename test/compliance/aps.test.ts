@@ -1238,6 +1238,12 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
                 counter: 0x33,
             };
 
+            const deviceEntry = context.deviceTable.get(device64);
+
+            if (deviceEntry !== undefined) {
+                deviceEntry.lastTransportedNetworkKeySeq = context.netParams.networkKeySequenceNumber;
+            }
+
             await apsHandler.processCommand(payload, macHeader, nwkHeader, apsHeader);
 
             const entry = context.deviceTable.get(device64);
@@ -1403,6 +1409,12 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
                 },
                 counter: 0x35,
             };
+
+            const deviceEntry = context.deviceTable.get(device64);
+
+            if (deviceEntry !== undefined) {
+                deviceEntry.lastTransportedNetworkKeySeq = context.netParams.networkKeySequenceNumber;
+            }
 
             await apsHandler.processCommand(payload, macHeader, nwkHeader, apsHeader);
 

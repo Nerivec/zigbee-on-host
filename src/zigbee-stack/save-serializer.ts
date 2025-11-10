@@ -19,7 +19,7 @@ interface ParsedSourceRoute extends Pick<SourceRouteTableEntry, "relayAddresses"
 /**
  * Parsed device entry with final values ready to use.
  */
-interface ParsedDevice extends Omit<DeviceTableEntry, "capabilities" | "recentLQAs"> {
+interface ParsedDevice extends Omit<DeviceTableEntry, "capabilities" | "recentLQAs" | "lastDeviceAnnounceAt"> {
     // for driver to map with
     address64: bigint;
     // raw for driver to handle
@@ -90,8 +90,9 @@ export const enum DeviceTLVTag {
     DEVICE_CAPABILITIES = 0x03,
     DEVICE_AUTHORIZED = 0x04,
     DEVICE_NEIGHBOR = 0x05,
+    DEVICE_LAST_NWK_KEY_SEQ = 0x06,
 
-    // Reserved: 0x06-0x3f for future device core fields
+    // Reserved: 0x07-0x3f for future device core fields
 
     SOURCE_ROUTE_ENTRY = 0x40,
 
@@ -403,6 +404,9 @@ export function readDeviceTLVs(buffer: Buffer, startOffset: number, endOffset: n
             case DeviceTLVTag.DEVICE_NEIGHBOR:
                 device.neighbor = Boolean(buffer.readUInt8(offset));
                 break;
+            case DeviceTLVTag.DEVICE_LAST_NWK_KEY_SEQ:
+                device.lastTransportedNetworkKeySeq = buffer.readUInt8(offset);
+                break;
             case DeviceTLVTag.SOURCE_ROUTE_ENTRY:
                 device.sourceRouteEntries!.push(readSourceRouteTLVs(buffer, offset, offset + length));
                 break;
@@ -573,6 +577,7 @@ export function serializeDeviceEntry(
     capabilities: number,
     authorized: boolean,
     neighbor: boolean,
+    lastTransportedNetworkKeySeq: number | undefined,
     sourceRouteEntries?: SourceRouteTableEntry[],
 ): Buffer {
     // Estimate size generously
@@ -592,6 +597,10 @@ export function serializeDeviceEntry(
     offset = writeTLVUInt8(buffer, offset, DeviceTLVTag.DEVICE_CAPABILITIES, capabilities);
     offset = writeTLVUInt8(buffer, offset, DeviceTLVTag.DEVICE_AUTHORIZED, authorized ? 1 : 0);
     offset = writeTLVUInt8(buffer, offset, DeviceTLVTag.DEVICE_NEIGHBOR, neighbor ? 1 : 0);
+
+    if (lastTransportedNetworkKeySeq !== undefined) {
+        offset = writeTLVUInt8(buffer, offset, DeviceTLVTag.DEVICE_LAST_NWK_KEY_SEQ, lastTransportedNetworkKeySeq);
+    }
 
     // Write source route entries (if any)
     if (sourceRouteEntries) {

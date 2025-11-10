@@ -429,28 +429,17 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
         it("fails to decrypt when the wrong network key hash is registered", async () => {
             const { macPayload, nwkFrameControl, nwkHeader, payloadOffset } = await produceSecuredFrame();
             const wrongKey = Buffer.alloc(16, 0x5a);
-            const restore = () =>
-                registerDefaultHashedKeys(
-                    makeKeyedHashByType(ZigbeeKeyType.LINK, Buffer.from(NETDEF_TC_KEY)),
-                    makeKeyedHashByType(ZigbeeKeyType.NWK, Buffer.from(NETDEF_NETWORK_KEY)),
-                    makeKeyedHashByType(ZigbeeKeyType.TRANSPORT, Buffer.from(NETDEF_TC_KEY)),
-                    makeKeyedHashByType(ZigbeeKeyType.LOAD, Buffer.from(NETDEF_TC_KEY)),
-                );
 
-            try {
-                registerDefaultHashedKeys(
-                    makeKeyedHashByType(ZigbeeKeyType.LINK, Buffer.from(NETDEF_TC_KEY)),
-                    makeKeyedHashByType(ZigbeeKeyType.NWK, wrongKey),
-                    makeKeyedHashByType(ZigbeeKeyType.TRANSPORT, Buffer.from(NETDEF_TC_KEY)),
-                    makeKeyedHashByType(ZigbeeKeyType.LOAD, Buffer.from(NETDEF_TC_KEY)),
-                );
+            registerDefaultHashedKeys(
+                makeKeyedHashByType(ZigbeeKeyType.LINK, Buffer.from(NETDEF_TC_KEY)),
+                makeKeyedHashByType(ZigbeeKeyType.NWK, wrongKey),
+                makeKeyedHashByType(ZigbeeKeyType.TRANSPORT, Buffer.from(NETDEF_TC_KEY)),
+                makeKeyedHashByType(ZigbeeKeyType.LOAD, Buffer.from(NETDEF_TC_KEY)),
+            );
 
-                expect(() =>
-                    decodeZigbeeNWKPayload(macPayload, payloadOffset, undefined, context.netParams.eui64, nwkFrameControl, nwkHeader),
-                ).toThrow("Auth tag mismatch while decrypting Zigbee payload");
-            } finally {
-                restore();
-            }
+            expect(() => decodeZigbeeNWKPayload(macPayload, payloadOffset, undefined, context.netParams.eui64, nwkFrameControl, nwkHeader)).toThrow(
+                "Auth tag mismatch while decrypting Zigbee payload",
+            );
         });
 
         it("fails to decrypt when the encrypted payload is tampered", async () => {
@@ -667,7 +656,10 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 },
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             context.address16ToAddress64.set(failingChild16, failingChild64);
         });
@@ -786,7 +778,10 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 },
                 authorized: true,
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             context.address16ToAddress64.set(distant16, distant64);
 
@@ -828,7 +823,10 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             },
             authorized: true,
             neighbor,
+            lastTransportedNetworkKeySeq: undefined,
             recentLQAs: [],
+            incomingNWKFrameCounter: undefined,
+            endDeviceTimeout: undefined,
         });
         context.address16ToAddress64.set(routerShortAddress, routerIeeeAddress);
     }
@@ -2043,7 +2041,10 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 capabilities: { ...baseCapabilities },
                 authorized: true,
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             context.address16ToAddress64.set(rejoiner16, rejoiner64);
             mockNWKHandlerCallbacks.onDeviceRejoined = vi.fn();
@@ -2082,7 +2083,10 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 capabilities: { ...baseCapabilities },
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             context.address16ToAddress64.set(rejoiner16, conflicting64);
             const currentDevice = context.deviceTable.get(rejoiner64)!;
@@ -2449,6 +2453,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 },
                 authorized: true,
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
@@ -2497,16 +2502,12 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
 
             const sendSpy = vi.spyOn(nwkHandler, "sendEdTimeoutResponse");
 
-            try {
-                const payload = await handleTimeoutRequest(1, { source64: undefined });
-                expect(payload).not.toBeUndefined();
-                expect(payload!.readUInt8(1)).toStrictEqual(0x02);
-                expect(sendSpy).toHaveBeenCalled();
-                const lastCall = sendSpy.mock.calls.at(-1);
-                expect(lastCall?.[2]).toStrictEqual(0x02);
-            } finally {
-                sendSpy.mockRestore();
-            }
+            const payload = await handleTimeoutRequest(1, { source64: undefined });
+            expect(payload).not.toBeUndefined();
+            expect(payload!.readUInt8(1)).toStrictEqual(0x02);
+            expect(sendSpy).toHaveBeenCalled();
+            const lastCall = sendSpy.mock.calls.at(-1);
+            expect(lastCall?.[2]).toStrictEqual(0x02);
         });
 
         it("allows overriding status and parent info in outgoing responses", async () => {
@@ -2647,7 +2648,6 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 expect(routeSpy).toHaveBeenCalledTimes(1);
             } finally {
                 nwkHandler.stop();
-                routeSpy.mockRestore();
                 randomSpy.mockRestore();
                 vi.useRealTimers();
             }
@@ -2658,7 +2658,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             vi.setSystemTime(new Date("2025-10-28T00:02:00Z"));
             const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
             const linkSpy = vi.spyOn(nwkHandler, "sendLinkStatus").mockResolvedValue();
-            const routeSpy = vi.spyOn(nwkHandler, "sendRouteReq").mockResolvedValue(true);
+            vi.spyOn(nwkHandler, "sendRouteReq").mockResolvedValue(true);
 
             try {
                 await nwkHandler.start();
@@ -2675,8 +2675,6 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 expect(linkSpy).toHaveBeenCalledTimes(1);
             } finally {
                 nwkHandler.stop();
-                routeSpy.mockRestore();
-                linkSpy.mockRestore();
                 randomSpy.mockRestore();
                 vi.useRealTimers();
             }

@@ -314,7 +314,7 @@ export class MACHandler {
      *       - Implementation stores in pendingAssociations for DATA_REQ ✅
      *       - Respects macResponseWaitTime via timestamp check ✅
      * - ⚠️  TIMING: Uses Date.now() for timestamp - should align with MAC_INDIRECT_TRANSMISSION_TIMEOUT
-     * - ✅ Sends TRANSPORT_KEY_NWK after successful association (Zigbee-specific)
+     * - ✅ Delivers TRANSPORT_KEY_NWK after successful association (Zigbee Trust Center requirement)
      * - ✅ Uses MAC capabilities to determine device type correctly
      *
      * @param data Command data
@@ -334,7 +334,7 @@ export class MACHandler {
             const device = this.#context.deviceTable.get(macHeader.source64);
             const address16 = device?.address16;
             const decodedCap = decodeMACCapabilities(capabilities);
-            const [status, newAddress16] = await this.#context.associate(
+            const [status, newAddress16, requiresTransportKey] = await this.#context.associate(
                 address16,
                 macHeader.source64,
                 !device?.authorized /* rejoin only if was previously authorized */,
@@ -347,13 +347,14 @@ export class MACHandler {
                 sendResp: async () => {
                     await this.sendAssocRsp(macHeader.source64!, newAddress16, status);
 
-                    if (status === MACAssociationStatus.SUCCESS) {
+                    if (status === MACAssociationStatus.SUCCESS && requiresTransportKey) {
                         await this.#callbacks.onAPSSendTransportKeyNWK(
                             newAddress16,
                             this.#context.netParams.networkKey,
                             this.#context.netParams.networkKeySequenceNumber,
                             macHeader.source64!,
                         );
+                        this.#context.markNetworkKeyTransported(macHeader.source64!);
                     }
                 },
                 timestamp: Date.now(),

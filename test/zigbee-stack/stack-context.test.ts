@@ -424,7 +424,10 @@ describe("StackContext", () => {
                 capabilities,
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             context.address16ToAddress64.set(address16, device64);
 
@@ -521,7 +524,10 @@ describe("StackContext", () => {
                 capabilities,
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             context.address16ToAddress64.set(address16, device64);
             context.sourceRouteTable.set(address16, [
@@ -607,7 +613,10 @@ describe("StackContext", () => {
                 capabilities,
                 authorized: false,
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             context.address16ToAddress64.set(address16, device64);
 
@@ -679,7 +688,10 @@ describe("StackContext", () => {
                 capabilities,
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             context.address16ToAddress64.set(address16, device64);
             context.sourceRouteTable.set(address16, [sourceRoute]);

@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -48,6 +48,7 @@ describe("NWK Handler", () => {
         };
 
         saveDir = `temp_NWKHandler_${Math.floor(Math.random() * 1000000)}`;
+        mkdirSync(saveDir, { recursive: true });
 
         mockStackContextCallbacks = {
             onDeviceLeft: vi.fn(),
@@ -58,7 +59,7 @@ describe("NWK Handler", () => {
         // Spy on context methods to track calls while preserving functionality
         vi.spyOn(mockContext, "nextNWKKeyFrameCounter");
         vi.spyOn(mockContext, "nextTCKeyFrameCounter");
-        associateSpy = vi.spyOn(mockContext, "associate").mockResolvedValue([MACAssociationStatus.SUCCESS, 0x1234]);
+        associateSpy = vi.spyOn(mockContext, "associate").mockResolvedValue([MACAssociationStatus.SUCCESS, 0x1234, false]);
         vi.spyOn(mockContext, "disassociate").mockResolvedValue(undefined);
 
         mockMACCallbacks = {
@@ -669,7 +670,10 @@ describe("NWK Handler", () => {
                     allocateAddress: true,
                 },
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [255],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
 
             const macHeader: MACHeader = {
@@ -745,7 +749,10 @@ describe("NWK Handler", () => {
                     allocateAddress: true,
                 },
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
 
             const existing = nwkHandler.createSourceRouteEntry([], 5);
@@ -959,7 +966,10 @@ describe("NWK Handler", () => {
                 },
                 authorized: true,
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
 
             const payload = Buffer.from([ZigbeeNWKCommandId.ED_TIMEOUT_REQUEST, 0x04, 0x00]);
@@ -1089,7 +1099,7 @@ describe("NWK Handler", () => {
             expect(offset).toStrictEqual(9); // options (1) + extended PAN ID (8) = 9
         });
 
-        it("should process network update", () => {
+        it("logs network update without applying changes", () => {
             const device16 = 0x1234;
             // NWK Update needs: options + extended PAN ID + update ID + (PANIDs if update type = 0)
             const payload = Buffer.from([
@@ -1106,23 +1116,76 @@ describe("NWK Handler", () => {
                 // No PAN IDs since count = 0
             ]);
 
-            const offset = nwkHandler.processUpdate(
-                payload,
-                0,
-                {
-                    frameControl: {},
-                    source16: device16,
-                    sequenceNumber: 10,
-                } as MACHeader,
-                {
-                    frameControl: {},
-                    source16: device16,
-                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                    seqNum: 20,
-                } as ZigbeeNWKHeader,
-            );
+            const saveSpy = vi.spyOn(mockContext, "savePeriodicState").mockResolvedValue();
 
-            expect(offset).toStrictEqual(10); // options (1) + extended PAN ID (8) + update ID (1) = 10
+            try {
+                const offset = nwkHandler.processUpdate(
+                    payload,
+                    0,
+                    {
+                        frameControl: {},
+                        source16: device16,
+                        sequenceNumber: 10,
+                    } as MACHeader,
+                    {
+                        frameControl: {},
+                        source16: device16,
+                        destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                        seqNum: 20,
+                    } as ZigbeeNWKHeader,
+                );
+
+                expect(offset).toStrictEqual(10); // options (1) + extended PAN ID (8) + update ID (1) = 10
+                expect(mockContext.netParams.nwkUpdateId).toStrictEqual(netParams.nwkUpdateId);
+                expect(mockContext.netParams.panId).toStrictEqual(netParams.panId);
+                expect(saveSpy).not.toHaveBeenCalled();
+            } finally {
+                saveSpy.mockRestore();
+            }
+        });
+
+        it("ignores PAN ID updates announced by other devices", () => {
+            const device16 = 0x1234;
+            const payload = Buffer.from([
+                0x01, // options: update count = 1, update type = 0 (PAN update)
+                0xdd,
+                0xdd,
+                0xdd,
+                0xdd,
+                0xdd,
+                0xdd,
+                0xdd,
+                0xdd, // extended PAN ID
+                0x02, // update ID (> current)
+                0x44,
+                0x33, // new PAN ID (little-endian)
+            ]);
+
+            const saveSpy = vi.spyOn(mockContext, "savePeriodicState").mockResolvedValue();
+
+            try {
+                nwkHandler.processUpdate(
+                    payload,
+                    0,
+                    {
+                        frameControl: {},
+                        source16: device16,
+                        sequenceNumber: 10,
+                    } as MACHeader,
+                    {
+                        frameControl: {},
+                        source16: device16,
+                        destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                        seqNum: 20,
+                    } as ZigbeeNWKHeader,
+                );
+
+                expect(mockContext.netParams.nwkUpdateId).toStrictEqual(netParams.nwkUpdateId);
+                expect(mockContext.netParams.panId).toStrictEqual(netParams.panId);
+                expect(saveSpy).not.toHaveBeenCalled();
+            } finally {
+                saveSpy.mockRestore();
+            }
         });
 
         it("should process link power delta", () => {
@@ -1242,7 +1305,10 @@ describe("NWK Handler", () => {
                 capabilities: { rxOnWhenIdle: true, deviceType: 1, alternatePANCoordinator: false } as MACCapabilities,
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [200],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
 
             mockContext.deviceTable.set(device2Addr64, {
@@ -1250,7 +1316,10 @@ describe("NWK Handler", () => {
                 capabilities: { rxOnWhenIdle: true, deviceType: 1, alternatePANCoordinator: false } as MACCapabilities,
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [180],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
 
             mockContext.address16ToAddress64.set(0x1234, device1Addr64);
@@ -1491,7 +1560,10 @@ describe("NWK Handler", () => {
             capabilities: undefined,
             authorized: true,
             neighbor: true,
+            lastTransportedNetworkKeySeq: undefined,
             recentLQAs: [],
+            incomingNWKFrameCounter: undefined,
+            endDeviceTimeout: undefined,
         });
 
         const existingEntry = nwkHandler.createSourceRouteEntry([0x1001], 2);
@@ -1529,7 +1601,10 @@ describe("NWK Handler", () => {
             capabilities: undefined,
             authorized: true,
             neighbor: true,
+            lastTransportedNetworkKeySeq: undefined,
             recentLQAs: [],
+            incomingNWKFrameCounter: undefined,
+            endDeviceTimeout: undefined,
         });
         mockContext.address16ToAddress64.set(responder16, responder64);
 
@@ -1576,7 +1651,10 @@ describe("NWK Handler", () => {
             capabilities: undefined,
             authorized: true,
             neighbor: true,
+            lastTransportedNetworkKeySeq: undefined,
             recentLQAs: [],
+            incomingNWKFrameCounter: undefined,
+            endDeviceTimeout: undefined,
         });
 
         const linkSpy = vi.spyOn(nwkHandler, "sendLinkStatus").mockResolvedValue();

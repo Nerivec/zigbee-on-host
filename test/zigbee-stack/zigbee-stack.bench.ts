@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { bench, describe } from "vitest";
 import { decodeMACFrameControl, decodeMACHeader, decodeMACPayload } from "../../src/zigbee/mac.js";
@@ -57,6 +57,7 @@ const setup = () => {
     };
 
     saveDir = `temp_ZigbeeStackBench_${Math.floor(Math.random() * 1000000)}`;
+    mkdirSync(saveDir, { recursive: true });
 
     const stackContextCallbacks: StackContextCallbacks = {
         onDeviceLeft: () => {},
@@ -265,7 +266,10 @@ describe("Zigbee Stack Handlers", () => {
                     capabilities: undefined,
                     authorized: true,
                     neighbor: true,
+                    lastTransportedNetworkKeySeq: undefined,
                     recentLQAs: [],
+                    incomingNWKFrameCounter: undefined,
+                    endDeviceTimeout: undefined,
                 });
                 context.address16ToAddress64.set(source16, source64);
 
@@ -330,7 +334,10 @@ describe("Zigbee Stack Handlers", () => {
                         capabilities: undefined,
                         authorized: true,
                         neighbor: true,
+                        lastTransportedNetworkKeySeq: undefined,
                         recentLQAs: [255, 240, 230],
+                        incomingNWKFrameCounter: undefined,
+                        endDeviceTimeout: undefined,
                     });
                     context.address16ToAddress64.set(neighbor.address16, neighbor.address64);
                 }
@@ -400,7 +407,10 @@ describe("Zigbee Stack Handlers", () => {
                     capabilities: undefined,
                     authorized: true,
                     neighbor: false,
+                    lastTransportedNetworkKeySeq: undefined,
                     recentLQAs: [],
+                    incomingNWKFrameCounter: undefined,
+                    endDeviceTimeout: undefined,
                 });
                 context.address16ToAddress64.set(dest16, dest64);
 
@@ -502,7 +512,10 @@ describe("Zigbee Stack Handlers", () => {
                     capabilities: undefined,
                     authorized: false,
                     neighbor: false,
+                    lastTransportedNetworkKeySeq: undefined,
                     recentLQAs: [],
+                    incomingNWKFrameCounter: undefined,
+                    endDeviceTimeout: undefined,
                 });
                 context.address16ToAddress64.set(source16, source64);
 
@@ -536,7 +549,10 @@ describe("Zigbee Stack Handlers", () => {
                     capabilities: undefined,
                     authorized: false,
                     neighbor: false,
+                    lastTransportedNetworkKeySeq: undefined,
                     recentLQAs: [],
+                    incomingNWKFrameCounter: undefined,
+                    endDeviceTimeout: undefined,
                 });
                 context.address16ToAddress64.set(dest16, dest64);
 

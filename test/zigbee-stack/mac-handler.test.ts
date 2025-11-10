@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -56,6 +56,7 @@ describe("MACHandler", () => {
         };
 
         saveDir = `temp_MACHandler_${Math.floor(Math.random() * 1000000)}`;
+        mkdirSync(saveDir, { recursive: true });
 
         mockStackContextCallbacks = {
             onDeviceLeft: vi.fn(),
@@ -66,14 +67,14 @@ describe("MACHandler", () => {
         vi.spyOn(mockContext, "associate").mockImplementation(
             (_source16, _source64, _initialJoin, _capabilities, _neighbor, denyOverride, allowOverride) => {
                 if (denyOverride) {
-                    return Promise.resolve([MACAssociationStatus.PAN_ACCESS_DENIED, 0xffff]);
+                    return Promise.resolve([MACAssociationStatus.PAN_ACCESS_DENIED, 0xffff, false]);
                 }
 
                 if (allowOverride) {
-                    return Promise.resolve([MACAssociationStatus.SUCCESS, 0x1234]);
+                    return Promise.resolve([MACAssociationStatus.SUCCESS, 0x1234, true]);
                 }
 
-                return Promise.resolve([MACAssociationStatus.SUCCESS, 0x1234]);
+                return Promise.resolve([MACAssociationStatus.SUCCESS, 0x1234, true]);
             },
         );
         vi.spyOn(mockContext, "disassociate").mockResolvedValue(undefined);
@@ -146,7 +147,10 @@ describe("MACHandler", () => {
                 capabilities: undefined,
                 authorized: false,
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
             mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -423,7 +427,10 @@ describe("MACHandler", () => {
                 capabilities: undefined,
                 authorized: true,
                 neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
             });
 
             const macHeader: MACHeader = {

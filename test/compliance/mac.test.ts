@@ -946,7 +946,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
         });
 
         it("propagates PAN_FULL status to association responses", async () => {
-            const associateSpy = vi.spyOn(context, "associate").mockResolvedValue([MACAssociationStatus.PAN_FULL, 0xffff]);
+            const associateSpy = vi.spyOn(context, "associate").mockResolvedValue([MACAssociationStatus.PAN_FULL, 0xffff, false]);
             const sendCommandSpy = vi.spyOn(macHandler, "sendCommand").mockResolvedValue(true);
 
             await macHandler.processCommand(Buffer.from([defaultCapabilities]), buildAssocHeader());

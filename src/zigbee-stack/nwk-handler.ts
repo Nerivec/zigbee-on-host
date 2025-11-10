@@ -1270,6 +1270,7 @@ export class NWKHandler {
      *       - neighbor determined by comparing MAC and NWK source ✅
      *       - denyOverride based on security analysis ✅
      * - ✅ Sends REJOIN_RESP with assigned address and status
+     * - ✅ Re-distributes current NWK key when rejoin requires key update
      * - ✅ Does not require VERIFY_KEY after rejoin per spec note
      * - ✅ Triggers onDeviceRejoined callback on SUCCESS
      *
@@ -1297,10 +1298,10 @@ export class NWKHandler {
         );
 
         let deny = false;
+        let source64 = nwkHeader.source64;
 
         if (!nwkHeader.frameControl.security) {
             // Trust Center Rejoin
-            let source64 = nwkHeader.source64;
 
             if (source64 === undefined) {
                 if (nwkHeader.source16 === undefined) {
@@ -1326,9 +1327,9 @@ export class NWKHandler {
             }
         }
 
-        const [status, newAddress16] = await this.#context.associate(
+        const [status, newAddress16, requiresTransportKey] = await this.#context.associate(
             nwkHeader.source16!,
-            nwkHeader.source64,
+            source64,
             false /* rejoin */,
             decodedCap,
             macHeader.source16 === nwkHeader.source16,
@@ -1336,6 +1337,17 @@ export class NWKHandler {
         );
 
         await this.sendRejoinResp(nwkHeader.source16!, newAddress16, status, decodedCap);
+
+        // XXX: is this spec?
+        if (status === MACAssociationStatus.SUCCESS && requiresTransportKey && source64 !== undefined) {
+            await this.#callbacks.onAPSSendTransportKeyNWK(
+                newAddress16,
+                this.#context.netParams.networkKey,
+                this.#context.netParams.networkKeySequenceNumber,
+                source64,
+            );
+            this.#context.markNetworkKeyTransported(source64);
+        }
 
         // NOTE: a device does not have to verify its trust center link key with the APSME-VERIFY-KEY services after a rejoin.
 
@@ -1903,7 +1915,7 @@ export class NWKHandler {
      * - ✅ Determines neighbor by comparing MAC and NWK source addresses
      * - ✅ Calls context associate with appropriate parameters
      * - ✅ Sends COMMISSIONING_RESPONSE with status and address
-     * - ✅ Sends TRANSPORT_KEY_NWK on SUCCESS for initial join ✅
+     * - ✅ Sends TRANSPORT_KEY_NWK on SUCCESS when required
      * - ⚠️  SPEC QUESTION: Should also send TRANSPORT_KEY on rejoin if NWK key changed?
      *       - Comment says "TODO also for rejoin in case of nwk key change?"
      *       - Spec may require this in some scenarios ❓
@@ -1946,7 +1958,7 @@ export class NWKHandler {
 
         // NOTE: send Remove Device CMD to TC deny the join (or let timeout): `sendRemoveDevice`
 
-        const [status, newAddress16] = await this.#context.associate(
+        const [status, newAddress16, requiresTransportKey] = await this.#context.associate(
             nwkHeader.source16!,
             nwkHeader.source64,
             assocType === 0x00 /* initial join */,
@@ -1958,15 +1970,16 @@ export class NWKHandler {
         await this.sendCommissioningResponse(nwkHeader.source16!, newAddress16, status);
 
         if (status === MACAssociationStatus.SUCCESS) {
-            // TODO also for rejoin in case of nwk key change?
             const dest64 = this.#context.address16ToAddress64.get(newAddress16);
-            if (dest64) {
+
+            if (dest64 !== undefined && requiresTransportKey) {
                 await this.#callbacks.onAPSSendTransportKeyNWK(
-                    nwkHeader.source16!,
+                    newAddress16,
                     this.#context.netParams.networkKey,
                     this.#context.netParams.networkKeySequenceNumber,
-                    dest64, // valid from `associate`
+                    dest64,
                 );
+                this.#context.markNetworkKeyTransported(dest64);
             }
         }
 
