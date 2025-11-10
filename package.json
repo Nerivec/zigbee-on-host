@@ -43,7 +43,7 @@
     "devDependencies": {
         "@biomejs/biome": "^2.3.4",
         "@types/node": "^24.10.0",
-        "@vitest/coverage-v8": "^4.0.7",
+        "@vitest/coverage-v8": "^4.0.8",
         "serialport": "^13.0.0",
         "typescript": "^5.9.3",
         "vitest": "^4.0.7"
