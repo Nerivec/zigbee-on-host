@@ -28,6 +28,7 @@ const NS = "frame-handler";
  * - ✅ Applies duplicate checks via respective handlers (MAC/NWK/APS/GP)
  * - ⚠️  INTERPAN frame type not supported (throws) - optional for coordinator
  * - ⚠️  Beacon/Other MAC frame types ignored (logged at debug level)
+ * DEVICE SCOPE: Centralized trust center
  */
 /* @__INLINE__ */
 export async function processFrame(

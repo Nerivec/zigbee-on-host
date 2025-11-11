@@ -186,6 +186,7 @@ export class APSHandler {
      * - ✅ Derives fallback key from Trust Center link key when absent (per spec default)
      * - ✅ Persists generated key via StackContext helper for future requests
      * - ⚠️  Derived key currently mirrors TC key; unique per-pair derivation still TODO
+     * DEVICE SCOPE: Trust Center
      */
     #getOrGenerateAppLinkKey(deviceA: bigint, deviceB: bigint): Buffer {
         const existing = this.#context.getAppLinkKey(deviceA, deviceB);
@@ -212,6 +213,7 @@ export class APSHandler {
      * - ✅ Tracks fragment block numbers explicitly so out-of-order fragment retransmissions are accepted
      * - ✅ Drops duplicates before generating APS ACKs, matching required ordering
      * - ⚠️  Duplicate table stored in-memory only; persistence across restart is not implemented
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @returns true when the frame was already seen within the duplicate removal timeout.
      */
@@ -292,6 +294,7 @@ export class APSHandler {
      * - ✅ Applies fragmentation when payload exceeds APS maximum (CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX)
      * - ⚠️  Fragment reassembly timer configurable but not spec-driven (CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS)
      * - ⚠️  Route discovery hint (nwkDiscoverRoute) passed to NWK handler without additional validation
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param finalPayload Encoded APS payload
      * @param nwkDiscoverRoute NWK discovery mode
@@ -356,6 +359,7 @@ export class APSHandler {
      * - ✅ Requests APS ACKs on non-broadcast destinations and tracks MAC pending bit for sleepy children
      * - ⚠️  APS security flag hardcoded to false (link-key encryption pending future work)
      * - ⚠️  Relies on caller to provide valid route discovery hint; no additional validation here
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param params
      * @param apsCounter
@@ -531,6 +535,7 @@ export class APSHandler {
      * - ✅ Stores fragmentation context to coordinate sequential block transmission
      * - ✅ Requires unicast ACKs per spec before advancing to later blocks
      * - ⚠️  Does not yet adapt fragment size based on MAC MTU or user configuration
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     async #sendFragmentedData(params: SendDataParams, apsCounter: number): Promise<number> {
         const payload = params.finalPayload;
@@ -618,6 +623,7 @@ export class APSHandler {
      * - ✅ Advances to next fragment only after prior block acknowledged
      * - ✅ Reuses shared context to maintain block numbering and chunk references
      * - ⚠️  Throws for broadcast destinations; spec restricts fragmentation to unicast
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     async #sendNextFragmentBlock(context: OutgoingFragmentContext, previousEntry: PendingAckEntry): Promise<void> {
         context.awaitingBlock += 1;
@@ -643,6 +649,7 @@ export class APSHandler {
      * - ✅ Tracks expected block count from LAST fragment index
      * - ✅ Clears extended header bits once reassembly completes per spec requirement
      * - ⚠️  Reassembly timeout configurable via constant (30s); spec leaves timing vendor-specific
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     #handleIncomingFragment(data: Buffer, nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Buffer | undefined {
         const now = Date.now();
@@ -752,6 +759,7 @@ export class APSHandler {
      * - ✅ Starts ack-wait timer using spec default (~1.5 s) and resets on retransmit
      * - ✅ Stores fragment context so subsequent blocks send only after ACK
      * - ⚠️  Pending table keyed by {dest16,counter}; no IEEE64 fallback if short address unknown
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     #trackPendingAck(dest16: number, apsCounter: number, params: SendDataParams, fragment?: OutgoingFragmentContext): void {
         const key = `${dest16}:${apsCounter}`;
@@ -780,6 +788,7 @@ export class APSHandler {
      * - ✅ Retries DATA up to CONFIG_APS_MAX_FRAME_RETRIES per spec guidance (default 3)
      * - ✅ Re-arms ack timer after each retransmission
      * - ⚠️  Does not escalate failure beyond logging; higher layers must react to exhausted retries
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     async #handleAckTimeout(key: string): Promise<void> {
         const entry = this.#pendingAcks.get(key);
@@ -823,6 +832,7 @@ export class APSHandler {
      * - ✅ Clears timers promptly to avoid dangling callbacks
      * - ✅ Triggers next fragment block when outstanding
      * - ⚠️  No handling for duplicate ACKs; silently ignored once entry removed
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     async #resolvePendingAck(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Promise<void> {
         if (apsHeader.counter === undefined) {
@@ -872,6 +882,7 @@ export class APSHandler {
      * - ✅ Reuses NWK/MAC sequence numbers from incoming frame to satisfy reliability requirements
      * - ⚠️  Fragment ACK format limited to simple bitfield (supports first block only)
      * - ⚠️  Does not retry failed acknowledgements; relies on NWK retransmissions
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     public async sendACK(macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Promise<void> {
         logger.debug(
@@ -1010,6 +1021,7 @@ export class APSHandler {
      * - ✅ Performs fragmentation reassembly and forwards completed payloads upward
      * - ⚠️  INTERPAN frames not supported (throws) - spec optional for coordinators
      * - ⚠️  Fragment reassembly lacks payload size guard (tracked via CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS)
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     public async processFrame(
         data: Buffer,
@@ -1134,6 +1146,7 @@ export class APSHandler {
      * - ✅ Supports APS security header injection (LOAD/TRANSPORT keys) as required by TC flows
      * - ⚠️  disableACKRequest used for certain commands (e.g., TRANSPORT_KEY) despite spec recommending ACKs
      * - ⚠️  TLV extensions not yet supported (R23 features)
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param cmdId APS command identifier
      * @param finalPayload Fully encoded APS command payload (including cmdId)
@@ -1292,6 +1305,7 @@ export class APSHandler {
      * - ✅ Logs unsupported commands for diagnostics without crashing the stack
      * - ✅ Passes MAC/NWK headers to downstream handlers for security context decisions
      * - ⚠️  TLV parsing for extended commands still TODO (handlers emit TODO markers)
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     public async processCommand(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Promise<void> {
         let offset = 0;
@@ -1363,6 +1377,7 @@ export class APSHandler {
      * - ✅ Preserves raw key material for subsequent SWITCH_KEY activation
      * - ⚠️  TLV extensions for enhanced security fields remain unparsed (TODO markers)
      * - ⚠️  Application key handling currently limited to storage; partner attribute updates pending
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     public processTransportKey(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const keyType = data.readUInt8(offset);
@@ -1444,6 +1459,7 @@ export class APSHandler {
      * - ❓ UNCERTAIN: Using LOAD keyId for APS encryption - spec says "link key" but LOAD is typically used for TC link key transport
      * - ✅ Frame counter uses TC key counter (nextTCKeyFrameCounter) which is correct
      * - ✅ MIC length 4 bytes as per security spec requirements
+     * DEVICE SCOPE: Trust Center
      *
      * @param nwkDest16
      * @param key SHALL contain the link key that SHOULD be used for APS encryption
@@ -1507,6 +1523,7 @@ export class APSHandler {
      * - ✅ Frame counter uses TC key counter which is correct for TRANSPORT keyId
      * - ✅ For distributed networks (no TC), source64 should be 0xFFFFFFFFFFFFFFFF per spec - code correctly uses eui64 (centralized TC)
      * - ✅ Broadcast destination64 handling sets all-zero string when using NWK broadcast per spec
+     * DEVICE SCOPE: Trust Center
      *
      * @param nwkDest16
      * @param key SHALL contain a network key
@@ -1580,6 +1597,7 @@ export class APSHandler {
      * - ✅ Supports mirrored delivery (initiator + partner) when invoked twice in Request Key flow
      * - ⚠️ TODO: Add TLV support for enhanced security context (R23)
      * - ⚠️ TODO: Consider tunneling for indirect partners per spec #4.6.3.7
+     * DEVICE SCOPE: Trust Center
      */
     public async sendTransportKeyAPP(nwkDest16: number, key: Buffer, partner: bigint, initiatorFlag: boolean): Promise<boolean> {
         // TODO: tunneling support `, tunnelDest?: bigint`
@@ -1647,6 +1665,7 @@ export class APSHandler {
      * - Unsecured joins through routers rely heavily on parent router trust
      * - No verification of parent's claim about device capabilities
      * - Source route created immediately may be premature if join fails
+     * DEVICE SCOPE: Trust Center
      */
     public async processUpdateDevice(
         data: Buffer,
@@ -1779,6 +1798,7 @@ export class APSHandler {
      * - 0x04 – 0x07 = Reserved
      * @param tlvs as relayed during Network Commissioning
      * @returns
+     * DEVICE SCOPE: Coordinator, Routers (N/A)
      */
     public async sendUpdateDevice(
         nwkDest16: number,
@@ -1818,6 +1838,7 @@ export class APSHandler {
      * - ✅ Issues NWK leave to child and removes from device tables
      * - ⚠️  Does not notify parent router beyond leave (spec expects UPDATE_DEVICE relays)
      * - ⚠️  Parent role handling limited to direct coordinator actions
+     * DEVICE SCOPE: Coordinator, Routers (N/A)
      */
     public async processRemoveDevice(
         data: Buffer,
@@ -1859,6 +1880,7 @@ export class APSHandler {
      * - ✅ Includes target IEEE address
      * - ✅ Applies NWK + APS LOAD encryption
      * - ✅ Unicast to parent router
+     * DEVICE SCOPE: Trust Center
      *
      * NOTE: Trust Center sends this to parent router, which should then remove child
      *
@@ -1897,6 +1919,7 @@ export class APSHandler {
      * - ⚠️ TODO: Implement ApplicationKeyRequestPolicy.ONLY_APPROVED enforcement
      * - ⚠️ TODO: Implement TrustCenterKeyRequestPolicy.ONLY_PROVISIONAL enforcement
      * - ⚠️ TODO: Track apsDeviceKeyPairSet per spec Annex B for negotiated keys
+     * DEVICE SCOPE: Trust Center
      */
     public async processRequestKey(
         data: Buffer,
@@ -1989,6 +2012,7 @@ export class APSHandler {
      * - ✅ Encodes keyType and optional partner64 fields per Table 4-18
      * - ✅ Uses UNICAST delivery with NWK security as mandated
      * - ⚠️  Application key partner validation limited to lookup in device table
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param nwkDest16
      * @param keyType SHALL be set to the key being requested
@@ -2034,6 +2058,7 @@ export class APSHandler {
      * - ✅ Activates staged key via StackContext.activatePendingNetworkKey
      * - ✅ Resets NWK frame counter following activation
      * - ⚠️ Pending key staging remains prerequisite (TRANSPORT_KEY)
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     public processSwitchKey(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const seqNum = data.readUInt8(offset);
@@ -2060,6 +2085,7 @@ export class APSHandler {
      * - ✅ Broadcast or unicast delivery
      * - ✅ Applies NWK security only (per spec expectation)
      * - ⚠️ Relies on caller to stage key via TRANSPORT_KEY before invocation
+     * DEVICE SCOPE: Trust Center
      *
      * @param nwkDest16
      * @param seqNum SHALL contain the sequence number identifying the network key to be made active.
@@ -2094,6 +2120,7 @@ export class APSHandler {
      * - ❌ MISSING: Security context validation
      *
      * IMPACT: Not applicable for Coordinator/Trust Center
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     public processTunnel(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const destination = data.readBigUInt64LE(offset);
@@ -2119,6 +2146,7 @@ export class APSHandler {
      * - ✅ Applies APS TRANSPORT encryption
      * - ✅ NO ACK request (per spec exception - TUNNEL is the only APS command without ACK)
      * - ✅ Used correctly for nested device joins (TRANSPORT_KEY delivery through routers)
+     * DEVICE SCOPE: Trust Center
      *
      * @param nwkDest16
      * @param destination64 SHALL be the 64-bit extended address of the device that is to receive the tunneled command
@@ -2168,6 +2196,7 @@ export class APSHandler {
      * - ✅ Uses source64 parameter correctly in CONFIRM_KEY response
      *
      * NOTE: This command is critical for security - device proves it has the correct key
+     * DEVICE SCOPE: Trust Center
      */
     public async processVerifyKey(
         data: Buffer,
@@ -2200,6 +2229,7 @@ export class APSHandler {
                 await this.sendConfirmKey(nwkHeader.source16!, 0xa3 /* ILLEGAL_REQUEST */, keyType, source);
             } else {
                 await this.sendConfirmKey(nwkHeader.source16!, 0xaa /* NOT_SUPPORTED */, keyType, source);
+                // TODO: APP link key should also sync counters
             }
         }
 
@@ -2213,6 +2243,7 @@ export class APSHandler {
      * - ✅ Sends verification hash payload (16 bytes) together with keyType and source64
      * - ✅ Unicast delivery with NWK security as required by Trust Center procedures
      * - ⚠️  Caller responsible for providing correct hash derived per Annex B
+     * DEVICE SCOPE: Routers (N/A), end devices (N/A)
      *
      * @param nwkDest16
      * @param keyType type of key being verified
@@ -2250,6 +2281,7 @@ export class APSHandler {
      * - ✅ Parses status, keyType, destination64 per Table 4-19
      * - ✅ Used primarily for logging; state updates happen in sendConfirmKey
      * - ⚠️  No validation of status/keyType beyond logging (TC expects follow-up handling elsewhere)
+     * DEVICE SCOPE: Routers (N/A), end devices (N/A)
      */
     public processConfirmKey(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const status = data.readUInt8(offset);
@@ -2290,6 +2322,7 @@ export class APSHandler {
      * - ✅ Only sets authorized for devices in deviceTable
      *
      * CRITICAL: This is the final step in device authorization - must be correct!
+     * DEVICE SCOPE: Trust Center
      *
      * @param nwkDest16
      * @param status 1-byte status code indicating the result of the operation. See Table 2.27
@@ -2355,6 +2388,7 @@ export class APSHandler {
      * USE CASES: ZVD (Zigbee Virtual Devices), Zigbee Direct - NOT SUPPORTED
      *
      * NOTE: Non-critical for Zigbee 3.0 PRO networks
+     * DEVICE SCOPE: Trust Center
      */
     public processRelayMessageDownstream(
         data: Buffer,
@@ -2381,7 +2415,7 @@ export class APSHandler {
         return offset;
     }
 
-    // TODO: send RELAY_MESSAGE_DOWNSTREAM
+    // TODO: send RELAY_MESSAGE_DOWNSTREAM -- DEVICE SCOPE: Trust Center
 
     /**
      * R23 FEATURE - 05-3474-23 #4.4.11.10
@@ -2396,6 +2430,7 @@ export class APSHandler {
      * USE CASES: ZVD (Zigbee Virtual Devices), Zigbee Direct - NOT SUPPORTED
      *
      * NOTE: Non-critical for Zigbee 3.0 PRO networks
+     * DEVICE SCOPE: Routers (N/A), end devices (N/A)
      */
     public processRelayMessageUpstream(
         data: Buffer,
@@ -2422,7 +2457,7 @@ export class APSHandler {
         return offset;
     }
 
-    // TODO: send RELAY_MESSAGE_UPSTREAM
+    // TODO: send RELAY_MESSAGE_UPSTREAM -- DEVICE SCOPE: Routers (N/A), end devices (N/A)
 
     // #endregion
 
@@ -2439,6 +2474,7 @@ export class APSHandler {
      * - ✅ Encodes per-neighbor records with device type, permit-join, depth, and LQI
      * - ⚠️  Relationship/permit-join/depth fields currently stubbed with TODO markers
      * - ⚠️  Table truncated to 255 entries without pagination continuation handling
+     * DEVICE SCOPE: Coordinator
      *
      * @param startIndex The index to start the table entries from
      * @returns Buffer containing the LQI table response
@@ -2536,6 +2572,7 @@ export class APSHandler {
      * - ✅ Derives next hop from best known source route for each destination
      * - ⚠️  Status flags (memoryConstrained, manyToOne, routeRecordRequired) currently fixed to 0/TODO
      * - ⚠️  Response clipped to 255 entries without continuation index support
+     * DEVICE SCOPE: Coordinator
      *
      * @param startIndex The index to start the table entries from
      * @returns Buffer containing the routing table response

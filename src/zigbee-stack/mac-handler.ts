@@ -96,6 +96,7 @@ export class MACHandler {
      * - ✅ Marks routes successful on unicast delivery to keep NWK path metrics aligned with MAC status
      * - ⚠️  Implements retry/ACK handling upstream; assumes caller respected macMaxFrameRetries configuration
      * - ⚠️  No security processing here (handled by caller when frames are pre-encoded)
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param seqNum MAC sequence number
      * @param payload MAC frame payload
@@ -147,6 +148,7 @@ export class MACHandler {
      * - ✅ Falls back to direct transmission when destination capabilities unknown, satisfying spec SHALL clauses
      * - ⚠️  Queue pruning relies on DATA_REQUEST processing (see processDataReq) to enforce macTransactionPersistenceTime
      * - ⚠️  Does not expose queue depth upper bound; relies on higher layers to avoid overflow
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param seqNum MAC sequence number
      * @param payload MAC frame payload
@@ -197,6 +199,7 @@ export class MACHandler {
      * - ✅ Applies PAN ID compression rules for coordinator origin (spec #5.2.1.11)
      * - ✅ Delegates security and payload composition to caller, keeping command encoder generic
      * - ⚠️  MAC command retry policy inherited from sendFrame; no per-command overrides
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param cmdId MAC command ID
      * @param dest16 Destination 16-bit address
@@ -253,6 +256,7 @@ export class MACHandler {
      * - ✅ Rejects unsupported commands with error log, mirroring spec requirement to ignore unknown MAC commands
      * - ✅ Preserves payload ordering by passing offset between handlers
      * - ⚠️  TODO: Implement COORD_REALIGN, ORPHAN_NOTIFY, PANID_CONFLICT handling per spec Annex B
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param data Command payload (without MAC header)
      * @param macHeader Decoded MAC header for context
@@ -316,6 +320,7 @@ export class MACHandler {
      * - ⚠️  TIMING: Uses Date.now() for timestamp - should align with MAC_INDIRECT_TRANSMISSION_TIMEOUT
      * - ✅ Delivers TRANSPORT_KEY_NWK after successful association (Zigbee Trust Center requirement)
      * - ✅ Uses MAC capabilities to determine device type correctly
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param data Command data
      * @param offset Current offset in data
@@ -371,6 +376,7 @@ export class MACHandler {
      * - ✅ Extracts short address and status per Table 6-4
      * - ✅ Leaves further handling to higher layers (coordinator ignores downstream response)
      * - ⚠️  No validation of pending association map since coordinator is responder (not requester)
+     * DEVICE SCOPE: Routers (N/A), end devices (N/A)
      *
      * @param data Command data
      * @param offset Current offset in data
@@ -399,6 +405,7 @@ export class MACHandler {
      * - ✅ Removes device state through StackContext.disassociate
      * - ⚠️ Does not emit confirmation back to child (not required for coordinator role)
      * - ❌ TODO: Maintain per-reason metrics for diagnostics
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     public async processDisassocNotify(data: Buffer, offset: number, macHeader: MACHeader): Promise<number> {
         const reason = data.readUInt8(offset);
@@ -424,6 +431,7 @@ export class MACHandler {
      * - ✅ Uses extended source address (extSource=true) as mandated for coordinators
      * - ✅ Sends unicast command secured according to caller (none for initial association)
      * - ⚠️  Relies on pendingAssociations bookkeeping to ensure indirect delivery, matching spec requirement
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param dest64 Destination IEEE address
      * @param newAddress16 Assigned network address
@@ -481,6 +489,7 @@ export class MACHandler {
      *       - txOffset=0xffffff: Comment says "XXX: value from sniffed frames"
      *         * This is acceptable - indicates no time sync ✅
      *       - updateId from context ✅
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param _data Command data (unused)
      * @param offset Current offset in data
@@ -564,6 +573,7 @@ export class MACHandler {
      * Per spec #6.3.4: "Upon receipt of data request, coordinator checks if data pending.
      * If yes, sends frame. If no, sends ACK with framePending=false"
      * This is handled correctly by the indirect transmission mechanism.
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param _data Command data (unused)
      * @param offset Current offset in data

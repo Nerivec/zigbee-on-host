@@ -458,6 +458,7 @@ export class StackContext {
      * - ✅ Schedules periodic state persistence while stack is running
      * - ✅ Immediately saves state to ensure on-disk snapshot reflects startup values
      * - ⚠️  Additional periodic tasks (key rotation, metrics) remain TODO
+     * DEVICE SCOPE: Trust Center
      */
     async start() {
         // TODO: periodic/delayed actions
@@ -472,6 +473,7 @@ export class StackContext {
      * SPEC COMPLIANCE NOTES:
      * - ✅ Cancels pending timers and ensures join window closed on shutdown
      * - ✅ Mirrors spec recommendation to revoke permit-join when TC inactive
+     * DEVICE SCOPE: Trust Center
      */
     stop() {
         clearTimeout(this.#saveStateTimeout);
@@ -488,6 +490,7 @@ export class StackContext {
      * SPEC COMPLIANCE NOTES:
      * - ✅ Clears persistent storage and in-memory tables when performing factory reset
      * - ⚠️  Caller must reinitialize descriptors/netParams afterwards per spec flow
+     * DEVICE SCOPE: Trust Center
      */
     async clear() {
         // remove `zoh.save`
@@ -537,6 +540,7 @@ export class StackContext {
      * - ✅ Normalizes sequence to 8-bit value to mirror Zigbee NWK field size
      * - ✅ Copies key material to avoid caller mutations (spec mandates immutable staging)
      * - ⚠️  Does not persist staged key to disk; relies on immediate SWITCH_KEY follow-up (acceptable for coordinator uptime)
+     * DEVICE SCOPE: Trust Center
      *
      * @param key Raw network key bytes (16 bytes)
      * @param sequenceNumber Sequence number advertised for the pending key
@@ -568,6 +572,7 @@ export class StackContext {
      * - ✅ Re-registers hashed keys for LINK/NWK/TRANSPORT/LOAD contexts to keep crypto in sync
      * - ✅ Clears staging buffers to prevent reuse or leakage
      * - ⚠️  Does not emit management notifications; assumes higher layer handles ANNCE broadcasts
+     * DEVICE SCOPE: Trust Center
      *
      * @param sequenceNumber Sequence number referenced by SWITCH_KEY command
      * @returns true when activation succeeded, false when no matching pending key exists
@@ -627,6 +632,7 @@ export class StackContext {
      * - ✅ Ensures uniqueness against current `address16ToAddress64` map before assignment
      * - ⚠️  Uses pseudo-random selection rather than deterministic increment (allowed by spec)
      * - ⚠️  No persistence of last issued address; relies on state table to avoid collisions after reboot
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     public assignNetworkAddress(): number {
         let newNetworkAddress = 0xffff;
@@ -652,6 +658,7 @@ export class StackContext {
      * - ✅ Persists last requested index to reuse during retransmission handling
      * - ⚠️  Does not enforce parent capability bits; assumes MAC handler already vetted support
      * - ⚠️  Lifetime not persisted to disk (cleared on restart per spec allowance)
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param address64 IEEE address of the end device
      * @param timeoutIndex Requested timeout index (0-14)
@@ -692,6 +699,7 @@ export class StackContext {
      * - ✅ Stores last accepted counter per IEEE address for subsequent validation
      * - ⚠️  Devices without stored state (e.g., unknown IEEE) default to allowing frame (per spec recommendation)
      * - ⚠️  Persistence across restarts not implemented (TODO noted)
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param address64
      * @param frameCounter
@@ -747,6 +755,7 @@ export class StackContext {
      * - ✅ Applies monotonic mapping to preserve relative ordering (spec leaves exact curve implementation-defined)
      * - ⚠️  Logistic curve tuned to typical 2.4 GHz radios; may require calibration per PHY
      * - ⚠️  rssiMin/rssiMax derived from runtime observation rather than PHY constants
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     public mapRSSIToLQI(rssi: number): number {
         if (rssi < this.rssiMin) {
@@ -776,6 +785,7 @@ export class StackContext {
      * - ✅ Accepts externally provided LQI or derives from RSSI for MACs that omit it
      * - ⚠️  Logistic coefficients tuned empirically; spec allows vendor-specific mapping
      * - ⚠️  Runtime min/max windows updated elsewhere; assumes values reflect current environment
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param signalStrength RSSI value
      * @param signalQuality LQI value (optional, computed from RSSI if not provided)
@@ -824,6 +834,7 @@ export class StackContext {
      * - ✅ Resolves IEEE address from short address when needed for table lookup
      * - ⚠️  Median window size configurable (default 10) - spec does not mandate exact count
      * - ⚠️  Zero returned when device unknown aligns with spec allowance for missing entries
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param address16 Used to retrieve `address64` if not given (must be valid if 64 is not)
      * @param address64 The IEEE address of the device
@@ -890,6 +901,7 @@ export class StackContext {
      * - ✅ Decrements NWK radius while enforcing minimum value of 1 as mandated
      * - ✅ Substitutes CONFIG_NWK_MAX_HOPS when radius=0 (interpreted as unlimited per spec)
      * - ⚠️  Does not update route record metrics; caller responsible for hop tracking
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param radius Current radius value
      * @returns Decremented radius (minimum 1)
@@ -920,6 +932,7 @@ export class StackContext {
      * - ✅ Retrieves stored application/link key using canonicalized IEEE pair
      * - ✅ Returns undefined when pair missing, allowing caller to trigger key negotiation per spec
      * - ⚠️  Does not validate key freshness; higher layers manage key attributes
+     * DEVICE SCOPE: Trust Center
      */
     public getAppLinkKey(deviceA: bigint, deviceB: bigint): Buffer | undefined {
         const entry = this.appLinkKeyTable.get(this.#makeAppLinkKeyId(deviceA, deviceB));
@@ -938,6 +951,7 @@ export class StackContext {
      * - ✅ Stores link/application keys using sorted IEEE tuple to match spec requirement for unordered pairs
      * - ✅ Keeps full 16-byte key material intact for subsequent APS ENCRYPT operations
      * - ⚠️  Does not persist key attributes (VERIFIED/PROVISIONAL) – tracked elsewhere
+     * DEVICE SCOPE: Trust Center
      */
     public setAppLinkKey(deviceA: bigint, deviceB: bigint, key: Buffer): void {
         const [canonicalA, canonicalB] = deviceA < deviceB ? [deviceA, deviceB] : [deviceB, deviceA];
@@ -959,6 +973,7 @@ export class StackContext {
      * - ✅ Derives link key using AES-MMO hash when provided with plain install code
      * - ✅ Stores hashed value when caller already supplied derived key (e.g., from commissioning tool)
      * - ⚠️  CRC computed locally; assumes little-endian order per spec Appendix B
+     * DEVICE SCOPE: Trust Center
      *
      * @param device64 IEEE address of device whose code is being stored
      * @param installCode Install code or hashed key buffer (length varies)
@@ -1004,6 +1019,7 @@ export class StackContext {
      * SPEC COMPLIANCE NOTES:
      * - ✅ Removes stored install code metadata upon revocation
      * - ⚠️  Leaves derived link key intact (spec allows retention for existing secure links)
+     * DEVICE SCOPE: Trust Center
      */
     public removeInstallCode(device64: bigint): void {
         this.installCodeTable.delete(device64);
@@ -1021,6 +1037,7 @@ export class StackContext {
      * - ✅ Serializes TLV records for extensibility and backward compatibility
      * - ⚠️  Format version tracked locally; interoperability with other implementations requires converter
      * - ⚠️  Application link key attributes not currently stored (keys only)
+     * DEVICE SCOPE: Trust Center
      *
      * Format version 1:
      * - VERSION tag
@@ -1099,6 +1116,7 @@ export class StackContext {
      * - ✅ Reads TLV state blob and validates version before applying
      * - ✅ Logs metadata (PAN ID, channel) for diagnostics per spec recommendations
      * - ⚠️  Unknown future versions are attempted with warning rather than hard fail (best effort)
+     * DEVICE SCOPE: Trust Center
      */
     public async readNetworkState(): Promise<ParsedState | undefined> {
         try {
@@ -1136,6 +1154,7 @@ export class StackContext {
      * - ✅ Initializes coordinator descriptors per Zigbee Device Objects defaults
      * - ⚠️  Missing persistence for per-device incoming NWK frame counters (TODO noted)
      * - ⚠️  Creates initial save file when none exists to align with spec initialization sequence
+     * DEVICE SCOPE: Trust Center
      */
     public async loadState(): Promise<void> {
         // pre-emptive
@@ -1229,6 +1248,7 @@ export class StackContext {
      * SPEC COMPLIANCE NOTES:
      * - ✅ Writes manufacturer code at fixed offset within pre-encoded ZDO node descriptor response
      * - ⚠️  Assumes descriptor already generated via `encodeCoordinatorDescriptors`
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param code Manufacturer code assigned by CSA
      */
@@ -1242,6 +1262,7 @@ export class StackContext {
      * SPEC COMPLIANCE NOTES:
      * - ✅ Persists state at configured interval while refreshing timer to maintain cadence
      * - ⚠️  Interval configurable via CONFIG_SAVE_STATE_TIME (60s default)
+     * DEVICE SCOPE: Trust Center
      */
     public async savePeriodicState(): Promise<void> {
         await this.saveState();
@@ -1256,6 +1277,7 @@ export class StackContext {
      * - ✅ Updates Trust Center allowJoins policy
      * - ✅ Maintains allowRejoinsWithWellKnownKey for rejoins
      * - ✅ Sets associationPermit flag for MAC layer
+     * DEVICE SCOPE: Trust Center
      */
     public disallowJoins(): void {
         clearTimeout(this.#allowJoinTimeout);
@@ -1275,6 +1297,7 @@ export class StackContext {
      * - ✅ Sets MAC associationPermit flag
      * - ✅ Clamps 0xff to 0xfe for security
      * - ✅ Auto-disallows after timeout
+     * DEVICE SCOPE: Trust Center
      *
      * @param duration The length of time in seconds during which the trust center will allow joins.
      * The value 0x00 and 0xff indicate that permission is disabled or enabled, respectively, without a specified time limit.
@@ -1311,6 +1334,7 @@ export class StackContext {
      * - ⚠️ Unknown rejoins succeed if allowOverride=true (potential security risk)
      * - ✅ Enforces install code requirement (denies initial join when missing)
      * - ✅ Detects network key changes on rejoin and schedules transport
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param source16
      * @param source64 Assumed valid if assocType === 0x00
@@ -1516,6 +1540,7 @@ export class StackContext {
      * - ✅ Handles both address16 and address64 resolution
      *
      * THOROUGH CLEANUP: All device-related state properly removed
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     public async disassociate(source16: number | undefined, source64: bigint | undefined): Promise<void> {
         if (source64 === undefined && source16 !== undefined) {

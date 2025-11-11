@@ -200,6 +200,7 @@ export type ZigbeeNWKGPPayload = Buffer;
  * - ✅ Parses auto-commissioning and frame-extension bits per GP network layer definition
  * - ✅ Extracts protocol version to gate GPv2+ logic for later layers
  * - ⚠️  Leaves direction-specific behaviour to extended control parsing
+ * DEVICE SCOPE: Green Power proxies, Green Power sinks
  */
 /* @__INLINE__ */
 export function decodeZigbeeNWKGPFrameControl(data: Buffer, offset: number): [ZigbeeNWKGPFrameControl, offset: number] {
@@ -225,6 +226,7 @@ export function decodeZigbeeNWKGPFrameControl(data: Buffer, offset: number): [Zi
  * - ✅ Encodes Green Power frame control bits respecting auto-commissioning flag semantics
  * - ✅ Keeps protocol version within Zigbee GP-defined range
  * - ⚠️  Assumes caller already validated combination of frame type and extension usage
+ * DEVICE SCOPE: Green Power proxies, Green Power sinks
  */
 function encodeZigbeeNWKGPFrameControl(data: Buffer, offset: number, fcf: ZigbeeNWKGPFrameControl): number {
     offset = data.writeUInt8(
@@ -245,6 +247,7 @@ function encodeZigbeeNWKGPFrameControl(data: Buffer, offset: number, fcf: Zigbee
  * - ✅ Extracts application ID, security level, and direction bits used by GP pairing flows
  * - ✅ Surfaces Rx-after-Tx flag for sink proxy logic
  * - ⚠️  Does not validate application ID mapping beyond specification bounds
+ * DEVICE SCOPE: Green Power proxies, Green Power sinks
  */
 function decodeZigbeeNWKGPFrameControlExt(data: Buffer, offset: number): [ZigbeeNWKGPFrameControlExt, offset: number] {
     const fcf = data.readUInt8(offset);
@@ -269,6 +272,7 @@ function decodeZigbeeNWKGPFrameControlExt(data: Buffer, offset: number): [Zigbee
  * - ✅ Serialises appId, security level, and direction bits following GP spec bit layout
  * - ✅ Preserves Rx-after-Tx semantics for sink proxy operations
  * - ⚠️  Requires caller to ensure security level aligns with key type in use
+ * DEVICE SCOPE: Green Power proxies, Green Power sinks
  */
 function encodeZigbeeNWKGPFrameControlExt(data: Buffer, offset: number, fcExt: ZigbeeNWKGPFrameControlExt): number {
     offset = data.writeUInt8(
@@ -290,6 +294,7 @@ function encodeZigbeeNWKGPFrameControlExt(data: Buffer, offset: number, fcExt: Z
  * - ✅ Applies application ID rules to choose between SourceID, IEEE address, and endpoint fields
  * - ✅ Calculates payload length by subtracting MIC for CCM* authenticated payloads
  * - ⚠️  Channel configuration special case still relies on peek to differentiate default appId flow
+ * DEVICE SCOPE: Green Power proxies, Green Power sinks
  */
 export function decodeZigbeeNWKGPHeader(data: Buffer, offset: number, frameControl: ZigbeeNWKGPFrameControl): [ZigbeeNWKGPHeader, offset: number] {
     let frameControlExt: ZigbeeNWKGPFrameControlExt | undefined;
@@ -381,6 +386,7 @@ export function decodeZigbeeNWKGPHeader(data: Buffer, offset: number, frameContr
  * - ✅ Serialises SourceID/IEEE addressing per application ID requirements
  * - ✅ Writes security frame counter when security level mandates MIC generation
  * - ⚠️  Channel configuration peek mirrors decode path; assumes caller aligned payload accordingly
+ * DEVICE SCOPE: Green Power proxies, Green Power sinks
  */
 function encodeZigbeeNWKGPHeader(data: Buffer, offset: number, header: ZigbeeNWKGPHeader): number {
     offset = encodeZigbeeNWKGPFrameControl(data, offset, header.frameControl);
@@ -433,6 +439,7 @@ function encodeZigbeeNWKGPHeader(data: Buffer, offset: number, header: ZigbeeNWK
  * - ✅ Builds nonce ordering using SourceID/IEEE address rules per security level
  * - ✅ Applies direction-dependent control byte per GP CCM* definition
  * - ⚠️  Requires caller to provide IEEE source for AppID=ZGP frames arriving via proxy
+ * DEVICE SCOPE: Green Power proxies, Green Power sinks
  */
 function makeGPNonce(header: ZigbeeNWKGPHeader, macSource64: bigint | undefined): Buffer {
     const nonce = Buffer.alloc(ZigbeeConsts.SEC_NONCE_LEN);
@@ -474,6 +481,7 @@ function makeGPNonce(header: ZigbeeNWKGPHeader, macSource64: bigint | undefined)
  * - ✅ Authenticates and decrypts FULLENCR payloads via CCM*, validating MIC before returning
  * - ✅ Supports FULL security by verifying MIC when available (TODO path highlighted)
  * - ⚠️  Leaves ONELSB handling as TODO; callers should avoid enabling unsupported mode
+ * DEVICE SCOPE: Green Power proxies, Green Power sinks
  */
 export function decodeZigbeeNWKGPPayload(
     data: Buffer,
@@ -526,6 +534,7 @@ export function decodeZigbeeNWKGPPayload(
  * - ✅ Generates MIC and performs CCM* encryption for FULLENCR/FULL levels per spec
  * - ✅ Preserves payload ordering ahead of MIC bytes as required by GP sink behaviour
  * - ⚠️  Expects caller to preconfigure frameControlExt/securityFrameCounter correctly for nonce derivation
+ * DEVICE SCOPE: Green Power proxies, Green Power sinks
  */
 export function encodeZigbeeNWKGPFrame(
     header: ZigbeeNWKGPHeader,

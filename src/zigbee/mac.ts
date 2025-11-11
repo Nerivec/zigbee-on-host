@@ -374,6 +374,7 @@ export function getMICLength(securityLevel: number): number {
  * - ✅ Parses Zigbee-required FCF bits and reconstructs addressing/security flags
  * - ✅ Rejects Multipurpose frame type forbidden by Zigbee MAC profile
  * - ⚠️  Leaves Information Element interpretation to higher layers by design
+ * DEVICE SCOPE: All logical devices.
  */
 /* @__INLINE__ */
 export function decodeMACFrameControl(data: Buffer, offset: number): [MACFrameControl, offset: number] {
@@ -413,6 +414,7 @@ export function decodeMACFrameControl(data: Buffer, offset: number): [MACFrameCo
  * - ✅ Emits only Zigbee-allowed frame versions and addressing combinations
  * - ✅ Rejects Multipurpose frames consistent with host-side Zigbee profile constraints
  * - ⚠️  Leaves Information Element flag handling to later encoding paths
+ * DEVICE SCOPE: All logical devices.
  */
 function encodeMACFrameControl(data: Buffer, offset: number, fcf: MACFrameControl): number {
     if (fcf.frameType === MACFrameType.MULTIPURPOSE) {
@@ -446,6 +448,7 @@ function encodeMACFrameControl(data: Buffer, offset: number, fcf: MACFrameContro
  * - ✅ Parses key identifier modes used for Zigbee MAC security interop
  * - ✅ Preserves frame counter for legacy Trust Center fallback scenarios
  * - ⚠️  Omits ASN parsing because Zigbee does not enable TSCH-based security
+ * DEVICE SCOPE: All logical devices (legacy MAC security interoperability)
  */
 function decodeMACAuxSecHeader(data: Buffer, offset: number): [MACAuxSecHeader, offset: number] {
     let asn: number | undefined;
@@ -498,6 +501,7 @@ function decodeMACAuxSecHeader(data: Buffer, offset: number): [MACAuxSecHeader, 
  * - ✅ Decodes beacon order, CAP slot, and association permit for Trust Center policy
  * - ✅ Preserves coordinator flag per Zigbee beacon evaluation rules
  * - ⚠️  Treats battery extension as boolean with semantics deferred to stack context
+ * DEVICE SCOPE: Beacon-capable FFDs (coordinator/router)
  */
 function decodeMACSuperframeSpec(data: Buffer, offset: number): [MACSuperframeSpec, offset: number] {
     const spec = data.readUInt16LE(offset);
@@ -530,6 +534,7 @@ function decodeMACSuperframeSpec(data: Buffer, offset: number): [MACSuperframeSp
  * - ✅ Encodes Zigbee beacon superframe bits with spec-defined masks and shifts
  * - ✅ Surfaces association-permit flag for downstream join admission logic
  * - ⚠️  Relies on caller to clamp beacon order/superframe order values to allowed range
+ * DEVICE SCOPE: Beacon-capable FFDs (coordinator/router)
  */
 function encodeMACSuperframeSpec(data: Buffer, offset: number, header: MACHeader): number {
     const spec = header.superframeSpec!;
@@ -554,6 +559,7 @@ function encodeMACSuperframeSpec(data: Buffer, offset: number, header: MACHeader
  * - ✅ Parses GTS slot descriptors and permit flag to support indirect transmissions
  * - ✅ Preserves entry ordering per beacon payload layout required by Zigbee
  * - ⚠️  Leaves interpretation of direction bits to higher layers since Zigbee rarely uses GTS
+ * DEVICE SCOPE: Beacon-capable FFDs (coordinator/router)
  */
 function decodeMACGtsInfo(data: Buffer, offset: number): [MACGtsInfo, offset: number] {
     let directionByte: number | undefined;
@@ -611,6 +617,7 @@ function decodeMACGtsInfo(data: Buffer, offset: number): [MACGtsInfo, offset: nu
  * - ✅ Emits GTS descriptors in canonical order for Zigbee beacon compliance
  * - ✅ Retains permit flag semantics for Trust Center join evaluation
  * - ⚠️  Assumes caller validated slot/time arrays as per spec limits
+ * DEVICE SCOPE: Beacon-capable FFDs (coordinator/router)
  */
 function encodeMACGtsInfo(data: Buffer, offset: number, header: MACHeader): number {
     const info = header.gtsInfo!;
@@ -644,6 +651,7 @@ function encodeMACGtsInfo(data: Buffer, offset: number, header: MACHeader): numb
  * - ✅ Extracts short and extended pending address lists for Zigbee indirect transmissions
  * - ✅ Maintains spec-defined ordering to keep beacon compatibility
  * - ⚠️  Leaves validation of maximum entry counts to beacon construction logic
+ * DEVICE SCOPE: Beacon-capable FFDs (coordinator/router)
  */
 function decodeMACPendAddr(data: Buffer, offset: number): [MACPendAddr, offset: number] {
     const spec = data.readUInt8(offset);
@@ -690,6 +698,7 @@ function decodeMACPendAddr(data: Buffer, offset: number): [MACPendAddr, offset: 
  * - ✅ Serialises pending address lists using Zigbee-ordered masks
  * - ✅ Clears reserved bits to zero as mandated for beacon payloads
  * - ⚠️  Relies on caller to enforce Zigbee limit of seven pending short addresses
+ * DEVICE SCOPE: Beacon-capable FFDs (coordinator/router)
  */
 function encodeMACPendAddr(data: Buffer, offset: number, header: MACHeader): number {
     const pendAddr = header.pendAddr!;
@@ -718,6 +727,7 @@ function encodeMACPendAddr(data: Buffer, offset: number, header: MACHeader): num
  * - ✅ Maps capability bits used during association joins (device type, power, security)
  * - ✅ Preserves reserved bits as zero to comply with Zigbee profile requirements
  * - ⚠️  Leaves semantic validation (e.g., alt coordinator) to stack-context policy
+ * DEVICE SCOPE: All logical devices.
  */
 export function decodeMACCapabilities(capabilities: number): MACCapabilities {
     return {
@@ -739,6 +749,7 @@ export function decodeMACCapabilities(capabilities: number): MACCapabilities {
  * - ✅ Encodes capability flags in Zigbee-defined bit order for association responses
  * - ✅ Zeroes reserved bits to maintain spec compliance
  * - ⚠️  Assumes caller verified combination viability (e.g., router capacity)
+ * DEVICE SCOPE: All logical devices.
  */
 export function encodeMACCapabilities(capabilities: MACCapabilities): number {
     return (
@@ -764,6 +775,7 @@ export function encodeMACCapabilities(capabilities: MACCapabilities): number {
  * - ✅ Validates addressing mode combinations and PAN ID compression per Zigbee limits
  * - ✅ Parses beacon, command, and data header extensions (GTS, pending list) as required
  * - ⚠️  Supports MAC security only for legacy 2003 mode; production security handled above MAC
+ * DEVICE SCOPE: All logical devices.
  */
 /* @__INLINE__ */
 export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACFrameControl): [MACHeader, offset: number] {
@@ -932,6 +944,7 @@ export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACF
  * - ✅ Constructs headers matching Zigbee addressing and PAN compression rules
  * - ✅ Rejects unsupported Multipurpose frames and MAC security paths
  * - ⚠️  Delegates field range validation to callers to keep hot path minimal
+ * DEVICE SCOPE: All logical devices.
  */
 function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee: boolean): number {
     offset = encodeMACFrameControl(data, offset, header.frameControl);
@@ -1070,6 +1083,7 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
  * - ✅ Matches the polynomial required for MAC frame FCS validation
  * - ✅ Runs without heap allocations to remain hot-path friendly
  * - ⚠️  Expects caller to supply payload-length buffer per MAC framing rules
+ * DEVICE SCOPE: All logical devices.
  */
 function crc16CCITT(data: Buffer): number {
     let fcs = 0x0000;
@@ -1092,6 +1106,7 @@ function crc16CCITT(data: Buffer): number {
  * - ✅ Rejects MAC-layer security frames in line with Zigbee host design (security handled at NWK/APS)
  * - ✅ Verifies FCS presence and stores it for diagnostics per Zigbee stack requirements
  * - ⚠️  Leaves MIC validation to upper layers because MAC security is disabled
+ * DEVICE SCOPE: All logical devices.
  */
 export function decodeMACPayload(data: Buffer, offset: number, frameControl: MACFrameControl, header: MACHeader): MACPayload {
     if (frameControl.securityEnabled) {
@@ -1120,6 +1135,7 @@ export function decodeMACPayload(data: Buffer, offset: number, frameControl: MAC
  * - ✅ Emits canonical MAC frames with Zigbee-safe payload length and CRC tail
  * - ✅ Shares encoding path with general 802.15.4 data while honouring Zigbee restrictions
  * - ⚠️  Assumes caller already prepared payload within MAC safe size
+ * DEVICE SCOPE: All logical devices.
  */
 export function encodeMACFrame(header: MACHeader, payload: Buffer): Buffer {
     let offset = 0;
@@ -1159,6 +1175,7 @@ export type MACHeaderZigbee = {
  * - ✅ Forces frame version to 2003 as mandated for Zigbee data/command frames
  * - ✅ Encodes only Zigbee-relevant addressing fields for NWK hot path efficiency
  * - ⚠️  Caller must enforce payload length not exceeding Zigbee safe payload size
+ * DEVICE SCOPE: All logical devices.
  */
 export function encodeMACFrameZigbee(header: MACHeaderZigbee, payload: Buffer): Buffer {
     let offset = 0;
@@ -1197,6 +1214,7 @@ export type MACZigbeeBeacon = {
  * - ✅ Parses routing and end-device capacity bits for join admission logic
  * - ✅ Retains Update ID for network parameter synchronization
  * - ⚠️  Exposes protocolId even though Zigbee fixes it to zero for diagnostics
+ * DEVICE SCOPE: Beacon receivers (all logical devices)
  */
 export function decodeMACZigbeeBeacon(data: Buffer, offset: number): MACZigbeeBeacon {
     const protocolId = data.readUInt8(offset);
@@ -1238,6 +1256,7 @@ export function decodeMACZigbeeBeacon(data: Buffer, offset: number): MACZigbeeBe
  * - ✅ Serialises Zigbee beacon descriptor using mandated masks and shifts
  * - ✅ Hardcodes protocol ID to zero per Zigbee specification
  * - ⚠️  Relies on caller to enforce txOffset bounds defined by aMaxBeaconTxOffset
+ * DEVICE SCOPE: Beacon transmitters (coordinator/router)
  */
 export function encodeMACZigbeeBeacon(beacon: MACZigbeeBeacon): Buffer {
     const payload = Buffer.alloc(ZigbeeMACConsts.ZIGBEE_BEACON_LENGTH);

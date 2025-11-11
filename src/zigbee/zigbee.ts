@@ -150,6 +150,7 @@ const CRC16X25_TABLE = new Uint16Array([
  * - ✅ Implements CRC-16/X25 parameters defined for install code validation
  * - ✅ Accepts byte arrays or buffers to match commissioning tooling interfaces
  * - ⚠️  Caller must remove trailing CRC bytes before invoking per spec guidance
+ * DEVICE SCOPE: Trust Center and joining devices
  */
 export function computeInstallCodeCRC(data: number[] | Uint8Array | Buffer): number {
     let crc = 0xffff;
@@ -190,6 +191,7 @@ function aes128MmoHashUpdate(result: Buffer, data: Buffer, dataSize: number): vo
  * - ✅ Applies AES-128-MMO padding with 0x80 bit and bit-length trailer as mandated
  * - ✅ Processes full blocks iteratively to support arbitrary-length install codes
  * - ⚠️  Relies on caller to provide raw install code without CRC
+ * DEVICE SCOPE: Trust Center and install-code provisioning devices
  */
 export function aes128MmoHash(data: Buffer): Buffer {
     const hashResult = Buffer.alloc(ZigbeeConsts.SEC_BLOCKSIZE);
@@ -233,6 +235,7 @@ export function aes128MmoHash(data: Buffer): Buffer {
  * - ✅ Implements CCM* counter generation with L=2 for Zigbee network/APS security
  * - ✅ Returns authentication tag and ciphertext slices matching Zigbee frame layout
  * - ⚠️  Assumes caller has already constructed nonce and formatted data per CCM* expectations
+ * DEVICE SCOPE: All logical devices
  */
 export function aes128CcmStar(M: 0 | 2 | 4 | 8 | 16, key: Buffer, nonce: Buffer, data: Buffer): [authTag: Buffer, ciphertext: Buffer] {
     const payloadLengthNoM = data.byteLength - M;
@@ -278,6 +281,7 @@ export function aes128CcmStar(M: 0 | 2 | 4 | 8 | 16, key: Buffer, nonce: Buffer,
  * - ✅ Builds B0 and authentication blocks per Zigbee CCM* definition using zero IV
  * - ✅ Pads associated data and payload to AES block size exactly per spec
  * - ⚠️  Caller must supply AAD in correct order (NWK header + security header)
+ * DEVICE SCOPE: All logical devices
  */
 export function computeAuthTag(authData: Buffer, M: number, key: Buffer, nonce: Buffer, data: Buffer): Buffer {
     const startPaddedSize = Math.ceil(
@@ -325,6 +329,7 @@ export function computeAuthTag(authData: Buffer, M: number, key: Buffer, nonce: 
  * - ✅ Packs security level, key identifier, and nonce flag per Zigbee bit layout
  * - ✅ Supports temporary level override for CCM* calculations
  * - ⚠️  Caller responsible for ensuring override matches actual MIC length in use
+ * DEVICE SCOPE: All logical devices
  */
 export function combineSecurityControl(control: ZigbeeSecurityControl, levelOverride?: number): number {
     return (
@@ -341,6 +346,7 @@ export function combineSecurityControl(control: ZigbeeSecurityControl, levelOver
  * - ✅ Orders IEEE source, frame counter, and security control bytes per Zigbee CCM* requirements
  * - ✅ Allows level override to align with temporary security level adjustments
  * - ⚠️  Expects caller to provide IEEE source (Trust Center or extended address)
+ * DEVICE SCOPE: All logical devices
  */
 export function makeNonce(header: ZigbeeSecurityHeader, source64: bigint, levelOverride?: number): Buffer {
     const nonce = Buffer.alloc(ZigbeeConsts.SEC_NONCE_LEN);
@@ -365,6 +371,7 @@ const defaultHashedKeys: [Buffer, Buffer, Buffer, Buffer] = [Buffer.alloc(0), Bu
  * SPEC COMPLIANCE NOTES:
  * - ✅ Stores hashed defaults for NWK/LINK/TRANSPORT/LOAD keys per Zigbee security model
  * - ⚠️  Caller must refresh hashes when Trust Center rotates keys
+ * DEVICE SCOPE: Trust Center primarily
  */
 export function registerDefaultHashedKeys(link: Buffer, nwk: Buffer, transport: Buffer, load: Buffer): void {
     defaultHashedKeys[0] = link;
@@ -380,6 +387,7 @@ export function registerDefaultHashedKeys(link: Buffer, nwk: Buffer, transport: 
  * - ✅ Implements HMAC-like construction using AES-128-MMO with specified ipad/opad constants
  * - ✅ Supports arbitrary input byte per Trust Center transport/load key derivation rules
  * - ⚠️  Requires 16-byte key input; caller must validate length upstream
+ * DEVICE SCOPE: Trust Center and devices deriving transport/load keys
  */
 export function makeKeyedHash(key: Buffer, inputByte: number): Buffer {
     const hashOut = Buffer.alloc(ZigbeeConsts.SEC_BLOCKSIZE + 1);
@@ -409,6 +417,7 @@ export function makeKeyedHash(key: Buffer, inputByte: number): Buffer {
  * - ✅ Returns unhashed NWK/LINK keys and hashed transport/load keys as mandated
  * - ✅ Throws on unsupported key identifiers to avoid silent misuse
  * - ⚠️  Caller must provide correct key material (hashed vs raw) for custom key types
+ * DEVICE SCOPE: Trust Center and any device handling Zigbee key transports
  */
 export function makeKeyedHashByType(keyId: ZigbeeKeyType, key: Buffer): Buffer {
     switch (keyId) {
@@ -439,6 +448,7 @@ export function makeKeyedHashByType(keyId: ZigbeeKeyType, key: Buffer): Buffer {
  * - ✅ Parses frame counter, optional extended source, and key sequence per Zigbee security spec
  * - ✅ Forces Zigbee 3.0 security level (ENC-MIC-32) consistent with stack policy
  * - ⚠️  Does not yet evaluate legacy MIC length options (fixed to 4 bytes)
+ * DEVICE SCOPE: All logical devices
  */
 export function decodeZigbeeSecurityHeader(data: Buffer, offset: number, source64?: bigint): [ZigbeeSecurityHeader, offset: number] {
     const control = data.readUInt8(offset);
@@ -512,6 +522,7 @@ export function decodeZigbeeSecurityHeader(data: Buffer, offset: number, source6
  * - ✅ Serialises security control, frame counter, optional IEEE source, and key sequence
  * - ✅ Aligns with Zigbee requirement to include KeySeqNum when using NWK keys
  * - ⚠️  Caller must ensure header.control.nonce implies presence of source64
+ * DEVICE SCOPE: All logical devices
  */
 export function encodeZigbeeSecurityHeader(data: Buffer, offset: number, header: ZigbeeSecurityHeader): number {
     offset = data.writeUInt8(combineSecurityControl(header.control), offset);
@@ -536,6 +547,7 @@ export function encodeZigbeeSecurityHeader(data: Buffer, offset: number, header:
  * - ✅ Applies CCM* decryption using hashed keys derived per key type definition
  * - ✅ Validates MIC before returning payload, preserving stack integrity
  * - ⚠️  Currently assumes Zigbee 3.0 ENC-MIC-32; legacy level support TODO
+ * DEVICE SCOPE: All logical devices
  */
 export function decryptZigbeePayload(
     data: Buffer,
@@ -586,6 +598,7 @@ export function decryptZigbeePayload(
  * - ✅ Computes MIC over NWK/APS header and encrypts payload per CCM* specification
  * - ✅ Utilises hashed key cache for performance while maintaining spec compliance
  * - ⚠️  Requires caller to set header.micLen consistent with selected security level
+ * DEVICE SCOPE: All logical devices
  */
 export function encryptZigbeePayload(
     data: Buffer,

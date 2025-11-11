@@ -140,6 +140,7 @@ export type ZigbeeAPSPayload = Buffer;
  * - ✅ Extracts frame type, delivery, security, and extended header bits per Zigbee 3.0 profile
  * - ✅ Treats deprecated indirect bit as reserved, matching Zigbee 2007+ behaviour
  * - ⚠️  Defers extended header parsing to caller since fragmentation format varies by frame type
+ * DEVICE SCOPE: All logical devices
  */
 /* @__INLINE__ */
 export function decodeZigbeeAPSFrameControl(data: Buffer, offset: number): [ZigbeeAPSFrameControl, offset: number] {
@@ -168,6 +169,7 @@ export function decodeZigbeeAPSFrameControl(data: Buffer, offset: number): [Zigb
  * - ✅ Encodes frame control bits according to Zigbee APS data/command frame requirements
  * - ✅ Leaves deprecated indirect addressing bit cleared per Zigbee 2007+ specification
  * - ⚠️  Assumes caller validated delivery mode compatibility with frame type
+ * DEVICE SCOPE: All logical devices
  */
 function encodeZigbeeAPSFrameControl(data: Buffer, offset: number, fcf: ZigbeeAPSFrameControl): number {
     offset = data.writeUInt8(
@@ -191,6 +193,7 @@ function encodeZigbeeAPSFrameControl(data: Buffer, offset: number, fcf: ZigbeeAP
  * - ✅ Applies delivery-mode driven presence rules for endpoints, groups, cluster/profile IDs
  * - ✅ Handles extended header fragmentation bits as defined for Zigbee fragmentation sublayer
  * - ⚠️  Assumes caller already validated NWK header to supply addressing context
+ * DEVICE SCOPE: All logical devices
  */
 export function decodeZigbeeAPSHeader(data: Buffer, offset: number, frameControl: ZigbeeAPSFrameControl): [ZigbeeAPSHeader, offset: number] {
     let hasEndpointAddressing = true;
@@ -310,6 +313,7 @@ export function decodeZigbeeAPSHeader(data: Buffer, offset: number, frameControl
  * - ✅ Serialises endpoint/group fields following delivery-mode matrix mandated by spec
  * - ✅ Emits fragmentation header only when requested, matching Zigbee fragmentation rules
  * - ⚠️  Relies on caller to provide consistent fragmentation settings (block numbers, ACK bitmap)
+ * DEVICE SCOPE: All logical devices
  */
 export function encodeZigbeeAPSHeader(data: Buffer, offset: number, header: ZigbeeAPSHeader): number {
     offset = encodeZigbeeAPSFrameControl(data, offset, header.frameControl);
@@ -400,6 +404,7 @@ export function encodeZigbeeAPSHeader(data: Buffer, offset: number, header: Zigb
  * - ✅ Invokes APS encryption/decryption helpers when security bit is asserted, per spec flow
  * - ✅ Preserves resulting security header for NWK/Trust Center auditing
  * - ⚠️  Leaves key selection policy to caller (default hashed keys vs per-device link keys)
+ * DEVICE SCOPE: All logical devices
  *
  * @param data
  * @param offset
@@ -434,6 +439,7 @@ export function decodeZigbeeAPSPayload(
  * - ✅ Builds full APS frame, invoking security helper when security flag set
  * - ✅ Copies authentication tag per CCM* requirements when encryption enabled
  * - ⚠️  Expects caller to enforce payload length vs. APS fragmentation strategy
+ * DEVICE SCOPE: All logical devices
  *
  * @param header
  * @param payload

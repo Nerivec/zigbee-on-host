@@ -292,6 +292,7 @@ export type ZigbeeNWKPayload = Buffer;
  * - ✅ Extracts protocol version, discover route, source route, and security bits per Zigbee PRO
  * - ✅ Surfaces end-device initiator bit introduced in r21 for parent-loss detection
  * - ⚠️  Leaves multicast control parsing to later stages since Zigbee seldom uses legacy flag
+ * DEVICE SCOPE: All logical devices
  */
 /* @__INLINE__ */
 export function decodeZigbeeNWKFrameControl(data: Buffer, offset: number): [ZigbeeNWKFrameControl, offset: number] {
@@ -322,6 +323,7 @@ export function decodeZigbeeNWKFrameControl(data: Buffer, offset: number): [Zigb
  * - ✅ Encodes NWK FCF bits honouring Zigbee PRO versioning and source route flags
  * - ✅ Keeps multicast flag optional but off by default to match Zigbee routing profile
  * - ⚠️  Requires caller to pre-validate discover route bits against frame type
+ * DEVICE SCOPE: All logical devices
  */
 function encodeZigbeeNWKFrameControl(view: Buffer, offset: number, fcf: ZigbeeNWKFrameControl): number {
     offset = view.writeUInt16LE(
@@ -347,6 +349,7 @@ function encodeZigbeeNWKFrameControl(view: Buffer, offset: number, fcf: ZigbeeNW
  * - ✅ Applies frame-type specific field presence rules (extended addressing, source routes)
  * - ✅ Tracks radius/sequence to support routing loops and replay protection per spec
  * - ⚠️  Skips multicast control field body since Zigbee host does not emit legacy multicast frames
+ * DEVICE SCOPE: All logical devices
  */
 export function decodeZigbeeNWKHeader(data: Buffer, offset: number, frameControl: ZigbeeNWKFrameControl): [ZigbeeNWKHeader, offset: number] {
     let destination16: number | undefined;
@@ -424,6 +427,7 @@ export function decodeZigbeeNWKHeader(data: Buffer, offset: number, frameControl
  * - ✅ Serialises mandatory radius, sequence, and addressing fields for NWK data/command frames
  * - ✅ Encodes source routing list per Zigbee PRO requirements when enabled
  * - ⚠️  Expects caller to populate relay list indices already bounds-checked
+ * DEVICE SCOPE: All logical devices
  */
 function encodeZigbeeNWKHeader(data: Buffer, offset: number, header: ZigbeeNWKHeader): number {
     offset = encodeZigbeeNWKFrameControl(data, offset, header.frameControl);
@@ -471,6 +475,7 @@ function encodeZigbeeNWKHeader(data: Buffer, offset: number, header: ZigbeeNWKHe
  * - ✅ Invokes CCM* decrypt when security bit set, storing auxiliary header for Trust Center use
  * - ✅ Supports fallback to default hashed NWK keys when dedicated key not supplied
  * - ⚠️  Defers key selection policy (global vs. unique) to higher stack layers
+ * DEVICE SCOPE: All logical devices
  */
 export function decodeZigbeeNWKPayload(
     data: Buffer,
@@ -504,6 +509,7 @@ export function decodeZigbeeNWKPayload(
  * - ✅ Constructs NWK frame then encrypts/authenticates payload per Zigbee security flag
  * - ✅ Copies authentication tag trailing bytes as mandated by CCM*
  * - ⚠️  Caller must ensure payload length respects NWK/APS combined MTU when security enabled
+ * DEVICE SCOPE: All logical devices
  */
 export function encodeZigbeeNWKFrame(
     header: ZigbeeNWKHeader,

@@ -163,6 +163,7 @@ export class NWKHandler {
      * - ✅ Resets timer using refresh() to maintain continuous reporting while handler active
      * - ⚠️  Aggregated cost calculation includes implementation-specific LQA penalty (documented)
      * - ⚠️  Does not enforce routerAge limit (CONFIG_NWK_ROUTER_AGE_LIMIT TODO) but aligns with spec recommendation to age entries
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     public async sendPeriodicZigbeeNWKLinkStatus(): Promise<void> {
         const links: ZigbeeNWKLinkStatus[] = [];
@@ -210,6 +211,7 @@ export class NWKHandler {
      * - ✅ Enforces minimum spacing (CONFIG_NWK_CONCENTRATOR_MIN_TIME) to prevent flooding per spec guidance
      * - ✅ Uses WITH_SOURCE_ROUTING mode to advertise concentrator capability
      * - ⚠️  Trigger relies on coordinator uptime; spec recommends restart discovery after NWK_STATUS failures (handled elsewhere)
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     public async sendPeriodicManyToOneRouteRequest(): Promise<void> {
         if (Date.now() > this.#lastMTORRTime + CONFIG_NWK_CONCENTRATOR_MIN_TIME) {
@@ -262,6 +264,7 @@ export class NWKHandler {
      *       - This is appropriate for coordinator as concentrator
      *
      * IMPORTANT: This is a critical performance path - called for every outgoing frame
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param destination16
      * @param destination64
@@ -416,6 +419,7 @@ export class NWKHandler {
      * - ✅ Resets failure counter and updates last-used timestamp after successful forwarding
      * - ✅ Operates on currently selected best route entry to keep metrics coherent
      * - ⚠️  Multi-entry route table means only first entry updated; others remain untouched
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param destination16 Network address of the destination
      */
@@ -440,6 +444,7 @@ export class NWKHandler {
      * - ✅ Purges routes that rely on failed relay as required for repair
      * - ✅ Supports explicit repair trigger (e.g., NWK_STATUS link failure)
      * - ⚠️  Failure threshold configurable (CONFIG_NWK_ROUTE_MAX_FAILURES) rather than spec constant
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param destination16 Network address of the destination
      * @param triggerRepair If true, will purge routes using this destination as relay and trigger MTORR
@@ -491,6 +496,7 @@ export class NWKHandler {
      * - ⚠️  Implementation stores multiple route entries per destination (spec defines single entry with status)
      *       - Provides richer path selection but diverges from formal table layout
      * - ⚠️  TODO: Enforce CONFIG_NWK_MAX_SOURCE_ROUTE limit and normalize pathCost per spec guidance
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     /* @__INLINE__ */
     public createSourceRouteEntry(relayAddresses: number[], pathCost: number): SourceRouteTableEntry {
@@ -515,6 +521,7 @@ export class NWKHandler {
      * - ✅ Compares relay hop list and cost to detect duplicate paths before insertion
      * - ✅ Accepts optional pre-fetched entry array to avoid redundant map lookups
      * - ⚠️  Formally spec route table holds single entry per destination; this helper assumes multi-entry model
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     public hasSourceRoute(address16: number, newEntry: SourceRouteTableEntry, existingEntries?: SourceRouteTableEntry[]): boolean {
         if (!existingEntries) {
@@ -558,6 +565,7 @@ export class NWKHandler {
      * - ✅ Maps NWK destination to MAC destination with broadcast handling
      * - ⚠️  NWK security header constructed with ZigbeeSecurityLevel.NONE (MIC only) matching Trust Center defaults
      * - ⚠️  Relies on caller to ensure command-specific payload validity (e.g., TLVs)
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param cmdId Command identifier (first byte of payload)
      * @param finalPayload Fully encoded NWK command payload (including cmdId)
@@ -684,6 +692,7 @@ export class NWKHandler {
      * - ✅ Maintains offset propagation between handlers to consume payload sequentially
      * - ✅ Logs unsupported command IDs per spec recommendation to ignore silently (kept as warning for diagnostics)
      * - ⚠️  Commissioning, Link Power Delta, ED Timeout handling partially implemented (documented TODOs)
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     public async processCommand(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<void> {
         let offset = 0;
@@ -775,6 +784,7 @@ export class NWKHandler {
      * - ✅ Preserves destination64 when provided to maintain IEEE correlation
      * - ⚠️  Path cost not incremented (acceptable for terminal node)
      * - ⚠️  Route discovery table not implemented (coordinator does not forward requests)
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param data Command data
      * @param offset Current offset in data
@@ -828,6 +838,7 @@ export class NWKHandler {
      * - ✅ Uses modulo-256 route request identifier (nextRouteRequestId)
      * - ✅ Broadcasts discovery (dest=BCAST_DEFAULT) when acting as concentrator
      * - ⚠️  TLV payload not supported (optional R23 extension)
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param manyToOne
      * @param destination16 intended destination of the route request command frame
@@ -871,6 +882,7 @@ export class NWKHandler {
      * - ✅ Reconstructs relay path including MAC next hop when coordinator originates discovery
      * - ✅ Normalizes zero path cost to hop-derived value to satisfy spec requirement (>0)
      * - ⚠️  TLVs and status-field failure indicators remain TODO
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     public processRouteReply(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const options = data.readUInt8(offset);
@@ -955,6 +967,7 @@ export class NWKHandler {
      * - ✅ Sets path cost to 1 hop when coordinator responds directly
      * - ✅ Unicasts reply via first hop recorded in request MAC header
      * - ⚠️  TLV payload not encoded (optional R23 extension)
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param requestDest1stHop16 SHALL be set to the network address of the first hop in the path back to the originator of the corresponding route request command frame
      * @param requestRadius
@@ -1028,6 +1041,7 @@ export class NWKHandler {
      * - ⚠️ INCOMPLETE: Route repair not fully implemented (marked as WIP)
      * - ❌ NOT IMPLEMENTED: TLV processing (R23)
      * - ✅ Issues REJOIN_RESP with address-conflict status to prompt device reassignment
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * IMPACT: Receives status but minimal action beyond route marking
      */
@@ -1089,6 +1103,7 @@ export class NWKHandler {
      * - ✅ Includes error codes (NO_ROUTE_AVAILABLE, LINK_FAILURE, etc.)
      * - ✅ No security applied (per spec)
      * - ✅ Optional destination16 for routing failures/address conflicts
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param requestSource16
      * @param status
@@ -1128,6 +1143,7 @@ export class NWKHandler {
      * - ✅ Parses removeChildren/request/rejoin flags from options byte (Table 3-16)
      * - ✅ Invokes disassociate when device signals final leave (request=false & rejoin=false)
      * - ⚠️  Does not yet honour removeChildren flag (TODO as noted)
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     public async processLeave(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
         const options = data.readUInt8(offset);
@@ -1157,6 +1173,7 @@ export class NWKHandler {
      * - ✅ Forces removeChildren=0 to avoid unintended network disruption (spec allows but not typical for TC)
      * - ✅ Applies NWK security and unicasts to destination per coordinator requirements
      * - ⚠️  Does not queue indirect transmissions; relies on MAC handler to manage sleepy children
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param destination16 Target network address
      * @param rejoin Whether device should rejoin after leave
@@ -1206,6 +1223,7 @@ export class NWKHandler {
      *
      * IMPORTANT: Route records are sent by devices to establish reverse path to concentrator
      * This is correct for coordinator acting as concentrator.
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param data Command data
      * @param offset Current offset in data
@@ -1283,6 +1301,7 @@ export class NWKHandler {
      * - Unsecured rejoin handling is critical for security
      * - Must validate device authorization before accepting
      * - Missing apsTrustCenterAddress validation is a security gap
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param data Command data
      * @param offset Current offset in data
@@ -1371,6 +1390,7 @@ export class NWKHandler {
      * - ✅ Logs success/failure for Trust Center auditing
      * - ⚠️  Does not currently update device tables; caller expected to handle
      * - ⚠️  TLV extensions (R23) not parsed yet
+     * DEVICE SCOPE: Routers (N/A), end devices (N/A)
      */
     public processRejoinResp(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const newAddress = data.readUInt16LE(offset);
@@ -1401,6 +1421,7 @@ export class NWKHandler {
      * - ✅ Returns new short address and status per Table 3-19
      * - ✅ Sends NWK-secured unicast response when NWK security is enabled
      * - ⚠️  Does not attach optional TLV extensions
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param requestSource16 Requestor network address
      * @param newAddress16 Assigned network address
@@ -1449,6 +1470,7 @@ export class NWKHandler {
      * - ⚠️ COST CALCULATION: Uses incoming cost directly as path cost
      *       - This may underestimate total path cost for multi-hop routes
      *       - Should consider accumulated path cost through intermediaries
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param data Command data
      * @param offset Current offset in data
@@ -1547,6 +1569,7 @@ export class NWKHandler {
      * - ✅ Sets FIRST/LAST frame bits per Table 3-20 and repeats last link between frames as required
      * - ✅ Encodes incoming/outgoing cost nibble per spec definition
      * - ⚠️  Uses coordinator broadcast radius=1 as optimization (spec allows broader radius)
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param links Link status entries sorted ascending by address
      */
@@ -1622,6 +1645,7 @@ export class NWKHandler {
      * - ❌ NOT IMPLEMENTED: Network update propagation
      * - ❌ NOT IMPLEMENTED: PAN ID conflict resolution
      * - ❌ NOT IMPLEMENTED: TLV support (R23)
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * NOTE: Deprecated in R23, should no longer be sent by R23 devices
      * IMPACT: Coordinator doesn't act on network reports
@@ -1668,8 +1692,7 @@ export class NWKHandler {
      * - ❌ NOT IMPLEMENTED: Network parameter updates
      * - ❌ NOT IMPLEMENTED: Update propagation
      * - ❌ NOT IMPLEMENTED: TLV support (R23)
-     *
-     * IMPACT: Coordinator doesn't act on network updates
+     * DEVICE SCOPE: Routers (N/A), end devices (N/A)
      */
     public processUpdate(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const options = data.readUInt8(offset);
@@ -1714,6 +1737,7 @@ export class NWKHandler {
      * - ⚠️ Still lacks parent policy enforcement (e.g., max timeout per device class)
      * - ❌ NOT IMPLEMENTED: Keep-alive scheduling or timeout expiration handling
      * - ❌ NOT IMPLEMENTED: TLV processing for R23 extensions
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     public async processEdTimeoutRequest(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
         // index into END_DEVICE_TIMEOUT_TABLE_MS
@@ -1764,6 +1788,7 @@ export class NWKHandler {
      * - ✅ Logs timeout response information
      * - ❌ NOT IMPLEMENTED: Action on response (only logs)
      * - ❌ NOT IMPLEMENTED: TLV support (R23)
+     * DEVICE SCOPE: End devices (N/A)
      *
      * NOTE: Coordinator typically doesn't receive this (sent to end devices)
      */
@@ -1797,6 +1822,7 @@ export class NWKHandler {
      * - ✅ Applies NWK security and unicasts to requester as required
      * - ⚠️ Parent info overrides currently static (no dynamic negotiation yet)
      * - ❌ NOT IMPLEMENTED: TLV extensions (R23)
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     public async sendEdTimeoutResponse(
         requestDest16: number,
@@ -1835,6 +1861,7 @@ export class NWKHandler {
      * - ❌ NOT IMPLEMENTED: Power adjustment action
      * - ❌ NOT IMPLEMENTED: Feedback mechanism
      * - ❌ NOT IMPLEMENTED: R23 TLV processing
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * IMPACT: Receives command but doesn't adjust transmit power
      */
@@ -1899,6 +1926,7 @@ export class NWKHandler {
      * - Commissioning is R23+ feature for network commissioning
      * - May have different security requirements than legacy join
      * - TLV support is critical for full R23 compliance
+     * DEVICE SCOPE: Coordinator
      *
      * @param data Command data
      * @param offset Current offset in data
@@ -1964,6 +1992,7 @@ export class NWKHandler {
      * - ✅ Extracts assigned address and status value per Table 3-22
      * - ✅ Logs success vs failure for commissioning diagnostics
      * - ⚠️  TODO: Process optional TLVs (required for full Zigbee Direct compliance)
+     * DEVICE SCOPE: Routers (N/A), end devices (N/A)
      */
     public processCommissioningResponse(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
         const newAddress = data.readUInt16LE(offset);
@@ -1998,6 +2027,7 @@ export class NWKHandler {
      * - ✅ Uses NWK security=false (spec permits unsecured when join not completed)
      * - ✅ Applies default radius (CONFIG_NWK_MAX_HOPS) for reachability
      * - ⚠️  TLV payload not supported (TODO)
+     * DEVICE SCOPE: Coordinator
      *
      * @param requestSource16 Destination device
      * @param newAddress16 Assigned address echoed back
