@@ -53,8 +53,6 @@ export const enum ZigbeeConsts {
     SEC_NONCE_LEN = 16 - 2 - 1,
     SEC_KEYSIZE = 16,
 
-    SEC_CONTROL_VERIFIED_FC = 0x40,
-
     //---- CCM* Flags
     /** 3-bit encoding of (L-1) */
     SEC_CCM_FLAG_L = 0x01,
@@ -66,6 +64,7 @@ export const enum ZigbeeConsts {
     SEC_CONTROL_LEVEL = 0x07,
     SEC_CONTROL_KEY = 0x18,
     SEC_CONTROL_NONCE = 0x20,
+    SEC_CONTROL_REQ_VERIFIED_FC = 0x40,
 }
 
 /* Zigbee security levels. */
@@ -93,6 +92,15 @@ export type ZigbeeSecurityControl = {
     level: ZigbeeSecurityLevel;
     keyId: ZigbeeKeyType;
     nonce: boolean;
+    /**
+     * TODO: currently always false, see R23.1 4.6.3.8
+     * R23:
+     * This bit indicates to the receiver that it SHALL only accept the message if the receiver has verified
+     * the frame counter of the corresponding apsDeviceKeyPairSet.
+     * When the bit is set, and the receiver has an unverified frame counter it SHALL drop the current received message
+     * and initiate a challenge via the ZDO Security_Challenge_req. See section 4.6.3.8 for more details.
+     */
+    reqVerifiedFc: boolean;
 };
 
 export type ZigbeeSecurityHeader = {
@@ -323,7 +331,7 @@ export function computeAuthTag(authData: Buffer, M: number, key: Buffer, nonce: 
 }
 
 /**
- * 05-3474-23 R23.1, Table B-4 (Security control field)
+ * 05-3474-23 R23.1, Figure 4-25 (Security control field)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Packs security level, key identifier, and nonce flag per Zigbee bit layout
@@ -335,7 +343,8 @@ export function combineSecurityControl(control: ZigbeeSecurityControl, levelOver
     return (
         ((levelOverride !== undefined ? levelOverride : control.level) & ZigbeeConsts.SEC_CONTROL_LEVEL) |
         ((control.keyId << 3) & ZigbeeConsts.SEC_CONTROL_KEY) |
-        (((control.nonce ? 1 : 0) << 5) & ZigbeeConsts.SEC_CONTROL_NONCE)
+        (((control.nonce ? 1 : 0) << 5) & ZigbeeConsts.SEC_CONTROL_NONCE) |
+        (((control.reqVerifiedFc ? 1 : 0) << 6) & ZigbeeConsts.SEC_CONTROL_REQ_VERIFIED_FC)
     );
 }
 
@@ -456,6 +465,7 @@ export function decodeZigbeeSecurityHeader(data: Buffer, offset: number, source6
     const level = ZigbeeSecurityLevel.ENC_MIC32; // overrides control & ZigbeeConsts.SEC_CONTROL_LEVEL;
     const keyId = (control & ZigbeeConsts.SEC_CONTROL_KEY) >> 3;
     const nonce = Boolean((control & ZigbeeConsts.SEC_CONTROL_NONCE) >> 5);
+    const reqVerifiedFc = Boolean((control & ZigbeeConsts.SEC_CONTROL_REQ_VERIFIED_FC) >> 6);
 
     const frameCounter = data.readUInt32LE(offset);
     offset += 4;
@@ -505,6 +515,7 @@ export function decodeZigbeeSecurityHeader(data: Buffer, offset: number, source6
                 level,
                 keyId,
                 nonce,
+                reqVerifiedFc,
             },
             frameCounter,
             source64,

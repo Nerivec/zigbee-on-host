@@ -593,6 +593,7 @@ export class NWKHandler {
                     level: ZigbeeSecurityLevel.NONE,
                     keyId: ZigbeeKeyType.NWK,
                     nonce: true,
+                    reqVerifiedFc: false,
                 },
                 frameCounter: this.#context.nextNWKKeyFrameCounter(),
                 source64: this.#context.netParams.eui64,

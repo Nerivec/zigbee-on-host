@@ -1170,6 +1170,7 @@ describe("Integration and End-to-End Compliance", () => {
                         level: ZigbeeSecurityLevel.ENC_MIC32,
                         keyId: ZigbeeKeyType.NWK,
                         nonce: true,
+                        reqVerifiedFc: false,
                     },
                     frameCounter: 0x01020304,
                     source64: device64,

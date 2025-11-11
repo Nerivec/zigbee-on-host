@@ -2544,7 +2544,7 @@ describe("OT RCP Driver", () => {
                 relayIndex: undefined,
                 relayAddresses: undefined,
                 securityHeader: {
-                    control: { keyId: 1, level: 5, nonce: true },
+                    control: { keyId: 1, level: 5, nonce: true, reqVerifiedFc: false },
                     frameCounter: 1,
                     keySeqNum: 0,
                     micLen: 4,
@@ -2653,7 +2653,7 @@ describe("OT RCP Driver", () => {
                 relayIndex: undefined,
                 relayAddresses: undefined,
                 securityHeader: {
-                    control: { keyId: 1, level: 5, nonce: true },
+                    control: { keyId: 1, level: 5, nonce: true, reqVerifiedFc: false },
                     frameCounter: 1,
                     keySeqNum: 0,
                     micLen: 4,
@@ -2768,7 +2768,7 @@ describe("OT RCP Driver", () => {
                 relayIndex: undefined,
                 relayAddresses: undefined,
                 securityHeader: {
-                    control: { keyId: 1, level: 5, nonce: true },
+                    control: { keyId: 1, level: 5, nonce: true, reqVerifiedFc: false },
                     frameCounter: 1,
                     keySeqNum: 0,
                     micLen: 4,
@@ -2878,7 +2878,7 @@ describe("OT RCP Driver", () => {
                 relayIndex: undefined,
                 relayAddresses: undefined,
                 securityHeader: {
-                    control: { keyId: 1, level: 5, nonce: true },
+                    control: { keyId: 1, level: 5, nonce: true, reqVerifiedFc: false },
                     frameCounter: 1,
                     keySeqNum: 0,
                     micLen: 4,
@@ -2989,7 +2989,7 @@ describe("OT RCP Driver", () => {
                 relayIndex: undefined,
                 relayAddresses: undefined,
                 securityHeader: {
-                    control: { keyId: 1, level: 5, nonce: true },
+                    control: { keyId: 1, level: 5, nonce: true, reqVerifiedFc: false },
                     frameCounter: 1,
                     keySeqNum: 0,
                     micLen: 4,

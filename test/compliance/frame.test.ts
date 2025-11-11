@@ -488,6 +488,7 @@ describe("Frame handler", () => {
                     level: ZigbeeSecurityLevel.NONE,
                     keyId: ZigbeeKeyType.NWK,
                     nonce: false,
+                    reqVerifiedFc: false,
                 },
                 frameCounter: 10,
             },

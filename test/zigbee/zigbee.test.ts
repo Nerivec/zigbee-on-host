@@ -36,7 +36,7 @@ describe("Zigbee core", () => {
     });
 
     it("combines security control flags with nonce bit", () => {
-        const value = combineSecurityControl({ level: ZigbeeSecurityLevel.ENC_MIC32, keyId: ZigbeeKeyType.LOAD, nonce: true });
+        const value = combineSecurityControl({ level: ZigbeeSecurityLevel.ENC_MIC32, keyId: ZigbeeKeyType.LOAD, nonce: true, reqVerifiedFc: false });
 
         expect(value & 0x20).toStrictEqual(0x20);
     });
@@ -59,6 +59,7 @@ describe("Zigbee core", () => {
                 level: ZigbeeSecurityLevel.ENC_MIC32,
                 keyId: ZigbeeKeyType.NWK,
                 nonce: false,
+                reqVerifiedFc: false,
             },
             frameCounter: 0,
         };
@@ -72,6 +73,7 @@ describe("Zigbee core", () => {
                 level: ZigbeeSecurityLevel.ENC_MIC32,
                 keyId: ZigbeeKeyType.NWK,
                 nonce: true,
+                reqVerifiedFc: false,
             },
             frameCounter: 1,
             source64: 0x00124b0000112233n,
