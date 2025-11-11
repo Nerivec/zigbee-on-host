@@ -130,7 +130,6 @@ export class OTRCPDriver {
         this.macHandler = new MACHandler(this.context, macCallbacks, SpinelStatus.NO_ACK, emitMACFrames);
 
         const nwkCallbacks: NWKHandlerCallbacks = {
-            onDeviceRejoined: callbacks.onDeviceRejoined,
             onAPSSendTransportKeyNWK: async (address16, key, keySeqNum, destination64) => {
                 await this.apsHandler.sendTransportKeyNWK(address16, key, keySeqNum, destination64);
             },

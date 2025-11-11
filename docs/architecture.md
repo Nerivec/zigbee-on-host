@@ -267,8 +267,6 @@ public async sendPeriodicManyToOneRouteRequest(): Promise<void>
 **Callbacks to Driver (NWKHandlerCallbacks):**
 ```typescript
 interface NWKHandlerCallbacks {
-    /** Handle device rejoin */
-    onDeviceRejoined: (source16: number, source64: bigint, capabilities: MACCapabilities) => void;
     /** Send APS TRANSPORT_KEY for network key */
     onAPSSendTransportKeyNWK: (destination16: number, networkKey: Buffer, keySequenceNumber: number, destination64: bigint) => Promise<void>;
 }

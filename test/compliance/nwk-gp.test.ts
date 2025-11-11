@@ -84,7 +84,6 @@ describe("Zigbee 3.0 Green Power (NWK GP) Compliance", () => {
             onMarkRouteFailure: vi.fn(),
         };
         mockNWKHandlerCallbacks = {
-            onDeviceRejoined: vi.fn(),
             onAPSSendTransportKeyNWK: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {

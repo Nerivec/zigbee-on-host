@@ -17,6 +17,7 @@ import {
     ZigbeeAPSFragmentation,
     ZigbeeAPSFrameType,
     type ZigbeeAPSHeader,
+    ZigbeeAPSUpdateDeviceStatus,
 } from "../zigbee/zigbee-aps.js";
 import { encodeZigbeeNWKFrame, ZigbeeNWKConsts, ZigbeeNWKFrameType, type ZigbeeNWKHeader, ZigbeeNWKRouteDiscovery } from "../zigbee/zigbee-nwk.js";
 import type { MACHandler } from "./mac-handler.js";
@@ -1671,12 +1672,7 @@ export class APSHandler {
             NS,
         );
 
-        // 0x00 = Standard Device Secured Rejoin
-        // 0x01 = Standard Device Unsecured Join
-        // 0x02 = Device Left
-        // 0x03 = Standard Device Trust Center Rejoin
-        // 0x04 – 0x07 = Reserved
-        if (status === 0x00) {
+        if (status === ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_SECURED_REJOIN) {
             await this.#context.associate(
                 device16,
                 device64,
@@ -1688,7 +1684,7 @@ export class APSHandler {
             );
 
             this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
-        } else if (status === 0x01) {
+        } else if (status === ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_UNSECURED_JOIN) {
             await this.#context.associate(
                 device16,
                 device64,
@@ -1739,7 +1735,7 @@ export class APSHandler {
             await this.sendTunnel(nwkHeader.source16!, device64, tApsCmdFrame);
 
             this.#context.markNetworkKeyTransported(device64);
-        } else if (status === 0x03) {
+        } else if (status === ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_TRUST_CENTER_REJOIN) {
             // rejoin
             const [, , requiresTransportKey] = await this.#context.associate(
                 device16,
@@ -1760,7 +1756,7 @@ export class APSHandler {
                 );
                 this.#context.markNetworkKeyTransported(device64);
             }
-        } else if (status === 0x02) {
+        } else if (status === ZigbeeAPSUpdateDeviceStatus.DEVICE_LEFT) {
             // left
             // TODO: according to spec, this is "informative" only, should not take any action?
             await this.#context.disassociate(device16, device64);
@@ -2097,8 +2093,7 @@ export class APSHandler {
      * - ❌ MISSING: Should extract and forward tunneled command to destination
      * - ❌ MISSING: Security context validation
      *
-     * IMPLEMENTATION: TC sends TUNNEL for nested joins (works), but coordinator
-     * can't relay tunneled frames from routers (incomplete).
+     * IMPACT: Not applicable for Coordinator/Trust Center
      */
     public processTunnel(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
         const destination = data.readBigUInt64LE(offset);
@@ -2166,7 +2161,7 @@ export class APSHandler {
      * - ⚠️  SPEC COMPLIANCE: Hash verification uses pre-computed tcVerifyKeyHash from context
      *       - Spec B.1.4: hash should be keyed hash function with input string '0x03'
      *       - Implementation appears correct (context.tcVerifyKeyHash is computed correctly)
-     * - ❌ MISSING: Spec states "not valid if operating in distributed network" but no check for distributed mode
+     * - ⚠️ Not valid for distributed mode but implementation is never distributed mode
      * - ✅ Sends CONFIRM_KEY in response with appropriate status
      * - ❓ UNCERTAIN: keyType=CMD_KEY_APP_MASTER (0x02) returns ILLEGAL_REQUEST for TC
      *       - Spec is unclear if TC should reject this or if it's valid in some scenarios

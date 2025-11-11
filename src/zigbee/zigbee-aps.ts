@@ -78,6 +78,14 @@ export const enum ZigbeeAPSCommandId {
     RELAY_MESSAGE_UPSTREAM = 0x12,
 }
 
+export const enum ZigbeeAPSUpdateDeviceStatus {
+    STANDARD_DEVICE_SECURED_REJOIN = 0x00,
+    STANDARD_DEVICE_UNSECURED_JOIN = 0x01,
+    DEVICE_LEFT = 0x02,
+    STANDARD_DEVICE_TRUST_CENTER_REJOIN = 0x03,
+    // 0x04 – 0x07 = Reserved
+}
+
 /**
  * Frame Control Field: Ack (0x02)
  *   .... ..10 = Frame Type: Ack (0x2)

@@ -100,7 +100,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             onMarkRouteFailure: vi.fn(),
         };
         mockNWKHandlerCallbacks = {
-            onDeviceRejoined: vi.fn(),
             onAPSSendTransportKeyNWK: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {

@@ -78,7 +78,6 @@ describe("NWK Handler", () => {
         vi.spyOn(mockMACHandler, "sendFrameDirect");
 
         mockCallbacks = {
-            onDeviceRejoined: vi.fn(),
             onAPSSendTransportKeyNWK: vi.fn(async () => {}),
         };
 
@@ -893,11 +892,11 @@ describe("NWK Handler", () => {
             expect(updated?.relayAddresses).toEqual([nextHop]);
         });
 
-        it("should process network status", () => {
+        it("should process network status", async () => {
             const device16 = 0x1234;
             const payload = Buffer.from([ZigbeeNWKCommandId.NWK_STATUS, 0x0b, 0x56, 0x34]);
 
-            const offset = nwkHandler.processStatus(
+            const offset = await nwkHandler.processStatus(
                 payload,
                 0,
                 {

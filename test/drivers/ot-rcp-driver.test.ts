@@ -3504,7 +3504,7 @@ describe("OT RCP Driver", () => {
             expect(driver.nwkHandler.findBestSourceRoute(0x9ed5, undefined)).toStrictEqual([0, [0x91d2], 2]);
 
             // first NWK Status: route failure - should purge routes and trigger MTORR once
-            driver.nwkHandler.processStatus(
+            await driver.nwkHandler.processStatus(
                 Buffer.from([2, dest16 & 0xff, (dest16 >> 8) & 0xff]),
                 0,
                 { frameControl: {}, source16: 0x9ed5, source64: 5149013578478658n } as MACHeader,
@@ -3828,7 +3828,7 @@ describe("OT RCP Driver", () => {
             const dest16 = 0x91d2;
 
             // first failure triggers MTORR
-            driver.nwkHandler.processStatus(
+            await driver.nwkHandler.processStatus(
                 Buffer.from([2, dest16 & 0xff, (dest16 >> 8) & 0xff]),
                 0,
                 { frameControl: {}, source16: 0x9ed5, source64: 5149013578478658n } as MACHeader,
@@ -3841,7 +3841,7 @@ describe("OT RCP Driver", () => {
             for (let i = 0; i < 5; i++) {
                 const dest = 0x1000 + i;
 
-                driver.nwkHandler.processStatus(
+                await driver.nwkHandler.processStatus(
                     Buffer.from([2, dest & 0xff, (dest >> 8) & 0xff]),
                     0,
                     { frameControl: {}, source16: dest, source64: BigInt(dest) } as MACHeader,
@@ -3866,7 +3866,7 @@ describe("OT RCP Driver", () => {
             const sendPeriodicManyToOneRouteRequestSpy = vi.spyOn(driver.nwkHandler, "sendPeriodicManyToOneRouteRequest");
 
             // report failure for 0x91d2
-            driver.nwkHandler.processStatus(
+            await driver.nwkHandler.processStatus(
                 Buffer.from([2, 0x91d2 & 0xff, (0x91d2 >> 8) & 0xff]),
                 0,
                 { frameControl: {}, source16: 0x6887, source64: 5149013573816379n } as MACHeader,

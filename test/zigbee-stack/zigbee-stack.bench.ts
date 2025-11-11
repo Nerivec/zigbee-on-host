@@ -76,7 +76,6 @@ const setup = () => {
     macHandler = new MACHandler(context, macCallbacks, NO_ACK_CODE);
 
     const nwkCallbacks: NWKHandlerCallbacks = {
-        onDeviceRejoined: () => {},
         onAPSSendTransportKeyNWK: () => Promise.resolve(),
     };
 

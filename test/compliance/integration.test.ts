@@ -114,7 +114,6 @@ describe("Integration and End-to-End Compliance", () => {
             onMarkRouteFailure: vi.fn(),
         };
         mockNWKHandlerCallbacks = {
-            onDeviceRejoined: vi.fn(),
             onAPSSendTransportKeyNWK: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
@@ -1248,7 +1247,6 @@ describe("Integration and End-to-End Compliance", () => {
             expect(updated.neighbor).toStrictEqual(true);
 
             await new Promise((resolve) => setImmediate(resolve));
-            expect(mockNWKHandlerCallbacks.onDeviceRejoined).toHaveBeenCalledWith(device16, device64, rejoinCaps);
         });
 
         it("restores unknown devices by issuing rejoin responses", async () => {
@@ -1284,7 +1282,6 @@ describe("Integration and End-to-End Compliance", () => {
             expect(indirectQueue!.length).toStrictEqual(1);
 
             await new Promise((resolve) => setImmediate(resolve));
-            expect(mockNWKHandlerCallbacks.onDeviceRejoined).toHaveBeenCalledWith(device16, device64, rejoinCaps);
         });
 
         it("secures rejoin responses with the network key for secure rejoins", async () => {
@@ -1449,7 +1446,7 @@ describe("Integration and End-to-End Compliance", () => {
             }
         });
 
-        it("throws when processing malformed NWK status payloads lacking destination", () => {
+        it("throws when processing malformed NWK status payloads lacking destination", async () => {
             const macHeader = {
                 frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
                 sequenceNumber: 0x01,
@@ -1477,7 +1474,7 @@ describe("Integration and End-to-End Compliance", () => {
             } satisfies ZigbeeNWKHeader;
             const malformedPayload = Buffer.from([ZigbeeNWKStatus.LINK_FAILURE]);
 
-            expect(() => nwkHandler.processStatus(malformedPayload, 0, macHeader, nwkHeader)).toThrow(RangeError);
+            await expect(nwkHandler.processStatus(malformedPayload, 0, macHeader, nwkHeader)).rejects.toThrow(RangeError);
         });
     });
 });

@@ -573,14 +573,12 @@ export class StackContext {
      * @returns true when activation succeeded, false when no matching pending key exists
      */
     public activatePendingNetworkKey(sequenceNumber: number): boolean {
-        const normalizedSeq = sequenceNumber & 0xff;
-
-        if (this.#pendingNetworkKey === undefined || this.#pendingNetworkKeySequenceNumber !== normalizedSeq) {
+        if (this.#pendingNetworkKey === undefined || this.#pendingNetworkKeySequenceNumber !== sequenceNumber) {
             return false;
         }
 
         this.netParams.networkKey = Buffer.from(this.#pendingNetworkKey);
-        this.netParams.networkKeySequenceNumber = normalizedSeq;
+        this.netParams.networkKeySequenceNumber = sequenceNumber;
         this.netParams.networkKeyFrameCounter = 0;
 
         this.#pendingNetworkKey = undefined;
@@ -593,7 +591,7 @@ export class StackContext {
             makeKeyedHashByType(ZigbeeKeyType.LOAD, this.netParams.tcKey),
         );
 
-        logger.debug(() => `Activated network key seq=${normalizedSeq}`, NS);
+        logger.debug(() => `Activated network key seq=${sequenceNumber}`, NS);
 
         return true;
     }
@@ -687,7 +685,6 @@ export class StackContext {
      * 05-3474-23 #3.7.3 (NWK security) / IEEE 802.15.4-2015 #9.4.2
      *
      * Update and validate the incoming NWK security frame counter for a device.
-     * Returns false if the provided counter is a replay (<= stored value, excluding wrap).
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Rejects replayed NWK security frames when counter does not strictly increase
@@ -695,6 +692,10 @@ export class StackContext {
      * - ✅ Stores last accepted counter per IEEE address for subsequent validation
      * - ⚠️  Devices without stored state (e.g., unknown IEEE) default to allowing frame (per spec recommendation)
      * - ⚠️  Persistence across restarts not implemented (TODO noted)
+     *
+     * @param address64
+     * @param frameCounter
+     * @returns false if the provided counter is a replay (<= stored value, excluding wrap).
      */
     public updateIncomingNWKFrameCounter(address64: bigint | undefined, frameCounter: number): boolean {
         if (address64 === undefined) {
@@ -710,21 +711,19 @@ export class StackContext {
         const previous = device.incomingNWKFrameCounter;
 
         if (previous === undefined) {
-            device.incomingNWKFrameCounter = frameCounter >>> 0;
+            device.incomingNWKFrameCounter = frameCounter;
 
             return true;
         }
 
-        const normalizedCounter = frameCounter >>> 0;
-
-        if (previous === 0xffffffff && normalizedCounter === 0) {
-            device.incomingNWKFrameCounter = normalizedCounter;
+        if (previous === 0xffffffff && frameCounter === 0) {
+            device.incomingNWKFrameCounter = frameCounter;
 
             return true;
         }
 
-        if (normalizedCounter > previous) {
-            device.incomingNWKFrameCounter = normalizedCounter;
+        if (frameCounter > previous) {
+            device.incomingNWKFrameCounter = frameCounter;
 
             return true;
         }

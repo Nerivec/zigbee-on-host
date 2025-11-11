@@ -93,7 +93,6 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
             onMarkRouteFailure: vi.fn(),
         };
         mockNWKHandlerCallbacks = {
-            onDeviceRejoined: vi.fn(),
             onAPSSendTransportKeyNWK: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
@@ -451,7 +450,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
             expect(nwkHeader.relayIndex).toStrictEqual(0);
         });
 
-        it("updates neighbor table from link status reports", () => {
+        it("updates neighbor field from link status reports", () => {
             const router16 = 0x6677;
             const router64 = 0x00124b0000f7f8n;
 

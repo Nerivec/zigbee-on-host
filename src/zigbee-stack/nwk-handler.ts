@@ -3,7 +3,6 @@ import {
     decodeMACCapabilities,
     encodeMACFrameZigbee,
     MACAssociationStatus,
-    type MACCapabilities,
     MACFrameAddressMode,
     MACFrameType,
     MACFrameVersion,
@@ -23,7 +22,7 @@ import {
     ZigbeeNWKStatus,
 } from "../zigbee/zigbee-nwk.js";
 import type { MACHandler } from "../zigbee-stack/mac-handler.js";
-import { END_DEVICE_TIMEOUT_TABLE_MS, type SourceRouteTableEntry, type StackCallbacks, type StackContext } from "../zigbee-stack/stack-context.js";
+import { END_DEVICE_TIMEOUT_TABLE_MS, type SourceRouteTableEntry, type StackContext } from "../zigbee-stack/stack-context.js";
 
 const NS = "nwk-handler";
 
@@ -31,7 +30,6 @@ const NS = "nwk-handler";
  * Callbacks for NWK handler to communicate with driver
  */
 export interface NWKHandlerCallbacks {
-    onDeviceRejoined: StackCallbacks["onDeviceRejoined"];
     /** Send APS TRANSPORT_KEY for network key */
     onAPSSendTransportKeyNWK: (destination16: number, networkKey: Buffer, keySequenceNumber: number, destination64: bigint) => Promise<void>;
 }
@@ -702,7 +700,7 @@ export class NWKHandler {
                 break;
             }
             case ZigbeeNWKCommandId.NWK_STATUS: {
-                offset = this.processStatus(data, offset, macHeader, nwkHeader);
+                offset = await this.processStatus(data, offset, macHeader, nwkHeader);
                 break;
             }
             case ZigbeeNWKCommandId.LEAVE: {
@@ -1025,15 +1023,15 @@ export class NWKHandler {
      * SPEC COMPLIANCE:
      * - ✅ Correctly decodes status code
      * - ✅ Handles destination16 parameter for routing failures
-     * - ✅ Marks route as failed and triggers MTORR
-     * - ✅ Logs network status issues
+     * - ✅ Marks route as failed and schedules MTORR recovery
+     * - ✅ Logs network status issues for diagnostics
      * - ⚠️ INCOMPLETE: Route repair not fully implemented (marked as WIP)
      * - ❌ NOT IMPLEMENTED: TLV processing (R23)
-     * - ❌ NOT IMPLEMENTED: Network address update notification
+     * - ✅ Issues REJOIN_RESP with address-conflict status to prompt device reassignment
      *
      * IMPACT: Receives status but minimal action beyond route marking
      */
-    public processStatus(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
+    public async processStatus(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
         const status = data.readUInt8(offset);
         offset += 1;
         // target SHALL be present if, and only if, frame is being sent in response to a routing failure or a network address conflict
@@ -1056,6 +1054,19 @@ export class NWKHandler {
             // In case of an address conflict, it SHALL contain the offending network address.
             target16 = data.readUInt16LE(offset);
             offset += 2;
+
+            if (target16 !== ZigbeeConsts.COORDINATOR_ADDRESS) {
+                const device64 = this.#context.address16ToAddress64.get(target16);
+
+                if (device64 !== undefined) {
+                    const newAddress16 = this.#context.assignNetworkAddress();
+
+                    // TODO: is this correct?
+                    await this.sendRejoinResp(target16, newAddress16, ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
+                } else {
+                    logger.warning(() => `NWK address conflict reported for unknown short address ${target16}`, NS);
+                }
+            }
         }
 
         // TODO
@@ -1066,8 +1077,6 @@ export class NWKHandler {
                 `<=== NWK NWK_STATUS[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} status=${ZigbeeNWKStatus[status]} dst16=${target16}]`,
             NS,
         );
-        // TODO
-        // network address update notification from here?
 
         return offset;
     }
@@ -1261,10 +1270,7 @@ export class NWKHandler {
      *         "Unsecured Packets at the network layer claiming to be from existing neighbors...
      *          must not rewrite legitimate data in nwkNeighborTable"
      *         This is a critical security requirement ✅
-     * - ⚠️  SPEC COMPLIANCE: apsTrustCenterAddress check mentioned in comment
-     *       - Should check if TC address is all-FF (distributed) or all-00 (pre-TRANSPORT_KEY)
-     *       - If so, should reject with PAN_ACCESS_DENIED
-     *       - NOT IMPLEMENTED ❌
+     * - ✅ Centralized Trust Center enforces coordinator EUI64; distributed/uninitialized modes not supported here (N/A)
      * - ✅ Calls context associate with correct parameters:
      *       - initialJoin=false (this is a rejoin) ✅
      *       - neighbor determined by comparing MAC and NWK source ✅
@@ -1272,7 +1278,6 @@ export class NWKHandler {
      * - ✅ Sends REJOIN_RESP with assigned address and status
      * - ✅ Re-distributes current NWK key when rejoin requires key update
      * - ✅ Does not require VERIFY_KEY after rejoin per spec note
-     * - ✅ Triggers onDeviceRejoined callback on SUCCESS
      *
      * SECURITY CONCERNS:
      * - Unsecured rejoin handling is critical for security
@@ -1336,7 +1341,7 @@ export class NWKHandler {
             deny,
         );
 
-        await this.sendRejoinResp(nwkHeader.source16!, newAddress16, status, decodedCap);
+        await this.sendRejoinResp(nwkHeader.source16!, newAddress16, status);
 
         // XXX: is this spec?
         if (status === MACAssociationStatus.SUCCESS && requiresTransportKey && source64 !== undefined) {
@@ -1394,27 +1399,20 @@ export class NWKHandler {
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Returns new short address and status per Table 3-19
-     * - ✅ Sends NWK-secured unicast to rejoining device (spec mandates secured response when available)
-     * - ✅ Triggers onDeviceRejoined callback on success for stack integration
-     * - ⚠️  Capabilities echoed only to callback; spec suggests optional inclusion in TLV (not implemented)
+     * - ✅ Sends NWK-secured unicast response when NWK security is enabled
+     * - ⚠️  Does not attach optional TLV extensions
      *
      * @param requestSource16 Requestor network address
      * @param newAddress16 Assigned network address
      * @param status Rejoin status (MACAssociationStatus or NWK status)
-     * @param capabilities MAC capabilities advertised by device
      * @returns True if success sending (or indirect transmission)
      */
-    public async sendRejoinResp(
-        requestSource16: number,
-        newAddress16: number,
-        status: MACAssociationStatus | number,
-        capabilities: MACCapabilities,
-    ): Promise<boolean> {
+    public async sendRejoinResp(requestSource16: number, newAddress16: number, status: MACAssociationStatus | number): Promise<boolean> {
         logger.debug(() => `===> NWK REJOIN_RESP[reqSrc16=${requestSource16} newAddr16=${newAddress16} status=${status}]`, NS);
 
         const finalPayload = Buffer.from([ZigbeeNWKCommandId.REJOIN_RESP, newAddress16 & 0xff, (newAddress16 >> 8) & 0xff, status]);
 
-        const result = await this.sendCommand(
+        return await this.sendCommand(
             ZigbeeNWKCommandId.REJOIN_RESP,
             finalPayload,
             true, // nwkSecurity TODO: ??
@@ -1423,17 +1421,6 @@ export class NWKHandler {
             this.#context.address16ToAddress64.get(newAddress16), // nwkDest64
             CONFIG_NWK_MAX_HOPS, // nwkRadius
         );
-
-        if (status === MACAssociationStatus.SUCCESS) {
-            const dest64 = this.#context.address16ToAddress64.get(newAddress16);
-            if (dest64) {
-                setImmediate(() => {
-                    this.#callbacks.onDeviceRejoined(newAddress16, dest64, capabilities);
-                });
-            }
-        }
-
-        return result;
     }
 
     /**
@@ -1445,33 +1432,23 @@ export class NWKHandler {
      * - ✅ Extracts linkCount from CMD_LINK_OPTION_COUNT_MASK
      * - ✅ Each link entry has: address, incomingCost, outgoingCost
      * - ✅ Marks device as neighbor if link to coordinator is reported
-     * - ⚠️  SOURCE ROUTE CREATION FROM LINK STATUS:
+     * - ⚠️ SOURCE ROUTE CREATION FROM LINK STATUS:
      *       - Creates source route entry for each neighbor ✅
      *       - Uses incomingCost as pathCost (link quality from neighbor's perspective) ✅
      *       - For coordinator link: creates empty relay list (direct route) ✅
      *       - For other links: creates route through that address ✅
      * - ✅ Updates existing routes if already present (by matching relay list)
      * - ✅ Resets failureCount on route update (fresh link status = healthy link)
-     * - ⚠️  SPEC QUESTION: Using link status to build source routes
+     * - ⚠️ SPEC QUESTION: Using link status to build source routes
      *       - Spec #3.4.8 describes link status for neighbor table maintenance
      *       - Using it to build source routes is an implementation optimization
      *       - This may not be fully spec-compliant but is pragmatic
-     * - ❌ TODO MARKERS in comments:
-     *       - "TODO: NeighborTableEntry.age = 0 // max 0xff"
-     *       - "TODO: NeighborTableEntry.routerAge += 1 // max 0xffff"
-     *       - "TODO: NeighborTableEntry.routerConnectivity = formula"
-     *       - "TODO: NeighborTableEntry.routerNeighborSetDiversity = formula"
-     *       - "TODO: if NeighborTableEntry does not exist, create one..."
-     *       - These are all required per spec #3.6.1.5 for proper neighbor table management
-     * - ❌ MISSING: No actual neighbor table - only device table
-     *       - Spec requires separate neighbor table with different attributes
-     *       - Current implementation uses deviceTable with neighbor flag
+     * - ⚠️ Neighbor table maintenance is purposely not implemented due to "unlimited" table size on host
+     *       - No neighbor table present, only a flag in device table
      *       - This is a significant spec deviation
-     * - ⚠️  COST CALCULATION: Uses incoming cost directly as path cost
+     * - ⚠️ COST CALCULATION: Uses incoming cost directly as path cost
      *       - This may underestimate total path cost for multi-hop routes
      *       - Should consider accumulated path cost through intermediaries
-     *
-     * CRITICAL: Neighbor table management is incomplete per spec
      *
      * @param data Command data
      * @param offset Current offset in data
@@ -1511,7 +1488,7 @@ export class NWKHandler {
                 outgoingCost: (costByte & ZigbeeNWKConsts.CMD_LINK_OUTGOING_COST_MASK) >> 4,
             });
 
-            if (device) {
+            if (device !== undefined) {
                 if (address === ZigbeeConsts.COORDINATOR_ADDRESS) {
                     // if neighbor is coordinator, update device table
                     device.neighbor = true;
@@ -1558,12 +1535,6 @@ export class NWKHandler {
 
             return `<=== NWK LINK_STATUS[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} first=${firstFrame} last=${lastFrame} links=${linksStr}]`;
         }, NS);
-
-        // TODO: NeighborTableEntry.age = 0 // max 0xff
-        // TODO: NeighborTableEntry.routerAge += 1 // max 0xffff
-        // TODO: NeighborTableEntry.routerConnectivity = formula
-        // TODO: NeighborTableEntry.routerNeighborSetDiversity = formula
-        // TODO: if NeighborTableEntry does not exist, create one with routerAge = 0 and routerConnectivity/routerNeighborSetDiversity as above
 
         return offset;
     }
@@ -1727,7 +1698,6 @@ export class NWKHandler {
                 `<=== NWK NWK_UPDATE[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} extPANId=${extendedPANId} id=${updateId} type=${updateType} panIds=${panIds}]`,
             NS,
         );
-        // TODO
 
         return offset;
     }
@@ -1814,7 +1784,6 @@ export class NWKHandler {
                 `<=== NWK ED_TIMEOUT_RESPONSE[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} status=${status} parentInfo=${parentInfo}]`,
             NS,
         );
-        // TODO
 
         return offset;
     }

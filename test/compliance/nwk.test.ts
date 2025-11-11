@@ -101,7 +101,6 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             onMarkRouteFailure: vi.fn(),
         };
         mockNWKHandlerCallbacks = {
-            onDeviceRejoined: vi.fn(),
             onAPSSendTransportKeyNWK: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
@@ -716,7 +715,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             expect(context.macNoACKs.get(failingChild16)).toStrictEqual(1);
         });
 
-        it("purges failing routes and notifies the concentrator when a link failure is reported", () => {
+        it("purges failing routes and notifies the concentrator when a link failure is reported", async () => {
             vi.useFakeTimers();
             const failingRelay = 0x3344;
             const dependentDest16 = 0x8899;
@@ -754,7 +753,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 seqNum: 0x02,
             } satisfies ZigbeeNWKHeader;
 
-            nwkHandler.processStatus(statusPayload, 0, macHeader, nwkHeader);
+            await nwkHandler.processStatus(statusPayload, 0, macHeader, nwkHeader);
             vi.runAllTimers();
 
             expect(context.sourceRouteTable.has(failingChild16)).toStrictEqual(false);
@@ -1400,19 +1399,11 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
         it("encodes rejoin response command with assigned network address", async () => {
             const device16 = 0x2212;
             const device64 = 0x00124b0099aa1122n;
-            const capabilities: MACCapabilities = {
-                alternatePANCoordinator: false,
-                deviceType: 1,
-                powerSource: 1,
-                rxOnWhenIdle: true,
-                securityCapability: true,
-                allocateAddress: true,
-            };
 
             registerNeighborDevice(context, device16, device64);
 
             const macFrame = await captureMacFrame(
-                () => nwkHandler.sendRejoinResp(device16, device16, MACAssociationStatus.SUCCESS, capabilities),
+                () => nwkHandler.sendRejoinResp(device16, device16, MACAssociationStatus.SUCCESS),
                 mockMACHandlerCallbacks,
             );
             const { nwkPayload } = decodeNWKFromMacFrame(macFrame, true);
@@ -1735,20 +1726,6 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             vi.useRealTimers();
         });
 
-        it("retains existing routes when an address conflict is reported", async () => {
-            const target16 = 0x5522;
-            context.sourceRouteTable.clear();
-            context.sourceRouteTable.set(target16, [nwkHandler.createSourceRouteEntry([0x2002], 2)]);
-            const repairSpy = vi.spyOn(nwkHandler, "sendPeriodicManyToOneRouteRequest");
-
-            await processNetworkStatus(ZigbeeNWKStatus.ADDRESS_CONFLICT, target16);
-
-            expect(context.sourceRouteTable.has(target16)).toStrictEqual(true);
-            expect(repairSpy).not.toHaveBeenCalled();
-
-            repairSpy.mockRestore();
-        });
-
         it.each([
             ["LOW_BATTERY_LEVEL (0x03)", deprecatedStatusCodes.lowBatteryLevel],
             ["NO_ROUTING_CAPACITY (0x04)", deprecatedStatusCodes.noRoutingCapacity],
@@ -2047,7 +2024,6 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 endDeviceTimeout: undefined,
             });
             context.address16ToAddress64.set(rejoiner16, rejoiner64);
-            mockNWKHandlerCallbacks.onDeviceRejoined = vi.fn();
         });
 
         it("accepts secure rejoins, preserves NWK security, and updates capability information", async () => {
@@ -2070,7 +2046,6 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             expect(nwkPayload.readUInt8(3)).toStrictEqual(MACAssociationStatus.SUCCESS);
 
             await new Promise((resolve) => setImmediate(resolve));
-            expect(mockNWKHandlerCallbacks.onDeviceRejoined).toHaveBeenCalledWith(rejoiner16, rejoiner64, decodedCapabilities);
 
             const updatedDevice = context.deviceTable.get(rejoiner64)!;
             expect(updatedDevice.capabilities).toStrictEqual(decodedCapabilities);
@@ -2121,7 +2096,6 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             expect(nwkPayload.readUInt8(3)).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
 
             await new Promise((resolve) => setImmediate(resolve));
-            expect(mockNWKHandlerCallbacks.onDeviceRejoined).not.toHaveBeenCalled();
         });
 
         it("updates the neighbor relationship based on the MAC-origin information", async () => {

@@ -98,7 +98,6 @@ describe("APS Handler", () => {
         vi.spyOn(mockMACHandler, "sendFrameDirect");
 
         mockNWKCallbacks = {
-            onDeviceRejoined: vi.fn(),
             onAPSSendTransportKeyNWK: vi.fn(async () => {}),
         };
 
