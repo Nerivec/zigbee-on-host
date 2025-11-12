@@ -162,6 +162,8 @@ export type DeviceTableEntry = {
               expiresAt: number;
           }
         | undefined;
+    /** Counter for consecutive missed link status commands. Runtime-only. */
+    linkStatusMisses: number | undefined;
 };
 
 export type SourceRouteTableEntry = {
@@ -1193,6 +1195,7 @@ export class StackContext {
                     recentLQAs: [],
                     incomingNWKFrameCounter: undefined, // TODO: record this (should persist across reboots)
                     endDeviceTimeout: undefined,
+                    linkStatusMisses: 0, // will stay zero for RFDs
                 });
                 this.address16ToAddress64.set(address16, address64);
 
@@ -1495,6 +1498,7 @@ export class StackContext {
                     recentLQAs: [],
                     incomingNWKFrameCounter: undefined,
                     endDeviceTimeout: undefined,
+                    linkStatusMisses: 0, // will stay zero for RFDs
                 });
                 this.address16ToAddress64.set(newAddress16, source64!);
 

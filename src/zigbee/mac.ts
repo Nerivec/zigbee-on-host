@@ -70,6 +70,12 @@ export const enum ZigbeeMACConsts {
     /** currently assumed always 2 */
     FCS_LEN = 2,
 
+    DEVICE_TYPE_RFD = 0,
+    DEVICE_TYPE_FFD = 1,
+
+    POWER_SOURCE_OTHER = 0,
+    POWER_SOURCE_MAINS = 1,
+
     //---- Zigbee-specific
     ZIGBEE_PAYLOAD_IE_OUI = 0x4a191b,
 

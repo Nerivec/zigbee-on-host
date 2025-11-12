@@ -659,6 +659,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(failingChild16, failingChild64);
         });
@@ -781,6 +782,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(distant16, distant64);
 
@@ -826,6 +828,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         });
         context.address16ToAddress64.set(routerShortAddress, routerIeeeAddress);
     }
@@ -2022,6 +2025,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(rejoiner16, rejoiner64);
         });
@@ -2062,6 +2066,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(rejoiner16, conflicting64);
             const currentDevice = context.deviceTable.get(rejoiner64)!;
@@ -2431,6 +2436,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(child16, child64);
         });

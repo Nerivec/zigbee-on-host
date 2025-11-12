@@ -428,6 +428,7 @@ describe("StackContext", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(address16, device64);
 
@@ -528,6 +529,7 @@ describe("StackContext", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(address16, device64);
             context.sourceRouteTable.set(address16, [
@@ -617,6 +619,7 @@ describe("StackContext", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(address16, device64);
 
@@ -692,6 +695,7 @@ describe("StackContext", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(address16, device64);
             context.sourceRouteTable.set(address16, [sourceRoute]);

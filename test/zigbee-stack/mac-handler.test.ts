@@ -151,6 +151,7 @@ describe("MACHandler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -431,6 +432,7 @@ describe("MACHandler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
 
             const macHeader: MACHeader = {

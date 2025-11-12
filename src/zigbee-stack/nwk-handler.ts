@@ -50,7 +50,7 @@ const CONFIG_NWK_LINK_STATUS_PERIOD = 15000;
 /** Avoid synchronization with other nodes by randomizing `CONFIG_NWK_LINK_STATUS_PERIOD` with this (msec) */
 const CONFIG_NWK_LINK_STATUS_JITTER = 1000;
 /** The number of missed link status command frames before resetting the link costs to zero. */
-// const CONFIG_NWK_ROUTER_AGE_LIMIT = 3;
+const CONFIG_NWK_ROUTER_AGE_LIMIT = 3;
 /** This is an index into Table 3-54. It indicates the default timeout in minutes for any end device that does not negotiate a different timeout value. */
 export const CONFIG_NWK_ED_TIMEOUT_DEFAULT = 8;
 /**
@@ -162,7 +162,7 @@ export class NWKHandler {
      * - ✅ Derives incoming/outgoing cost from neighbor LQA and routing metrics (spec Table 3-20)
      * - ✅ Resets timer using refresh() to maintain continuous reporting while handler active
      * - ⚠️  Aggregated cost calculation includes implementation-specific LQA penalty (documented)
-     * - ⚠️  Does not enforce routerAge limit (CONFIG_NWK_ROUTER_AGE_LIMIT TODO) but aligns with spec recommendation to age entries
+     * - ✅ Enforces CONFIG_NWK_ROUTER_AGE_LIMIT by zeroing costs after consecutive misses per spec
      * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     public async sendPeriodicZigbeeNWKLinkStatus(): Promise<void> {
@@ -170,6 +170,21 @@ export class NWKHandler {
 
         for (const [device64, entry] of this.#context.deviceTable.entries()) {
             if (entry.neighbor) {
+                if (entry.capabilities?.deviceType === ZigbeeMACConsts.DEVICE_TYPE_FFD) {
+                    const nextMisses = (entry.linkStatusMisses ?? 0) + 1; // XXX: technically uint16, doesn't matter with host-based
+                    entry.linkStatusMisses = nextMisses;
+
+                    if (nextMisses > CONFIG_NWK_ROUTER_AGE_LIMIT) {
+                        links.push({
+                            address: entry.address16,
+                            incomingCost: 0,
+                            outgoingCost: 0,
+                        });
+
+                        continue;
+                    }
+                }
+
                 try {
                     // calculate cost based on path cost and recent link quality
                     const [, , pathCost] = this.findBestSourceRoute(entry.address16, device64);
@@ -1491,12 +1506,16 @@ export class NWKHandler {
 
         let device = nwkHeader.source64 !== undefined ? this.#context.deviceTable.get(nwkHeader.source64) : undefined;
 
-        if (!device && nwkHeader.source16 !== undefined) {
+        if (device === undefined && nwkHeader.source16 !== undefined) {
             const source64 = this.#context.address16ToAddress64.get(nwkHeader.source16);
 
             if (source64 !== undefined) {
                 device = this.#context.deviceTable.get(source64);
             }
+        }
+
+        if (device?.capabilities?.deviceType === ZigbeeMACConsts.DEVICE_TYPE_FFD) {
+            device.linkStatusMisses = 0;
         }
 
         for (let i = 0; i < linkCount; i++) {

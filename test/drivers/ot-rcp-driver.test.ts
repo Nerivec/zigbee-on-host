@@ -550,6 +550,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             driver.context.deviceTable.set(12656887476334n, {
                 address16: 3457,
@@ -560,6 +561,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             driver.context.deviceTable.set(12328965645634n, {
                 address16: 9674,
@@ -570,6 +572,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             driver.context.deviceTable.set(234367481234n, {
                 address16: 54748,
@@ -580,6 +583,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             driver.context.sourceRouteTable.set(1, [
                 createTestSourceRouteEntry([], 1, sourceRouteLastUpdated1One),
@@ -634,6 +638,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             expect(driver.context.deviceTable.get(12656887476334n)).toStrictEqual({
                 address16: 3457,
@@ -644,6 +649,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             expect(driver.context.deviceTable.get(12328965645634n)).toStrictEqual({
                 address16: 9674,
@@ -654,6 +660,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             expect(driver.context.deviceTable.get(234367481234n)).toStrictEqual({
                 address16: 54748,
@@ -664,6 +671,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             expect(driver.context.address16ToAddress64.size).toStrictEqual(4);
             expect(driver.context.address16ToAddress64.get(1)).toStrictEqual(1234n);
@@ -2015,6 +2023,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0xa18f, source64);
 
@@ -2130,6 +2139,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_DEVICE_ANNOUNCE_BCAST, Buffer.from([0xd8, 0xff, 0x00, 0x00])), "utf8", () => {});
@@ -2172,6 +2182,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [200, 153, 178, 188],
                 incomingNWKFrameCounter: 33498,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
         });
 
@@ -2238,6 +2249,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0x3ab1, 6685525477083214058n);
             // not set on purpose to observe change from actual route record
@@ -3084,6 +3096,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0x96ba, 9244571720527165811n);
             // driver.context.sourceRouteTable.set(0x96ba, [{relayAddresses: [], pathCost: 1}]);
@@ -3097,6 +3110,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0x91d2, 8118874123826907736n);
             // driver.context.sourceRouteTable.set(0x91d2, [{relayAddresses: [], pathCost: 1}]);
@@ -3110,6 +3124,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0xcb47, 5149013569626593n);
             // mimic no source route entry for 0xcb47
@@ -3123,6 +3138,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0x6887, 5149013643361676n);
             // driver.context.sourceRouteTable.set(0x6887, [{relayAddresses: [0x96ba], pathCost: 2}]);
@@ -3136,6 +3152,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0x9ed5, 5149013578478658n);
             // driver.context.sourceRouteTable.set(0x9ed5, [{relayAddresses: [0x91d2], pathCost: 2}]);
@@ -3149,6 +3166,7 @@ describe("OT RCP Driver", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0x4b8e, 5149013573816379n);
             // driver.context.sourceRouteTable.set(0x4b8e, [{relayAddresses: [0xcb47], pathCost: 2}]);

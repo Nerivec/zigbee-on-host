@@ -673,6 +673,7 @@ describe("NWK Handler", () => {
                 recentLQAs: [255],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
 
             const macHeader: MACHeader = {
@@ -752,6 +753,7 @@ describe("NWK Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
 
             const existing = nwkHandler.createSourceRouteEntry([], 5);
@@ -969,6 +971,7 @@ describe("NWK Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
 
             const payload = Buffer.from([ZigbeeNWKCommandId.ED_TIMEOUT_REQUEST, 0x04, 0x00]);
@@ -1308,6 +1311,7 @@ describe("NWK Handler", () => {
                 recentLQAs: [200],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
 
             mockContext.deviceTable.set(device2Addr64, {
@@ -1319,6 +1323,7 @@ describe("NWK Handler", () => {
                 recentLQAs: [180],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
 
             mockContext.address16ToAddress64.set(0x1234, device1Addr64);
@@ -1327,6 +1332,37 @@ describe("NWK Handler", () => {
             await nwkHandler.sendPeriodicZigbeeNWKLinkStatus();
 
             expect(mockMACHandler.sendFrame).toHaveBeenCalled();
+        });
+
+        it("zeroes link costs after router age limit misses", async () => {
+            const deviceAddr64 = 0x00124b0012345612n;
+            mockContext.deviceTable.set(deviceAddr64, {
+                address16: 0x1357,
+                capabilities: { rxOnWhenIdle: true, deviceType: 1, alternatePANCoordinator: false } as MACCapabilities,
+                authorized: true,
+                neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
+                recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
+            });
+            mockContext.address16ToAddress64.set(0x1357, deviceAddr64);
+
+            const findBestSourceRouteSpy = vi.spyOn(nwkHandler, "findBestSourceRoute").mockReturnValue([undefined, undefined, 2]);
+            const sendLinkStatusSpy = vi.spyOn(nwkHandler, "sendLinkStatus").mockResolvedValue(undefined);
+
+            await nwkHandler.sendPeriodicZigbeeNWKLinkStatus();
+            await nwkHandler.sendPeriodicZigbeeNWKLinkStatus();
+            await nwkHandler.sendPeriodicZigbeeNWKLinkStatus();
+            await nwkHandler.sendPeriodicZigbeeNWKLinkStatus();
+
+            expect(findBestSourceRouteSpy).toHaveBeenCalledTimes(3);
+            expect(sendLinkStatusSpy).toHaveBeenCalledTimes(4);
+            expect(sendLinkStatusSpy).toHaveBeenNthCalledWith(1, [{ address: 0x1357, incomingCost: 2, outgoingCost: 2 }]);
+            expect(sendLinkStatusSpy).toHaveBeenNthCalledWith(2, [{ address: 0x1357, incomingCost: 2, outgoingCost: 2 }]);
+            expect(sendLinkStatusSpy).toHaveBeenNthCalledWith(3, [{ address: 0x1357, incomingCost: 2, outgoingCost: 2 }]);
+            expect(sendLinkStatusSpy).toHaveBeenNthCalledWith(4, [{ address: 0x1357, incomingCost: 0, outgoingCost: 0 }]);
         });
 
         it("should send periodic many-to-one route request", async () => {
@@ -1563,6 +1599,7 @@ describe("NWK Handler", () => {
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         });
 
         const existingEntry = nwkHandler.createSourceRouteEntry([0x1001], 2);
@@ -1604,6 +1641,7 @@ describe("NWK Handler", () => {
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(responder16, responder64);
 
@@ -1654,6 +1692,7 @@ describe("NWK Handler", () => {
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         });
 
         const linkSpy = vi.spyOn(nwkHandler, "sendLinkStatus").mockResolvedValue();

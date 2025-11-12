@@ -188,6 +188,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -249,6 +250,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -275,6 +277,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -301,6 +304,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -329,6 +333,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -353,6 +358,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -378,6 +384,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -402,6 +409,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -426,6 +434,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -452,6 +461,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -477,6 +487,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -503,6 +514,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -808,6 +820,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
 
             const payload = Buffer.alloc(12);
@@ -865,6 +878,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
 
             const payload = Buffer.alloc(12);
@@ -945,6 +959,7 @@ describe("APS Handler", () => {
                 recentLQAs: [150, 155, 152],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
 
             mockContext.deviceTable.set(0x00124b0022222222n, {
@@ -963,6 +978,7 @@ describe("APS Handler", () => {
                 recentLQAs: [100],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
 
             mockContext.deviceTable.set(0x00124b0033333333n, {
@@ -974,6 +990,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
 
             const lqiTable = apsHandler.getLQITableResponse(0);
@@ -1023,6 +1040,7 @@ describe("APS Handler", () => {
                     recentLQAs: [],
                     incomingNWKFrameCounter: undefined,
                     endDeviceTimeout: undefined,
+                    linkStatusMisses: 0,
                 });
             }
 
@@ -1660,6 +1678,7 @@ describe("APS Handler", () => {
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(0x7788, destination64);
 
@@ -1775,6 +1794,7 @@ describe("APS Handler", () => {
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         });
         const apsHeader = {
             frameControl: {
@@ -1819,6 +1839,7 @@ describe("APS Handler", () => {
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         });
         mockContext.setAppLinkKey(requester64, partner64, cachedKey);
 
@@ -1980,6 +2001,7 @@ describe("APS Handler", () => {
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -2036,6 +2058,7 @@ describe("APS Handler", () => {
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -2101,6 +2124,7 @@ describe("APS Handler", () => {
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         };
         mockContext.deviceTable.set(dest64, savedEntry);
         mockContext.address16ToAddress64.set(dest16, dest64);
@@ -2203,6 +2227,7 @@ describe("APS Handler", () => {
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -2270,6 +2295,7 @@ describe("APS Handler", () => {
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -2378,6 +2404,7 @@ describe("APS Handler", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
         }
 
@@ -2486,6 +2513,7 @@ describe("APS Handler", () => {
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         });
 
         const leaveSpy = vi.spyOn(mockNWKHandler, "sendLeave").mockResolvedValueOnce(false);

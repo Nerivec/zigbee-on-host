@@ -3,6 +3,14 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { OTRCPDriver } from "../drivers/ot-rcp-driver";
+import { ZigbeeMACConsts } from "../zigbee/mac";
+
+enum InterviewState {
+    PENDING = "PENDING",
+    IN_PROGRESS = "IN_PROGRESS",
+    SUCCESSFUL = "SUCCESSFUL",
+    FAILED = "FAILED",
+}
 
 type DeviceDatabaseEntry = {
     id: number;
@@ -17,7 +25,7 @@ type DeviceDatabaseEntry = {
         | "DC Source"
         | "Emergency mains constantly powered"
         | "Emergency mains and transfer switch";
-    interviewCompleted: boolean;
+    interviewState: InterviewState;
 };
 type GroupDatabaseEntry = {
     id: number;
@@ -198,20 +206,24 @@ async function convert(dataPath: string): Promise<void> {
             // this could be... wrong, devices not always use this properly
             capabilities: {
                 alternatePANCoordinator: false,
-                deviceType: device.type === "Router" ? 0x01 : 0x00,
-                powerSource: device.powerSource !== "Unknown" && device.powerSource !== "Battery" ? 0x01 : 0x00,
+                deviceType: device.type === "Router" ? ZigbeeMACConsts.DEVICE_TYPE_FFD : ZigbeeMACConsts.DEVICE_TYPE_RFD,
+                powerSource:
+                    device.powerSource !== "Unknown" && device.powerSource !== "Battery"
+                        ? ZigbeeMACConsts.POWER_SOURCE_MAINS
+                        : ZigbeeMACConsts.POWER_SOURCE_OTHER,
                 rxOnWhenIdle: device.type === "Router" && device.powerSource !== "Unknown" && device.powerSource !== "Battery",
                 securityCapability: false,
                 allocateAddress: true,
             },
             // technically not correct, but reasonable expectation
-            authorized: device.interviewCompleted === true,
+            authorized: device.interviewState === InterviewState.SUCCESSFUL,
             // add support for not knowing this in driver (re-evaluation)
             neighbor: backupDevice?.is_child !== true,
             lastTransportedNetworkKeySeq: undefined,
             recentLQAs: [],
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
         });
     }
 

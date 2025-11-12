@@ -333,6 +333,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(router16, router64);
 
@@ -396,6 +397,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(relay16, relay64);
 
@@ -415,6 +417,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(destination16, destination64);
 
@@ -470,6 +473,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(router16, router64);
 
@@ -549,6 +553,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 recentLQAs: [250, 245, 240],
                 incomingNWKFrameCounter: undefined,
                 endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(neighbor16, neighbor64);
 
@@ -986,6 +991,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                     recentLQAs: [],
                     incomingNWKFrameCounter: undefined,
                     endDeviceTimeout: undefined,
+                    linkStatusMisses: 0,
                 });
                 context.address16ToAddress64.set(device16, device64);
 
@@ -1083,6 +1089,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                     recentLQAs: [],
                     incomingNWKFrameCounter: undefined,
                     endDeviceTimeout: undefined,
+                    linkStatusMisses: 0,
                 });
                 context.address16ToAddress64.set(device16, device64);
 

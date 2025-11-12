@@ -2512,7 +2512,11 @@ export class APSHandler {
                     continue;
                 }
 
-                const deviceType = entry.capabilities ? (entry.capabilities.deviceType === 1 ? 0x01 /* ZR */ : 0x02 /* ZED */) : 0x03 /* UNK */;
+                const deviceType = entry.capabilities
+                    ? entry.capabilities.deviceType === ZigbeeMACConsts.DEVICE_TYPE_FFD
+                        ? 0x01 /* ZR */
+                        : 0x02 /* ZED */
+                    : 0x03 /* UNK */;
                 const rxOnWhenIdle = entry.capabilities ? (entry.capabilities.rxOnWhenIdle ? 0x01 /* ON */ : 0x00 /* OFF */) : 0x02 /* UNK */;
                 const relationship = 0x02; // TODO // 0x00 = neighbor is the parent, 0x01 = neighbor is a child, 0x02 = neighbor is a sibling, 0x03 = None of the above
                 const permitJoining = 0x02; // TODO // 0x00 = neighbor is not accepting join requests, 0x01 = neighbor is accepting join requests, 0x02 = unknown
