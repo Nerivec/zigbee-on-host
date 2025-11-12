@@ -94,8 +94,6 @@ export class MACHandler {
      * - ✅ Transmits MAC payloads via MLME-DATA.request semantics with caller-provided sequence number
      * - ✅ Clears macNoACKs table on successful unicast (spec #6.7.4.3 requires reset after acknowledged delivery)
      * - ✅ Marks routes successful on unicast delivery to keep NWK path metrics aligned with MAC status
-     * - ⚠️  Implements retry/ACK handling upstream; assumes caller respected macMaxFrameRetries configuration
-     * - ⚠️  No security processing here (handled by caller when frames are pre-encoded)
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param seqNum MAC sequence number
@@ -198,7 +196,6 @@ export class MACHandler {
      * - ✅ Selects source addressing mode based on extSource flag, aligning with ASSOC_RSP requirements
      * - ✅ Applies PAN ID compression rules for coordinator origin (spec #5.2.1.11)
      * - ✅ Delegates security and payload composition to caller, keeping command encoder generic
-     * - ⚠️  MAC command retry policy inherited from sendFrame; no per-command overrides
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param cmdId MAC command ID
@@ -313,11 +310,10 @@ export class MACHandler {
      * - ✅ Determines initial join vs rejoin by checking if device is known
      * - ✅ Stores pending association in map for DATA_REQ retrieval
      * - ✅ Pending association includes sendResp callback and timestamp
-     * - ⚠️  SPEC COMPLIANCE: Association response is indirect transmission
+     * - ✅  SPEC COMPLIANCE: Association response is indirect transmission
      *       - Per IEEE 802.15.4 #6.3.2, response SHALL be sent via indirect transmission
      *       - Implementation stores in pendingAssociations for DATA_REQ ✅
      *       - Respects macResponseWaitTime via timestamp check ✅
-     * - ⚠️  TIMING: Uses Date.now() for timestamp - should align with MAC_INDIRECT_TRANSMISSION_TIMEOUT
      * - ✅ Delivers TRANSPORT_KEY_NWK after successful association (Zigbee Trust Center requirement)
      * - ✅ Uses MAC capabilities to determine device type correctly
      * DEVICE SCOPE: Coordinator, routers (N/A)
@@ -404,7 +400,6 @@ export class MACHandler {
      * - ✅ Handles both coordinator- and device-initiated reasons
      * - ✅ Removes device state through StackContext.disassociate
      * - ⚠️ Does not emit confirmation back to child (not required for coordinator role)
-     * - ❌ TODO: Maintain per-reason metrics for diagnostics
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     public async processDisassocNotify(data: Buffer, offset: number, macHeader: MACHeader): Promise<number> {
@@ -467,7 +462,7 @@ export class MACHandler {
      * - ✅ Sets panIdCompression=false (source PAN ID must be present)
      * - ✅ Uses destAddrMode=NONE (beacons have no destination)
      * - ✅ Uses sourceAddrMode=SHORT with coordinator address
-     * - ⚠️  SUPERFRAME SPEC VALUES:
+     * - ✅  SUPERFRAME spec values:
      *       - beaconOrder=0x0f: Non-beacon enabled PAN ✅ (correct for Zigbee PRO)
      *       - superframeOrder=0x0f: Matches beaconOrder ✅
      *       - finalCAPSlot=0x0f: Comment says "XXX: value from sniff, matches above"
@@ -560,7 +555,7 @@ export class MACHandler {
      * - ✅ Deletes pending association after processing (prevents stale entries)
      * - ✅ Handles indirect transmissions from indirectTransmissions map
      * - ✅ Uses shift() to get FIFO ordering (oldest frame first)
-     * - ⚠️  SPEC COMPLIANCE: Timestamp validation
+     * - ✅  SPEC COMPLIANCE: Timestamp validation
      *       - Checks (timestamp + timeout > Date.now()) ✅
      *       - Correctly expires old transmissions ✅
      *       - Iterates through queue to find non-expired frame ✅

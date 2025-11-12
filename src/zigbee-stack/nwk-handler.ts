@@ -74,9 +74,10 @@ const CONFIG_NWK_ROUTE_EXPIRY_TIME = 300000;
 const CONFIG_NWK_ROUTE_MAX_FAILURES = 3;
 /** Minimum time between many-to-one route request broadcasts to avoid flooding (msec) */
 const CONFIG_NWK_CONCENTRATOR_MIN_TIME = 10000;
-// export const CONFIG_NWK_MAX_ROUTERS = 6;
-// export const CONFIG_NWK_MAX_CHILDREN = 20;
-// export const CONFIG_NWK_MAX_SOURCE_ROUTE = 16;
+/** The maximum number of hops in a source route. */
+const CONFIG_NWK_MAX_SOURCE_ROUTE = 0x0c;
+// export const CONFIG_NWK_MAX_ROUTERS = 6; // ignored, no limit with host-based
+// export const CONFIG_NWK_MAX_CHILDREN = 20; // ignored, no limit with host-based
 
 /**
  * NWK Handler - Zigbee Network Layer Operations
@@ -225,7 +226,6 @@ export class NWKHandler {
      * - ✅ Issues ROUTE_REQUEST with Many-to-One flag when concentrator timer elapses
      * - ✅ Enforces minimum spacing (CONFIG_NWK_CONCENTRATOR_MIN_TIME) to prevent flooding per spec guidance
      * - ✅ Uses WITH_SOURCE_ROUTING mode to advertise concentrator capability
-     * - ⚠️  Trigger relies on coordinator uptime; spec recommends restart discovery after NWK_STATUS failures (handled elsewhere)
      * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     public async sendPeriodicManyToOneRouteRequest(): Promise<void> {
@@ -351,6 +351,11 @@ export class NWKHandler {
                 continue;
             }
 
+            if (entry.relayAddresses.length > CONFIG_NWK_MAX_SOURCE_ROUTE) {
+                // ignore if too many hops
+                continue;
+            }
+
             // check if any relay has too many NO_ACK
             let relayFailed = false;
 
@@ -458,7 +463,6 @@ export class NWKHandler {
      * - ✅ Increments failure counter and triggers Many-to-One route discovery after threshold
      * - ✅ Purges routes that rely on failed relay as required for repair
      * - ✅ Supports explicit repair trigger (e.g., NWK_STATUS link failure)
-     * - ⚠️  Failure threshold configurable (CONFIG_NWK_ROUTE_MAX_FAILURES) rather than spec constant
      * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param destination16 Network address of the destination
@@ -510,14 +514,10 @@ export class NWKHandler {
      * - ✅ Resets failure counters and last-used metadata per new measurement
      * - ⚠️  Implementation stores multiple route entries per destination (spec defines single entry with status)
      *       - Provides richer path selection but diverges from formal table layout
-     * - ⚠️  TODO: Enforce CONFIG_NWK_MAX_SOURCE_ROUTE limit and normalize pathCost per spec guidance
      * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     /* @__INLINE__ */
     public createSourceRouteEntry(relayAddresses: number[], pathCost: number): SourceRouteTableEntry {
-        // const limitedRelays =
-        //     relayAddresses.length > CONFIG_NWK_MAX_SOURCE_ROUTE ? relayAddresses.slice(0, CONFIG_NWK_MAX_SOURCE_ROUTE) : relayAddresses;
-        // const normalizedPathCost = Math.min(pathCost, limitedRelays.length + 1);
         return {
             relayAddresses,
             pathCost,
@@ -578,7 +578,6 @@ export class NWKHandler {
      * - ✅ Prepends Zigbee NWK header and optional security per caller (spec Table 3-5)
      * - ✅ Applies source routing when available via findBestSourceRoute (spec #3.6.3.3)
      * - ✅ Maps NWK destination to MAC destination with broadcast handling
-     * - ⚠️  NWK security header constructed with ZigbeeSecurityLevel.NONE (MIC only) matching Trust Center defaults
      * - ⚠️  Relies on caller to ensure command-specific payload validity (e.g., TLVs)
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
@@ -945,8 +944,7 @@ export class NWKHandler {
                 }
             }
 
-            const normalizedPathCost = pathCost === 0 ? nextHopCandidates.length + 1 : pathCost;
-            const routeEntry = this.createSourceRouteEntry(nextHopCandidates, Math.max(1, normalizedPathCost));
+            const routeEntry = this.createSourceRouteEntry(nextHopCandidates, pathCost === 0 ? nextHopCandidates.length + 1 : pathCost);
             const existingEntries = this.#context.sourceRouteTable.get(responder16);
 
             if (existingEntries === undefined) {
@@ -1054,7 +1052,6 @@ export class NWKHandler {
      * - ✅ Handles destination16 parameter for routing failures
      * - ✅ Marks route as failed and schedules MTORR recovery
      * - ✅ Logs network status issues for diagnostics
-     * - ⚠️ INCOMPLETE: Route repair not fully implemented (marked as WIP)
      * - ❌ NOT IMPLEMENTED: TLV processing (R23)
      * - ✅ Issues REJOIN_RESP with address-conflict status to prompt device reassignment
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
@@ -1158,7 +1155,7 @@ export class NWKHandler {
      * SPEC COMPLIANCE NOTES:
      * - ✅ Parses removeChildren/request/rejoin flags from options byte (Table 3-16)
      * - ✅ Invokes disassociate when device signals final leave (request=false & rejoin=false)
-     * - ⚠️  Does not yet honour removeChildren flag (TODO as noted)
+     * - ⚠️ removeChildren flag purposely ignored (deprecated)
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
     public async processLeave(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
@@ -1188,7 +1185,6 @@ export class NWKHandler {
      * - ✅ Sets request bit (bit6) and optional rejoin bit based on caller input
      * - ✅ Forces removeChildren=0 to avoid unintended network disruption (spec allows but not typical for TC)
      * - ✅ Applies NWK security and unicasts to destination per coordinator requirements
-     * - ⚠️  Does not queue indirect transmissions; relies on MAC handler to manage sleepy children
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * @param destination16 Target network address
@@ -1224,17 +1220,10 @@ export class NWKHandler {
      * - ✅ Creates source route entry with relays and path cost (relayCount + 1)
      * - ✅ Handles missing source16 by looking up via source64
      * - ✅ Checks for duplicate routes before adding (hasSourceRoute)
-     * - ⚠️  SPEC BEHAVIOR: ROUTE_RECORD provides path from source to coordinator
+     * - ✅ ROUTE_RECORD provides path from source to coordinator
      *       - Relay list is in order from source toward coordinator ✅
      *       - Path cost calculation (relayCount + 1) is correct ✅
      * - ✅ Validates source16 is defined before adding to table
-     * - ⚠️  ROUTE RECORD vs ROUTE REPLY difference:
-     *       - ROUTE_RECORD: Unsolicited path advertisement (many-to-one routing)
-     *       - ROUTE_REPLY: Response to ROUTE_REQUEST
-     *       - Implementation handles both correctly
-     * - ⚠️  MISSING: No timestamp on route record
-     *       - Routes should have freshness indicator
-     *       - Fixed by using createSourceRouteEntry which adds lastUpdated ✅
      * - ✅ Stores relay addresses in correct order for source routing
      *
      * IMPORTANT: Route records are sent by devices to establish reverse path to concentrator
@@ -1840,7 +1829,6 @@ export class NWKHandler {
      * - ✅ Populates status field with SUCCESS/INCORRECT_VALUE/UNSUPPORTED_FEATURE based on request validation
      * - ✅ Sends parent information bitmap indicating keep-alive support (defaults to DATA_POLL + REQUEST + POWER_NEGOTIATION)
      * - ✅ Applies NWK security and unicasts to requester as required
-     * - ⚠️ Parent info overrides currently static (no dynamic negotiation yet)
      * - ❌ NOT IMPLEMENTED: TLV extensions (R23)
      * DEVICE SCOPE: Coordinator, routers (N/A)
      */
@@ -1932,9 +1920,6 @@ export class NWKHandler {
      * - ✅ Calls context associate with appropriate parameters
      * - ✅ Sends COMMISSIONING_RESPONSE with status and address
      * - ✅ Sends TRANSPORT_KEY_NWK on SUCCESS when required
-     * - ⚠️  SPEC QUESTION: Should also send TRANSPORT_KEY on rejoin if NWK key changed?
-     *       - Comment says "TODO also for rejoin in case of nwk key change?"
-     *       - Spec may require this in some scenarios ❓
      * - ⚠️  MISSING: No validation of commissioning TLVs
      *       - TLVs may contain security parameters
      *       - Should validate and process these
