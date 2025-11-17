@@ -145,12 +145,12 @@ export async function processFrame(
             );
 
             if (nwkFCF.security && nwkHeader.securityHeader) {
-                const accepted = context.updateIncomingNWKFrameCounter(resolvedSource64, nwkHeader.securityHeader.frameCounter);
+                const accepted = context.updateIncomingNWKFrameCounter(nwkHeader.securityHeader.source64, nwkHeader.securityHeader.frameCounter);
 
                 if (!accepted) {
                     logger.warning(
                         () =>
-                            `<-x- NWK Rejecting replay frame src16=${nwkHeader.source16}:${resolvedSource64} counter=${nwkHeader.securityHeader?.frameCounter}`,
+                            `<-x- NWK Rejecting replay frame src16=${nwkHeader.source16}:${nwkHeader.securityHeader!.source64} counter=${nwkHeader.securityHeader?.frameCounter}`,
                         NS,
                     );
 
@@ -163,7 +163,7 @@ export async function processFrame(
                 const [apsHeader, apsHOutOffset] = decodeZigbeeAPSHeader(nwkPayload, apsFCFOutOffset, apsFCF);
 
                 if (nwkHeader.source16 === undefined && nwkHeader.source64 === undefined) {
-                    logger.debug(() => `<-~- APS Ignoring frame with no sender info seqNum=${nwkHeader.seqNum}`, NS);
+                    logger.debug(() => `<-~- APS Ignoring frame with no sender info nwkSeqNum=${nwkHeader.seqNum}`, NS);
                     return;
                 }
 
@@ -173,7 +173,7 @@ export async function processFrame(
 
                 // Delegate APS duplicate check to APS handler
                 if (apsHeader.frameControl.frameType !== ZigbeeAPSFrameType.ACK && apsHandler.isDuplicateFrame(nwkHeader, apsHeader)) {
-                    logger.debug(() => `<=~= APS Ignoring duplicate frame seqNum=${nwkHeader.seqNum} counter=${apsHeader.counter}`, NS);
+                    logger.debug(() => `<=~= APS Ignoring duplicate frame nwkSeqNum=${nwkHeader.seqNum} counter=${apsHeader.counter}`, NS);
                     return;
                 }
 
