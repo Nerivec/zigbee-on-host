@@ -55,7 +55,7 @@ import {
     ZigbeeNWKRouteDiscovery,
     ZigbeeNWKStatus,
 } from "../../src/zigbee/zigbee-nwk.js";
-import { APSHandler, type APSHandlerCallbacks } from "../../src/zigbee-stack/aps-handler.js";
+import { APSHandler, type APSHandlerCallbacks, CONFIG_APS_MAX_FRAME_RETRIES } from "../../src/zigbee-stack/aps-handler.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
 import { NWKGPHandler, type NWKGPHandlerCallbacks } from "../../src/zigbee-stack/nwk-gp-handler.js";
 import { NWKHandler, type NWKHandlerCallbacks } from "../../src/zigbee-stack/nwk-handler.js";
@@ -1431,7 +1431,7 @@ describe("Integration and End-to-End Compliance", () => {
 
                 expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(1);
 
-                for (let attempt = 0; attempt < 3; attempt += 1) {
+                for (let attempt = 0; attempt < CONFIG_APS_MAX_FRAME_RETRIES; attempt++) {
                     await vi.advanceTimersByTimeAsync(1500);
                     await Promise.resolve();
                 }
@@ -1439,8 +1439,8 @@ describe("Integration and End-to-End Compliance", () => {
                 await vi.advanceTimersByTimeAsync(1500);
                 await Promise.resolve();
 
-                expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(4);
-                expect(transmittedFrames).toHaveLength(4);
+                expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(CONFIG_APS_MAX_FRAME_RETRIES + 1);
+                expect(transmittedFrames).toHaveLength(CONFIG_APS_MAX_FRAME_RETRIES + 1);
                 expect(mockMACHandlerCallbacks.onMarkRouteFailure).not.toHaveBeenCalled();
             } finally {
                 vi.useRealTimers();

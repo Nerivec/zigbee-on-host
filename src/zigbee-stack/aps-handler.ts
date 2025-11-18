@@ -93,20 +93,14 @@ export interface APSHandlerCallbacks {
     onDeviceAuthorized: StackCallbacks["onDeviceAuthorized"];
 }
 
-/** Duration while APS duplicate table entries remain valid (milliseconds). Spec default ≈ 8s. */
-const CONFIG_APS_DUPLICATE_TIMEOUT_MS = 8000;
-/** Default ack wait duration per Zigbee 3.0 spec (milliseconds). */
-const CONFIG_APS_ACK_WAIT_DURATION_MS = 1500;
-/** Default number of APS retransmissions when ACK is missing. */
-const CONFIG_APS_MAX_FRAME_RETRIES = 3;
-/** Maximum payload that may be transmitted without APS fragmentation. */
-const CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX = ZigbeeAPSConsts.PAYLOAD_MAX_SIZE;
-/** Number of bytes carried in each APS fragment after the first one. */
-const CONFIG_APS_FRAGMENT_PAYLOAD_SIZE = 40;
-/** Number of bytes reserved in the first APS fragment for metadata. */
-const CONFIG_APS_FRAGMENT_FIRST_OVERHEAD = 2;
-/** Timeout for incomplete incoming APS fragment reassembly (milliseconds). */
-const CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS = 30000;
+/** apsDuplicateEntryLifetime: Duration while APS duplicate table entries remain valid (milliseconds). Spec default ≈ 8s. */
+const CONFIG_APS_DUPLICATE_TIMEOUT_MS = 8000; // TODO: verify
+/** apsAckWaitDuration: Default ack wait duration per Zigbee 3.0 spec (milliseconds). */
+export const CONFIG_APS_ACK_WAIT_DURATION_MS = 1600 + 200; // some extra for ZoH
+/** apsMaxFrameRetries: Default number of APS retransmissions when ACK is missing. */
+export const CONFIG_APS_MAX_FRAME_RETRIES = 3;
+/** apsFragmentationTimeout: Timeout for incomplete incoming APS fragment reassembly (milliseconds). */
+const CONFIG_APS_FRAGMENT_REASSEMBLY_TIMEOUT_MS = 30000; // TODO: verify
 
 /**
  * APS Handler - Zigbee Application Support Layer Operations
@@ -334,7 +328,7 @@ export class APSHandler {
         };
         const apsCounter = this.nextCounter();
 
-        if (finalPayload.length > CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX) {
+        if (finalPayload.length > ZigbeeAPSConsts.PAYLOAD_MAX_SIZE) {
             return await this.#sendFragmentedData(params, apsCounter);
         }
 
@@ -540,7 +534,7 @@ export class APSHandler {
      */
     async #sendFragmentedData(params: SendDataParams, apsCounter: number): Promise<number> {
         const payload = params.finalPayload;
-        if (payload.byteLength <= CONFIG_APS_UNFRAGMENTED_PAYLOAD_MAX) {
+        if (payload.byteLength <= ZigbeeAPSConsts.PAYLOAD_MAX_SIZE) {
             return apsCounter;
         }
 
@@ -559,10 +553,10 @@ export class APSHandler {
         const chunks: Buffer[] = [];
         let offset = 0;
         let block = 0;
-        const firstChunkSize = Math.max(1, CONFIG_APS_FRAGMENT_PAYLOAD_SIZE - CONFIG_APS_FRAGMENT_FIRST_OVERHEAD);
+        const firstChunkSize = Math.max(1, ZigbeeAPSConsts.FRAGMENT_PAYLOAD_SIZE - ZigbeeAPSConsts.FRAGMENT_FIRST_LENGTH_SIZE);
 
         while (offset < payload.byteLength) {
-            const size = block === 0 ? firstChunkSize : CONFIG_APS_FRAGMENT_PAYLOAD_SIZE;
+            const size = block === 0 ? firstChunkSize : ZigbeeAPSConsts.FRAGMENT_PAYLOAD_SIZE;
             const chunk = Buffer.from(payload.subarray(offset, offset + size));
             chunks.push(chunk);
             offset += chunk.byteLength;

@@ -10,6 +10,10 @@ export const enum ZigbeeAPSConsts {
     PAYLOAD_MIN_SIZE = 65,
     /** no NWK security */
     PAYLOAD_MAX_SIZE = 100,
+    /** apsFragmentPayloadSize: Number of bytes carried in each APS fragment after the first one. TODO: verify */
+    FRAGMENT_PAYLOAD_SIZE = 48,
+    /** The first fragment includes a two-octet length field preceding the fragmented payload. */
+    FRAGMENT_FIRST_LENGTH_SIZE = 2,
 
     CMD_KEY_TC_MASTER = 0x00,
     CMD_KEY_STANDARD_NWK = 0x01,

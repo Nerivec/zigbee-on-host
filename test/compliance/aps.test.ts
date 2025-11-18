@@ -40,7 +40,12 @@ import {
     type ZigbeeNWKHeader,
     ZigbeeNWKRouteDiscovery,
 } from "../../src/zigbee/zigbee-nwk.js";
-import { APSHandler, type APSHandlerCallbacks } from "../../src/zigbee-stack/aps-handler.js";
+import {
+    APSHandler,
+    type APSHandlerCallbacks,
+    CONFIG_APS_ACK_WAIT_DURATION_MS,
+    CONFIG_APS_MAX_FRAME_RETRIES,
+} from "../../src/zigbee-stack/aps-handler.js";
 import { processFrame } from "../../src/zigbee-stack/frame.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
 import { NWKGPHandler, type NWKGPHandlerCallbacks } from "../../src/zigbee-stack/nwk-gp-handler.js";
@@ -909,7 +914,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
 
                 expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(1);
 
-                for (let attempt = 1; attempt <= 3; attempt += 1) {
+                for (let attempt = 1; attempt <= CONFIG_APS_MAX_FRAME_RETRIES; attempt++) {
                     await vi.runOnlyPendingTimersAsync();
                     expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(1 + attempt);
                 }
@@ -963,13 +968,14 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
 
                 await vi.runOnlyPendingTimersAsync();
 
-                expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(4);
-                expect(sentFrames).toHaveLength(4);
+                expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(CONFIG_APS_MAX_FRAME_RETRIES + 1);
+                expect(sentFrames).toHaveLength(CONFIG_APS_MAX_FRAME_RETRIES + 1);
             } finally {
                 mockMACHandlerCallbacks.onSendFrame = vi.fn();
                 vi.useRealTimers();
             }
         });
+
         it("stops retransmissions once apsMaxFrameRetries is reached", async () => {
             vi.useFakeTimers();
 
@@ -1001,17 +1007,17 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
 
                 expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(1);
 
-                for (let attempt = 1; attempt <= 3; attempt += 1) {
+                for (let attempt = 1; attempt <= CONFIG_APS_MAX_FRAME_RETRIES; attempt++) {
                     await vi.runOnlyPendingTimersAsync();
                     expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(1 + attempt);
                 }
 
                 await vi.runOnlyPendingTimersAsync();
-                expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(4);
+                expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(CONFIG_APS_MAX_FRAME_RETRIES + 1);
 
                 await vi.advanceTimersByTimeAsync(60000);
-                expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(4);
-                expect(sentFrames).toHaveLength(4);
+                expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(CONFIG_APS_MAX_FRAME_RETRIES + 1);
+                expect(sentFrames).toHaveLength(CONFIG_APS_MAX_FRAME_RETRIES + 1);
             } finally {
                 mockMACHandlerCallbacks.onSendFrame = vi.fn();
                 vi.useRealTimers();
@@ -2823,7 +2829,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
 
                 expect(sentFrames).toHaveLength(1);
 
-                await vi.advanceTimersByTimeAsync(1499);
+                await vi.advanceTimersByTimeAsync(CONFIG_APS_ACK_WAIT_DURATION_MS - 1);
                 expect(sentFrames).toHaveLength(1);
 
                 await vi.advanceTimersByTimeAsync(1);
@@ -2914,13 +2920,13 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
 
                 expect(sentFrames).toHaveLength(1);
 
-                for (let attempt = 1; attempt <= 3; attempt += 1) {
-                    await vi.advanceTimersByTimeAsync(1500);
+                for (let attempt = 1; attempt <= CONFIG_APS_MAX_FRAME_RETRIES; attempt++) {
+                    await vi.advanceTimersByTimeAsync(CONFIG_APS_ACK_WAIT_DURATION_MS);
                     expect(sentFrames).toHaveLength(1 + attempt);
                 }
 
-                await vi.advanceTimersByTimeAsync(1500);
-                expect(sentFrames).toHaveLength(4);
+                await vi.advanceTimersByTimeAsync(CONFIG_APS_ACK_WAIT_DURATION_MS);
+                expect(sentFrames).toHaveLength(CONFIG_APS_MAX_FRAME_RETRIES + 1);
             } finally {
                 mockMACHandlerCallbacks.onSendFrame = vi.fn();
                 vi.useRealTimers();
