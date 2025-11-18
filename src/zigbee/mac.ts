@@ -1145,7 +1145,7 @@ export function decodeMACPayload(data: Buffer, offset: number, frameControl: MAC
  */
 export function encodeMACFrame(header: MACHeader, payload: Buffer): Buffer {
     let offset = 0;
-    const data = Buffer.alloc(ZigbeeMACConsts.PAYLOAD_MAX_SAFE_SIZE);
+    const data = Buffer.alloc(ZigbeeMACConsts.PAYLOAD_MAX_SIZE);
     offset = encodeMACHeader(data, offset, header, false);
     offset += payload.copy(data, offset);
     offset = data.writeUInt16LE(crc16CCITT(data.subarray(0, offset)), offset);
@@ -1185,7 +1185,7 @@ export type MACHeaderZigbee = {
  */
 export function encodeMACFrameZigbee(header: MACHeaderZigbee, payload: Buffer): Buffer {
     let offset = 0;
-    const data = Buffer.alloc(ZigbeeMACConsts.PAYLOAD_MAX_SAFE_SIZE); // TODO: optimize with max Zigbee header length
+    const data = Buffer.alloc(ZigbeeMACConsts.PAYLOAD_MAX_SIZE); // TODO: optimize with max Zigbee header length
 
     // always transmit with v2003 (0) frame version @see D.6 Frame Version Value of 05-3474-23
     header.frameControl.frameVersion = MACFrameVersion.V2003;
