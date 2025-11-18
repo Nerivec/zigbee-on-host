@@ -324,7 +324,7 @@ export class NWKHandler {
 
             if (device && !device.neighbor) {
                 // force immediate MTORR
-                logger.warning("No known route to destination, forcing discovery", NS);
+                logger.warning(`No known route to ${destination16}:${destination64}, forcing discovery`, NS);
                 setImmediate(this.sendPeriodicManyToOneRouteRequest.bind(this));
                 // will send direct as "last resort"
             }
@@ -341,13 +341,13 @@ export class NWKHandler {
 
             // remove expired routes
             if (age > CONFIG_NWK_ROUTE_EXPIRY_TIME) {
-                logger.debug(() => `Route to ${destination16} expired (age=${age}ms)`, NS);
+                logger.debug(() => `Route to ${destination16}:${destination64} expired (age=${age}ms)`, NS);
                 continue;
             }
 
             // remove blacklisted routes (too many consecutive failures)
             if (entry.failureCount >= CONFIG_NWK_ROUTE_MAX_FAILURES) {
-                logger.debug(() => `Route to ${destination16} blacklisted (failures=${entry.failureCount})`, NS);
+                logger.debug(() => `Route to ${destination16}:${destination64} blacklisted (failures=${entry.failureCount})`, NS);
                 continue;
             }
 
@@ -363,7 +363,7 @@ export class NWKHandler {
                 const macNoACKs = this.#context.macNoACKs.get(relay);
 
                 if (macNoACKs !== undefined && macNoACKs >= CONFIG_NWK_CONCENTRATOR_DELIVERY_FAILURE_THRESHOLD) {
-                    logger.debug(() => `Route to ${destination16} via relay ${relay} has too many NO_ACKs (${macNoACKs})`, NS);
+                    logger.debug(() => `Route to ${destination16}:${destination64} via relay ${relay} has too many NO_ACKs (${macNoACKs})`, NS);
                     relayFailed = true;
                     break;
                 }
@@ -384,7 +384,7 @@ export class NWKHandler {
             const device = this.#context.deviceTable.get(device64);
 
             if (device && !device.neighbor) {
-                logger.warning(`All routes to ${destination16} invalid, forcing discovery`, NS);
+                logger.warning(`All routes to ${destination16}:${destination64} invalid, forcing discovery`, NS);
                 setImmediate(this.sendPeriodicManyToOneRouteRequest.bind(this));
             }
 
