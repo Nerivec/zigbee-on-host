@@ -589,9 +589,9 @@ export class OTRCPDriver {
             NS,
         );
 
-        this.#networkUp = true;
-
         await this.startStack();
+
+        this.#networkUp = true;
     }
 
     /**

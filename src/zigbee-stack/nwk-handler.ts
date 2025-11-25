@@ -117,7 +117,8 @@ export class NWKHandler {
         );
         this.#manyToOneRouteRequestTimeout = setTimeout(this.sendPeriodicManyToOneRouteRequest.bind(this), CONFIG_NWK_CONCENTRATOR_DISCOVERY_TIME);
 
-        await this.sendPeriodicZigbeeNWKLinkStatus();
+        // ignore stale on first trigger
+        await this.sendPeriodicZigbeeNWKLinkStatus(true);
         await this.sendPeriodicManyToOneRouteRequest();
     }
 
@@ -166,7 +167,7 @@ export class NWKHandler {
      * - ✅ Enforces CONFIG_NWK_ROUTER_AGE_LIMIT by zeroing costs after consecutive misses per spec
      * DEVICE SCOPE: Coordinator, routers (N/A)
      */
-    public async sendPeriodicZigbeeNWKLinkStatus(): Promise<void> {
+    public async sendPeriodicZigbeeNWKLinkStatus(ignoreStale = false): Promise<void> {
         const links: ZigbeeNWKLinkStatus[] = [];
 
         for (const [device64, entry] of this.#context.deviceTable.entries()) {
@@ -188,7 +189,7 @@ export class NWKHandler {
 
                 try {
                     // calculate cost based on path cost and recent link quality
-                    const [, , pathCost] = this.findBestSourceRoute(entry.address16, device64);
+                    const [, , pathCost] = this.findBestSourceRoute(entry.address16, device64, ignoreStale);
                     let linkCost = pathCost ?? 1;
 
                     // adjust cost based on recent LQA (link quality assessment) only if we have data
@@ -292,6 +293,7 @@ export class NWKHandler {
     public findBestSourceRoute(
         destination16: number | undefined,
         destination64: bigint | undefined,
+        ignoreStale = false,
     ): [relayIndex: number | undefined, relayAddresses: number[] | undefined, pathCost: number | undefined] {
         if (destination16 !== undefined && destination16 >= ZigbeeConsts.BCAST_MIN) {
             return [undefined, undefined, undefined];
@@ -337,12 +339,14 @@ export class NWKHandler {
 
         // filter out expired and blacklisted routes
         for (const entry of sourceRouteEntries) {
-            const age = now - entry.lastUpdated;
+            if (!ignoreStale) {
+                const age = now - entry.lastUpdated;
 
-            // remove expired routes
-            if (age > CONFIG_NWK_ROUTE_EXPIRY_TIME) {
-                logger.debug(() => `Route to ${destination16}:${destination64} expired (age=${age}ms)`, NS);
-                continue;
+                // remove expired routes
+                if (age > CONFIG_NWK_ROUTE_EXPIRY_TIME) {
+                    logger.debug(() => `Route to ${destination16}:${destination64} expired (age=${age}ms)`, NS);
+                    continue;
+                }
             }
 
             // remove blacklisted routes (too many consecutive failures)
