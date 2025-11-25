@@ -73,14 +73,22 @@ export class MinimalAdapter {
     #wiresharkPort: number;
     #wiresharkAddress: string;
     readonly #wiresharkSocket: DgramSocket;
+    readonly #tiSerialSkipBootloader: boolean;
 
-    constructor(portOptions: PortOptions, streamRawConfig: StreamRawConfig, netParams: NetworkParameters, sendMACToZEP: boolean) {
+    constructor(
+        portOptions: PortOptions,
+        streamRawConfig: StreamRawConfig,
+        netParams: NetworkParameters,
+        sendMACToZEP: boolean,
+        tiSerialSkipBootloader: boolean,
+    ) {
         this.#sendMACToZEP = sendMACToZEP;
         this.#wiresharkSeqNum = 0; // start at 1
         this.#wiresharkSocket = createSocket("udp4");
         this.#wiresharkPort = process.env.WIRESHARK_ZEP_PORT ? Number.parseInt(process.env.WIRESHARK_ZEP_PORT, 10) : DEFAULT_ZEP_UDP_PORT;
         this.#wiresharkAddress = process.env.WIRESHARK_ADDRESS ? process.env.WIRESHARK_ADDRESS : DEFAULT_WIRESHARK_IP;
         this.#wiresharkSocket.bind(this.#wiresharkPort);
+        this.#tiSerialSkipBootloader = tiSerialSkipBootloader;
 
         this.driver = new OTRCPDriver(
             {
@@ -206,6 +214,23 @@ export class MinimalAdapter {
 
             this.#serialPort.once("close", this.onPortClose.bind(this));
             this.#serialPort.on("error", this.onPortError.bind(this));
+
+            if (this.#tiSerialSkipBootloader) {
+                // skipping bootloader is required for some CC2652/CC1352 devices (auto-entered)
+                logger.info("TI skip bootloader", NS);
+                await new Promise<void>((resolve, reject): void => {
+                    this.#serialPort!.set({ dtr: false, rts: false }, (err) => (err ? reject(err) : resolve()));
+                });
+                await setTimeout(150);
+                await new Promise<void>((resolve, reject): void => {
+                    this.#serialPort!.set({ dtr: false, rts: true }, (err) => (err ? reject(err) : resolve()));
+                });
+                await setTimeout(150);
+                await new Promise<void>((resolve, reject): void => {
+                    this.#serialPort!.set({ dtr: false, rts: false }, (err) => (err ? reject(err) : resolve()));
+                });
+                await setTimeout(150);
+            }
         } catch (error) {
             logger.error(`Error opening port (${(error as Error).message})`, NS);
 

@@ -29,5 +29,6 @@
         "nwkUpdateId": 0,
         "txPower": 19
     },
-    "sendMACToZEP": false
+    "sendMACToZEP": false,
+    "tiSerialSkipBootloader": false
 }

@@ -20,6 +20,7 @@ type Conf = {
         txPower: number;
     };
     sendMACToZEP: boolean;
+    tiSerialSkipBootloader?: boolean;
 };
 
 function argToBool(arg: string): boolean {
@@ -103,6 +104,7 @@ if (require.main === module) {
                 tcKeyFrameCounter: conf.network.tcKeyFrameCounter,
             },
             conf.sendMACToZEP || mode === "sniff",
+            !!conf.tiSerialSkipBootloader,
         );
 
         const onStop = async () => {
