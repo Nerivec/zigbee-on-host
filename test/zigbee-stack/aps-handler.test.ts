@@ -13,7 +13,7 @@ import {
     type ZigbeeAPSHeader,
 } from "../../src/zigbee/zigbee-aps.js";
 import { type ZigbeeNWKHeader, ZigbeeNWKRouteDiscovery } from "../../src/zigbee/zigbee-nwk.js";
-import { APSHandler, type APSHandlerCallbacks } from "../../src/zigbee-stack/aps-handler.js";
+import { APSHandler, type APSHandlerCallbacks, CONFIG_APS_ACK_WAIT_DURATION_MS } from "../../src/zigbee-stack/aps-handler.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
 import { NWKHandler, type NWKHandlerCallbacks } from "../../src/zigbee-stack/nwk-handler.js";
 import {
@@ -2098,7 +2098,7 @@ describe("APS Handler", () => {
 
         await apsHandler.processFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackHeader, 175);
 
-        await vi.advanceTimersByTimeAsync(1500);
+        await vi.advanceTimersByTimeAsync(CONFIG_APS_ACK_WAIT_DURATION_MS - 1);
         await vi.runOnlyPendingTimersAsync();
 
         expect(sendFrameMock).toHaveBeenCalledTimes(1);
@@ -2171,7 +2171,7 @@ describe("APS Handler", () => {
         mockContext.deviceTable.set(dest64, savedEntry);
         mockContext.address16ToAddress64.set(dest16, dest64);
 
-        await vi.advanceTimersByTimeAsync(1500);
+        await vi.advanceTimersByTimeAsync(CONFIG_APS_ACK_WAIT_DURATION_MS - 1);
         await vi.runOnlyPendingTimersAsync();
 
         expect(sendFrameMock.mock.calls.length).toBeGreaterThan(1);
