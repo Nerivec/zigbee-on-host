@@ -1,7 +1,7 @@
 # Zigbee on Host - Architecture Documentation
 
-**Document Version:** 1.1
-**Last Updated:** November 2, 2025
+**Document Version:** 1.2
+**Last Updated:** November 27, 2025
 **Maintainer:** Nerivec
 **License:** GPL-3.0-or-later
 
@@ -25,6 +25,7 @@ Zigbee on Host is a host-based Zigbee stack implementation that communicates wit
 3. **Single Source of Truth** - StackContext owns all shared state
 4. **Zero Production Dependencies** - Only Node.js built-in modules
 5. **TypeScript Zero-Cost Abstractions** - Interfaces, const enums, type aliases
+6. **Host-Guided Routing Heuristics** - Routing decisions leverage host-only scoring (LQA, staleness, MAC feedback) to keep concentrator behavior deterministic
 
 ### Technology Stack
 
@@ -199,6 +200,7 @@ export async function processFrame(
 - Handle data requests
 - Maintain indirect transmission queue
 - Process MAC commands
+- Update per-destination NO_ACK counters (`StackContext.macNoACKs`) to feed NWK routing heuristics
 
 **Key Methods:**
 ```typescript
@@ -240,6 +242,9 @@ interface MACHandlerCallbacks {
 - Implement many-to-one routing
 - Process route record frames
 - Handle all NWK commands
+- Score candidate routes with host-only heuristics (path cost, staleness penalty, MAC NO_ACK counters, recency bonus)
+
+The handler now keeps multiple source-route entries per destination and ranks them every time `findBestSourceRoute` runs. Expired or blacklisted paths are purged eagerly, remaining entries are sorted by a composite score (path cost + penalties + recency bonus), and any relay that has accumulated too many MAC NO_ACK events is skipped entirely. When no usable path is left the handler immediately triggers a concentrator (many-to-one) refresh so the coordinator can rebuild routing knowledge.
 
 **Key Methods:**
 ```typescript
@@ -345,11 +350,13 @@ interface APSHandlerCallbacks {
 - Device table (device entries with capabilities, LQA tracking, authorization)
 - Address mappings (16-bit ↔ 64-bit)
 - Routing tables (source routes)
+- Source route table entries with timestamps + failure counts (multiple per destination allowed)
 - Application link key table (pair-wise TC/app link keys)
 - Install code metadata and derived link keys
 - Key frame counters
 - Pending network key staging (pre-SWITCH_KEY activate)
 - End-device timeout metadata and runtime NWK frame counters
+- MAC NO_ACK counters (per-destination delivery health used by NWK heuristics)
 - Trust center policies (join policies, key policies)
 - Coordinator configuration attributes
 - Pending associations (awaiting DATA_RQ from device)
@@ -486,7 +493,9 @@ Application API Call
     │
 [MACHandler.sendFrameDirect()]
     ├─ Build Spinel STREAM_RAW property (MAC frame)
-    └─ Call callbacks.onSendFrame()
+    ├─ Call callbacks.onSendFrame()
+    ├─ ACK success → clear `macNoACKs` entry + `NWKHandler.markRouteSuccess()`
+    └─ NO_ACK error → increment `macNoACKs` + `NWKHandler.markRouteFailure()`
         ↓
 [OTRCPDriver.setProperty()]
     ├─ Encode as Spinel frame
@@ -498,6 +507,17 @@ Application API Call
         ↓
 Serial Port → RCP Firmware → Radio Transmission
 ```
+
+### Routing Feedback Loop (Extra Pass Focus)
+
+Recent refactors introduced a closed-loop routing controller that keeps concentrator behavior stable even when radio quality fluctuates:
+
+1. **MAC delivery feedback** – Every unicast tracks whether the RCP reported an ACK. Success clears the destination entry in `StackContext.macNoACKs`, while a NO_ACK increments it and immediately calls `NWKHandler.markRouteFailure()`.
+2. **Source-route scoring** – `NWKHandler.findBestSourceRoute()` re-sorts all candidate paths on every lookup. The score combines hop count, staleness penalty, failure penalty, a recency bonus, and a hard filter that rejects any relay currently above the NO_ACK threshold.
+3. **Automatic recovery** – When the handler purges all routes (expired, blacklisted, or unhealthy relays), it schedules a many-to-one route discovery so the coordinator re-advertises itself and rebuilds source routes.
+4. **Link status integration** – Periodic link-status frames piggyback the same computed path costs so neighbors receive up-to-date metrics derived from LQA + routing penalties.
+
+Together these steps ensure routing decisions remain deterministic and reflect the host's richer telemetry without waiting for devices to age routes out on their own.
 
 ## State Management
 

@@ -7,49 +7,21 @@ Zigbee on Host is an open-source Zigbee stack designed to run on a host and comm
 **Architecture:**
 - **Host-based Zigbee stack** with RCP communication
 - **Language:** TypeScript (~7,000 lines of source code)
-- **Runtime:** Node.js ^20.19.0 || >=22.12.0
+- **Runtime:** Node.js
 - **License:** GPL-3.0-or-later
 - **Module system:** NodeNext (ES modules)
 - **Zero production dependencies** - lightweight core
-- **Protocol Layers:**
-  - **Spinel Protocol (`src/spinel/`):**
-    - `spinel.ts` - Core protocol (~400 lines)
-    - `hdlc.ts` - HDLC framing
-    - `properties.ts` - Spinel properties (2,800 lines)
-    - `commands.ts` - Spinel commands
-    - `statuses.ts` - Status codes
- - **Zigbee Protocol Utilities (`src/zigbee/`):**
-    - `mac.ts` - IEEE 802.15.4 MAC layer utilities
-    - `zigbee-nwk.ts` - Network layer utilities
-    - `zigbee-aps.ts` - Application Support layer utilities
-    - `zigbee-nwkgp.ts` - Green Power utilities
-    - `zigbee.ts` - Main Zigbee utilities
-  - **Zigbee Stack Handlers (`src/zigbee-stack/`):**
-    - `stack-context.ts` - Shared state and context
-    - `mac-handler.ts` - MAC layer handler
-    - `nwk-handler.ts` - Network layer handler
-    - `nwk-gp-handler.ts` - Green Power handler
-    - `aps-handler.ts` - Application Support layer handler
-  - **Driver (`src/drivers/`):**
-    - `ot-rcp-driver.ts` - Main RCP driver (4,700 lines)
-    - `ot-rcp-parser.ts` - Frame parsing
-    - `ot-rcp-writer.ts` - Frame writing
-    - `descriptors.ts` - Device descriptors
-    - `wip.ts` - Work in progress features** with RCP communication
+- **Protocol Layers:** Refer to [./docs/architecture.md](./docs/architecture.md)
 
-**Key Components:**
-- `src/drivers/` - RCP communication drivers (main: `ot-rcp-driver.ts`)
-- `src/zigbee-stack/` - Zigbee protocol stack handlers (MAC, NWK, APS, Green Power, context)
-- `src/spinel/` - Spinel protocol implementation (HDLC framing, properties)
-- `src/zigbee/` - Zigbee protocol utilities (frame encoding/decoding)
-- `src/dev/` - Development tools (excluded from production builds)
-- `src/utils/` - Shared utilities (logging framework)
+Refer to [./package.json](./package.json) for versions.
 
 ## Setup Commands
 
 **Prerequisites:**
-- Node.js version >=22.12.0 (also supports ^20.19.0)
-- npm 10.8.2+
+- Node.js (prefer v24)
+- npm
+
+Refer to [./package.json](./package.json) for versions.
 
 **Initial setup:**
 ```bash
@@ -126,10 +98,8 @@ npm run test:cov        # Run tests with coverage report (~2.5s)
 ```
 
 **Coverage requirements:**
-- Statements: 85%+
-- Functions: 85%+
-- Branches: 80%+
-- Lines: 85%+
+
+Refer to [./test/vitest.config.mts](./test/vitest.config.mts)
 
 **Coverage details:**
 - Provider: v8
@@ -372,6 +342,7 @@ docker compose -f docker-dev/compose.yaml down
 - ✅ Nested device support
 - ✅ Indirect transmission mechanism
 - ✅ Source routing
+- ✅ Host-guided routing heuristics (multi-path scoring + MAC NO_ACK integration + automatic MTORR refresh)
 - ✅ Coordinator LQI/Routing tables
 - ✅ LQI reporting
 - ✅ Install code validation and Trust Center enforcement for initial joins
@@ -467,7 +438,7 @@ docker compose -f docker-dev/compose.yaml down
 
 - **Repository:** https://github.com/Nerivec/zigbee-on-host
 - **npm package:** zigbee-on-host
-- **Version:** 0.2.0 (work in progress, expect breaking changes)
+- **Version:** 0.2.3 (work in progress, expect breaking changes)
 - **Author:** Nerivec
 
 ### Key Files

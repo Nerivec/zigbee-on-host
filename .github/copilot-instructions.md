@@ -16,21 +16,25 @@ This project uses the following exact technology versions:
 
 ### Core Technologies
 
-- **Node.js**: `^20.19.0 || >=22.12.0` (prefer 22.12.0+)
-- **TypeScript**: `^5.9.2`
+- **Node.js** (prefer v24)
+- **TypeScript**
   - Target: esnext
   - Module: NodeNext
   - Module Resolution: NodeNext
   - Strict mode enabled
-- **Package Manager**: npm (10.8.2+)
+- **Package Manager**: npm
+
+Refer to [../package.json](../package.json) for versions.
 
 ### Development Dependencies
 
-- **@biomejs/biome**: `^2.2.4` (linting and formatting)
-- **@types/node**: `^24.5.2`
-- **vitest**: `^3.0.8` (testing framework)
-- **@vitest/coverage-v8**: `^3.2.4` (coverage provider)
-- **serialport**: `^13.0.0` (dev dependency only)
+- **@biomejs/biome**: linting and formatting
+- **vitest**: testing framework
+- **@vitest/coverage-v8**: coverage provider
+- **serialport**: dev dependency only
+- **@types/node**: typing
+
+Refer to [../package.json](../package.json) for versions.
 
 ### Critical Version Constraints
 
@@ -42,58 +46,7 @@ This project uses the following exact technology versions:
 
 ### Layered Architecture
 
-This project follows a strict layered architecture:
-
-```
-┌─────────────────────────────────────────────────┐
-│         Drivers (src/drivers/)                   │
-│  - OTRCPDriver (main adapter)                   │
-│  - OTRCPParser (frame parsing)                  │
-│  - OTRCPWriter (frame writing)                  │
-│  - Descriptors (device descriptors)             │
-└─────────────────────────────────────────────────┘
-                      ↓
-┌─────────────────────────────────────────────────┐
-│      Zigbee Stack Handlers (src/zigbee-stack/)  │
-│  - MACHandler (MAC layer operations)            │
-│  - NWKHandler (Network layer operations)        │
-│  - NWKGPHandler (Green Power operations)        │
-│  - APSHandler (Application Support layer)       │
-│  - StackContext (shared state)                  │
-└─────────────────────────────────────────────────┘
-                      ↓
-┌─────────────────────────────────────────────────┐
-│   Zigbee Protocol Utilities (src/zigbee/)       │
-│  - MAC (IEEE 802.15.4)                          │
-│  - NWK (Network Layer)                          │
-│  - NWK GP (Green Power)                         │
-│  - APS (Application Support)                    │
-│  - Core utilities (zigbee.ts)                   │
-└─────────────────────────────────────────────────┘
-                      ↓
-┌─────────────────────────────────────────────────┐
-│        Spinel Protocol (src/spinel/)             │
-│  - Core protocol (spinel.ts)                    │
-│  - HDLC framing (hdlc.ts)                       │
-│  - Properties (properties.ts)                   │
-│  - Commands, Statuses                           │
-└─────────────────────────────────────────────────┘
-                      ↓
-┌─────────────────────────────────────────────────┐
-│          Utilities (src/utils/)                  │
-│  - Logger (logger.ts)                           │
-└─────────────────────────────────────────────────┘
-```
-
-### Directory Structure Rules
-
-- **src/drivers/**: RCP communication and main adapter logic
-- **src/zigbee-stack/**: Zigbee stack handlers (MAC, NWK, APS, GP, context)
-- **src/spinel/**: Spinel protocol implementation (OpenThread RCP)
-- **src/zigbee/**: Zigbee protocol utilities (frame encoding/decoding)
-- **src/utils/**: Shared utilities (minimal)
-- **src/dev/**: Development tools (excluded from production builds)
-- **test/**: Test files matching source structure
+This project follows a strict layered architecture. Refer to [../docs/architecture.md](../docs/architecture.md)
 
 ### Build Configurations
 
@@ -765,6 +718,13 @@ const enum SaveConsts {
     FRAME_COUNTER_JUMP_OFFSET = 1024,
 }
 ```
+
+### Routing Feedback Loop (keep MAC/NWK changes in sync)
+
+- `MACHandler.sendFrameDirect()` **must** clear `StackContext.macNoACKs` and call `NWKHandler.markRouteSuccess()` when a unicast ACK succeeds, and increment `macNoACKs` plus call `markRouteFailure()` when a NO_ACK error occurs.
+- `StackContext.sourceRouteTable` stores **multiple** `SourceRouteTableEntry` objects per destination; `NWKHandler.findBestSourceRoute()` re-sorts them on every lookup using: path cost + staleness penalty + failure penalty − recency bonus, and filters out relays whose `macNoACKs` entry exceeds `CONFIG_NWK_CONCENTRATOR_DELIVERY_FAILURE_THRESHOLD`.
+- Whenever all routes are purged (expired/blacklisted) the NWK handler must immediately trigger `sendPeriodicManyToOneRouteRequest()` so the coordinator refreshes routes.
+- Link-status frames reuse the computed path costs so any tweak to the heuristic must stay consistent across `sendPeriodicZigbeeNWKLinkStatus()` and the source-route scorer.
 
 ### Wireshark Compatibility
 
