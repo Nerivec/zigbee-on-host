@@ -4,14 +4,34 @@
 [![CI](https://github.com/Nerivec/zigbee-on-host/actions/workflows/ci.yaml/badge.svg)](https://github.com/Nerivec/zigbee-on-host/actions/workflows/ci.yaml)
 [![CodeQL](https://github.com/Nerivec/zigbee-on-host/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Nerivec/zigbee-on-host/actions/workflows/github-code-scanning/codeql)
 
-Open Source Zigbee stack designed to run on a host and communicate with a radio co-processor (RCP).
+An (experimental) open-source Zigbee-stack designed to run on a host and communicate with a Radio Co-Processor (RCP) MCU.
 
-Current implementation aims for compatibility with OpenThread RCP firmware. That base provides compatibility with any chip manufacturer that supports it (Silabs, TI, etc.) with the only requirements being proper implementation of the `STREAM_RAW` mechanism of the `Spinel` protocol (which allows to send raw 802.15.4 frames, including... Zigbee!) and hardware MAC ACKing.
+This project aims to replace the functionality provided by existing microcontroller radio adapters running application firmware with the Zigbee-stack and move all processing to the host computer, eliminating most (if not all) limitations imposed by microcontroller-based Zigbee stacks.
+
+Currently the project scope for this Zigbee-on-Host (a.k.a. "ZoH") implementation aims for compatibility with OpenThread RCP firmware. That base provides compatibility with any chip manufacturer that supports it (Silabs, TI, etc.) with the only requirements being proper implementation of the `STREAM_RAW` mechanism of the `Spinel` protocol (which allows to send raw 802.15.4 frames, including... Zigbee!) and hardware MAC ACKing.
+
+Thes main use case is as a hardware-agnostic Zigbee Coordinator for Zigbee gateway applications like Zigbee2MQTT (Z2M), and its backend-frontend model allow it to seperate the Zigbee-stack from the physical radio hardware which can have many benefits.
+
+Other Zigbee gateway applications (e.g. Home Assistant's ZHA and OpenHAB) can implement support for this as new radio type/adapter and communicate with the Zigbee-on-Host backend using a high-level wire protocol similar to that how they use of existing Zigbee stacks.
 
 _This library can also serve as a base for pentesting Zigbee networks thanks to the ability to easily craft various payloads at any layer of the specification and send them through the raw stream using any network parameters._
 
 > [!IMPORTANT]
 > Work in progress! Expect breaking changes without backwards compatibility for a while!
+
+## Architecture
+
+Zigbee-on-Host uses a so called Radio Co-Processor (RCP) design design which makes it hardware independent. The actual Zigbee-stack runs on a computer host as the backend and it communication with an 802.15.4 radio MCU hardware running OpenThread RCP through an SPI interface over the Spinel protocol, treating the radio hardware as just an 802.15.4 frontend.
+
+The generic OpenThread RCP firmware running on the radio microcontroller just send or receive packets and automatically send 802.15.4 ACKs. The stack handles all encryption, decryption, and processing. 
+
+OpenThread RCP firmware provides a uniform and hardware-agnostic 802.15.4 frontend that theoretically runs on chips from every major vendor and eliminates the need to use multiple firmwares when switching between Zigbee and Thread applications.
+
+While it has been tested with radio microcontrollers from Silicon Labs and Texas Instruments however could in theory eventuelly be used with any IEEE 802.15.4-based MCU running a later version of the OpenThread RCP firmware in the future.
+
+For reference see this OpenThread page about RCP Radio Co-Processor (RCP) designs:
+
+- https://openthread.io/platforms/co-processor
 
 ## Development
 
