@@ -2512,11 +2512,16 @@ export class APSHandler {
                         : 0x02 /* ZED */
                     : 0x03 /* UNK */;
                 const rxOnWhenIdle = entry.capabilities ? (entry.capabilities.rxOnWhenIdle ? 0x01 /* ON */ : 0x00 /* OFF */) : 0x02 /* UNK */;
-                const relationship = 0x02; // TODO // 0x00 = neighbor is the parent, 0x01 = neighbor is a child, 0x02 = neighbor is a sibling, 0x03 = None of the above
-                const permitJoining = 0x02; // TODO // 0x00 = neighbor is not accepting join requests, 0x01 = neighbor is accepting join requests, 0x02 = unknown
+                const affinity = entry.capabilities
+                    ? entry.capabilities.deviceType === ZigbeeMACConsts.DEVICE_TYPE_FFD
+                        ? 0x02 /* sibling */
+                        : 0x01 /* child */
+                    : 0x03 /* "none of the above" */;
                 const deviceTypeByte =
-                    (deviceType & 0x03) | ((rxOnWhenIdle << 2) & 0x03) | ((relationship << 4) & 0x07) | ((0 /* reserved */ << 7) & 0x01);
-                const permitJoiningByte = (permitJoining & 0x03) | ((0 /* reserved2 */ << 2) & 0x3f);
+                    (deviceType & 0x03) | ((rxOnWhenIdle << 2) & 0x0c) | ((affinity << 4) & 0x70) | ((0 /* reserved */ << 7) & 0x80);
+                // TODO: not currently tracked
+                // 0x00 = neighbor is not accepting join requests, 0x01 = neighbor is accepting join requests, 0x02 = unknown
+                const permitJoiningByte = (0x02 & 0x03) | ((0 /* reserved2 */ << 2) & 0xfc);
                 const depth = 1; // TODO // 0x00 indicates that the device is the Zigbee coordinator for the network
                 const lqa = this.#context.computeDeviceLQA(entry.address16, addr64);
 
@@ -2617,10 +2622,10 @@ export class APSHandler {
                     const routeRecordRequired = 0; // TODO
                     const statusByte =
                         (status & 0x07) |
-                        ((memoryConstrained << 3) & 0x01) |
-                        ((manyToOne << 4) & 0x01) |
-                        ((routeRecordRequired << 5) & 0x01) |
-                        ((0 /* reserved */ << 6) & 0x03);
+                        ((memoryConstrained << 3) & 0x08) |
+                        ((manyToOne << 4) & 0x10) |
+                        ((routeRecordRequired << 5) & 0x20) |
+                        ((0 /* reserved */ << 6) & 0xc0);
                     // last entry is next hop
                     const nextHopAddress = relayAddresses[relayLastIndex];
 

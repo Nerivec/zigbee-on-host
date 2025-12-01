@@ -1009,6 +1009,7 @@ describe("APS Handler", () => {
             expect(lqiTable.readBigUInt64LE(5)).toStrictEqual(mockContext.netParams.extendedPanId);
             expect(lqiTable.readBigUInt64LE(13)).toStrictEqual(0x00124b0011111111n);
             expect(lqiTable.readUInt16LE(21)).toStrictEqual(0x1234);
+            expect(lqiTable.readUInt8(23)).toStrictEqual(37); // 1-1-2
             // offset: 5 + 8 (extPanId) + 8 (eui64) + 2 (nwkAddr) + 1 (deviceType) + 1 (permitJoin) = 25
             expect(lqiTable.readUInt8(25)).toStrictEqual(1); // depth
             expect(lqiTable.readUInt8(26)).toStrictEqual(150); // lqa
@@ -1017,6 +1018,7 @@ describe("APS Handler", () => {
             expect(lqiTable.readBigUInt64LE(27)).toStrictEqual(mockContext.netParams.extendedPanId);
             expect(lqiTable.readBigUInt64LE(35)).toStrictEqual(0x00124b0022222222n);
             expect(lqiTable.readUInt16LE(43)).toStrictEqual(0x5678);
+            expect(lqiTable.readUInt8(45)).toStrictEqual(18); // 2-0-1
             expect(lqiTable.readUInt8(47)).toStrictEqual(1); // depth
             expect(lqiTable.readUInt8(48)).toStrictEqual(150); // lqa (from mock)
         });

@@ -3787,7 +3787,7 @@ describe("OT RCP Driver", () => {
             offset += 8;
             expectedLQITable.writeUInt16LE(0x96ba, offset);
             offset += 2;
-            expectedLQITable.writeUInt8(0x01 | 0x01, offset);
+            expectedLQITable.writeUInt8(37, offset);
             offset += 1;
             expectedLQITable.writeUInt8(0x02 /* TODO */, offset);
             offset += 1;
@@ -3802,7 +3802,7 @@ describe("OT RCP Driver", () => {
             offset += 8;
             expectedLQITable.writeUInt16LE(0x91d2, offset);
             offset += 2;
-            expectedLQITable.writeUInt8(0x01 | 0x01, offset);
+            expectedLQITable.writeUInt8(37, offset);
             offset += 1;
             expectedLQITable.writeUInt8(0x02 /* TODO */, offset);
             offset += 1;
@@ -3817,7 +3817,7 @@ describe("OT RCP Driver", () => {
             offset += 8;
             expectedLQITable.writeUInt16LE(0xcb47, offset);
             offset += 2;
-            expectedLQITable.writeUInt8(0x01 | 0x01, offset);
+            expectedLQITable.writeUInt8(37, offset);
             offset += 1;
             expectedLQITable.writeUInt8(0x02 /* TODO */, offset);
             offset += 1;
