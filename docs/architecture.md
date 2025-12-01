@@ -108,10 +108,10 @@ src/
 │   ├── ot-rcp-driver.ts   - Main entry point
 │   ├── ot-rcp-parser.ts   - Spinel parser
 │   ├── ot-rcp-writer.ts   - Spinel writer
-│   ├── descriptors.ts     - Coordinator descriptors
 │   └── wip.ts             - Work in progress features
 ├── zigbee-stack/          - Zigbee protocol stack handlers
 │   ├── stack-context.ts   - Shared state
+│   ├── descriptors.ts     - Coordinator descriptors
 │   ├── mac-handler.ts     - MAC layer
 │   ├── nwk-handler.ts     - NWK layer
 │   ├── nwk-gp-handler.ts  - Green Power

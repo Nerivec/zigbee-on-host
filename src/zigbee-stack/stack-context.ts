@@ -1,5 +1,4 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { encodeCoordinatorDescriptors } from "../drivers/descriptors.js";
 import { logger } from "../utils/logger.js";
 import { decodeMACCapabilities, encodeMACCapabilities, MACAssociationStatus, type MACCapabilities, type MACHeader } from "../zigbee/mac.js";
 import {
@@ -15,6 +14,7 @@ import {
 import type { ZigbeeAPSHeader, ZigbeeAPSPayload } from "../zigbee/zigbee-aps.js";
 import { ZigbeeNWKConsts } from "../zigbee/zigbee-nwk.js";
 import type { ZigbeeNWKGPHeader } from "../zigbee/zigbee-nwkgp.js";
+import { encodeCoordinatorDescriptors } from "./descriptors.js";
 import { CONFIG_NWK_MAX_HOPS } from "./nwk-handler.js";
 import {
     estimateTLVStateSize,

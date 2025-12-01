@@ -360,28 +360,6 @@ docker compose -f docker-dev/compose.yaml down
 - Focus on "Centralized Trust Center" implementation
 - Lacking reference sniffs for multicast (group)
 
-### Protocol Layers
-
-**Spinel Protocol (`src/spinel/`):**
-- `spinel.ts` - Core protocol (~400 lines)
-- `hdlc.ts` - HDLC framing
-- `properties.ts` - Spinel properties (2,800 lines)
-- `commands.ts` - Spinel commands
-- `statuses.ts` - Status codes
-
-**Zigbee Layers (`src/zigbee/`):**
-- `mac.ts` - IEEE 802.15.4 MAC layer
-- `zigbee-nwk.ts` - Network layer
-- `zigbee-aps.ts` - Application Support layer
-- `zigbee-nwkgp.ts` - Green Power
-- `zigbee.ts` - Main Zigbee utilities
-
-**Driver (`src/drivers/`):**
-- `ot-rcp-driver.ts` - Main RCP driver (4,700 lines)
-- `ot-rcp-parser.ts` - Frame parsing
-- `ot-rcp-writer.ts` - Frame writing
-- `descriptors.ts` - Device descriptors
-
 ### Firmware Compatibility
 
 **OpenThread RCP firmware supported:**
