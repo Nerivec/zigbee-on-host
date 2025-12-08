@@ -1,17 +1,11 @@
-import { Transform, type TransformCallback, type TransformOptions } from "node:stream";
+import { Transform, type TransformCallback } from "node:stream";
 import { HdlcReservedByte } from "../spinel/hdlc.js";
 import { logger } from "../utils/logger.js";
 
 const NS = "ot-rcp-driver:parser";
 
 export class OTRCPParser extends Transform {
-    #buffer: Buffer;
-
-    public constructor(opts?: TransformOptions) {
-        super(opts);
-
-        this.#buffer = Buffer.alloc(0);
-    }
+    #buffer = Buffer.alloc(0);
 
     override _transform(chunk: Buffer, _encoding: BufferEncoding, cb: TransformCallback): void {
         let data = Buffer.concat([this.#buffer, chunk]);
