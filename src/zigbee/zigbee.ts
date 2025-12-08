@@ -163,9 +163,8 @@ const CRC16X25_TABLE = new Uint16Array([
 export function computeInstallCodeCRC(data: number[] | Uint8Array | Buffer): number {
     let crc = 0xffff;
 
-    for (const aByte of data) {
-        const byte = aByte & 0xff;
-        crc = (crc >>> 8) ^ CRC16X25_TABLE[(crc ^ byte) & 0xff];
+    for (let i = 0; i < data.length; i++) {
+        crc = (crc >>> 8) ^ CRC16X25_TABLE[(crc ^ (data[i] & 0xff)) & 0xff];
     }
 
     return ~crc & 0xffff;

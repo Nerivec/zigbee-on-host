@@ -1094,7 +1094,8 @@ function encodeMACHeader(data: Buffer, offset: number, header: MACHeader, zigbee
 function crc16CCITT(data: Buffer): number {
     let fcs = 0x0000;
 
-    for (const aByte of data) {
+    for (let i = 0; i < data.byteLength; i++) {
+        const aByte = data[i];
         let q = (fcs ^ aByte) & 0x0f;
         fcs = (fcs >> 4) ^ (q * 0x1081);
         q = (fcs ^ (aByte >> 4)) & 0x0f;

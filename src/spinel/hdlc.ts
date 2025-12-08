@@ -158,8 +158,8 @@ export function encodeHdlcFrame(buffer: Buffer): HdlcFrame {
     hdlcFrame.data[hdlcFrame.length] = HdlcReservedByte.FLAG;
     hdlcFrame.length += 1;
 
-    for (const aByte of buffer) {
-        hdlcFrame.length = encodeByte(hdlcFrame, aByte, hdlcFrame.length);
+    for (let i = 0; i < buffer.byteLength; i++) {
+        hdlcFrame.length = encodeByte(hdlcFrame, buffer[i], hdlcFrame.length);
     }
 
     let fcs = hdlcFrame.fcs;
