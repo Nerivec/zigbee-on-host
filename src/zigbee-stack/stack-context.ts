@@ -1171,7 +1171,7 @@ export class StackContext {
             this.netParams.extendedPanId = state.extendedPanId;
             this.netParams.channel = state.channel;
             this.netParams.nwkUpdateId = state.nwkUpdateId;
-            this.netParams.txPower = state.txPower;
+            // this.netParams.txPower = state.txPower; // keep txPower from constructor
             this.netParams.networkKey = state.networkKey;
             this.netParams.networkKeyFrameCounter = state.networkKeyFrameCounter;
             this.netParams.networkKeySequenceNumber = state.networkKeySequenceNumber;

@@ -510,7 +510,7 @@ describe("OT RCP Driver", () => {
             expect(driver.context.netParams.extendedPanId).toStrictEqual(Buffer.from(NETDEF_EXTENDED_PAN_ID).readBigUInt64LE(0));
             expect(driver.context.netParams.channel).toStrictEqual(A_CHANNEL);
             expect(driver.context.netParams.nwkUpdateId).toStrictEqual(0);
-            expect(driver.context.netParams.txPower).toStrictEqual(10);
+            expect(driver.context.netParams.txPower).toStrictEqual(11);
             expect(driver.context.netParams.networkKey).toStrictEqual(Buffer.from(NETDEF_NETWORK_KEY));
             expect(driver.context.netParams.networkKeyFrameCounter).toStrictEqual(1024);
             expect(driver.context.netParams.networkKeySequenceNumber).toStrictEqual(0);
@@ -618,7 +618,7 @@ describe("OT RCP Driver", () => {
             expect(driver.context.netParams.extendedPanId).toStrictEqual(893489346n);
             expect(driver.context.netParams.channel).toStrictEqual(25);
             expect(driver.context.netParams.nwkUpdateId).toStrictEqual(1);
-            expect(driver.context.netParams.txPower).toStrictEqual(15);
+            expect(driver.context.netParams.txPower).toStrictEqual(11);
             expect(driver.context.netParams.networkKey).toStrictEqual(
                 Buffer.from([0x11, 0x29, 0x22, 0x18, 0x13, 0x27, 0x24, 0x16, 0x12, 0x34, 0x56, 0x78, 0x90, 0x98, 0x76, 0x54]),
             );
