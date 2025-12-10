@@ -7,7 +7,7 @@
     },
     "files": {
         "ignoreUnknown": false,
-        "includes": ["**", "!package.json", "!package-lock.json"]
+        "includes": ["**", "!package.json", "!package-lock.json", "!!**/dist", "!!**/coverage"]
     },
     "formatter": {
         "enabled": true,
@@ -72,6 +72,11 @@
             "suspicious": {
                 "noConstEnum": "off",
                 "useAwait": "error"
+            },
+            "nursery": {
+                "useExhaustiveSwitchCases": "error",
+                "noFloatingPromises": "error",
+                "noMisusedPromises": "error"
             }
         }
     },
