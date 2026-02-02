@@ -418,7 +418,7 @@ describe("NWK Handler", () => {
             expect(mockContext.disassociate).toHaveBeenCalledWith(0x1234, 0x00124b0012345678n);
         });
 
-        it("should process route record", () => {
+        it("should process route record", async () => {
             const macHeader: MACHeader = {
                 frameControl: {
                     frameType: 1,
@@ -468,7 +468,7 @@ describe("NWK Handler", () => {
                 0x00, // relay 2
             ]);
 
-            nwkHandler.processCommand(payload, macHeader, nwkHeader);
+            await nwkHandler.processCommand(payload, macHeader, nwkHeader);
 
             // Should have stored source route
             const routes = mockContext.sourceRouteTable.get(0x1234);
@@ -477,10 +477,10 @@ describe("NWK Handler", () => {
             expect(routes![0].pathCost).toStrictEqual(3); // relayCount + 1
         });
 
-        it("ignores route record when addressing is missing", () => {
+        it("ignores route record when addressing is missing", async () => {
             const initialSize = mockContext.sourceRouteTable.size;
 
-            nwkHandler.processCommand(
+            await nwkHandler.processCommand(
                 Buffer.from([ZigbeeNWKCommandId.ROUTE_RECORD, 0x00]),
                 {
                     frameControl: {},
@@ -653,7 +653,7 @@ describe("NWK Handler", () => {
     });
 
     describe("Link Status Processing", () => {
-        it("should process link status and update source routes", () => {
+        it("should process link status and update source routes", async () => {
             const device16 = 0x1234;
             const device64 = 0x00124b0012345678n;
 
@@ -724,7 +724,7 @@ describe("NWK Handler", () => {
                 0x03, // incoming cost = 3, outgoing cost = 0
             ]);
 
-            nwkHandler.processCommand(payload, macHeader, nwkHeader);
+            await nwkHandler.processCommand(payload, macHeader, nwkHeader);
 
             // Should have created source route
             const routes = mockContext.sourceRouteTable.get(device16);
@@ -1395,7 +1395,7 @@ describe("NWK Handler", () => {
         });
     });
 
-    it("dispatches rejoin response via processCommand", () => {
+    it("dispatches rejoin response via processCommand", async () => {
         const device16 = 0x4321;
         const payload = Buffer.from([ZigbeeNWKCommandId.REJOIN_RESP, device16 & 0xff, (device16 >> 8) & 0xff, MACAssociationStatus.SUCCESS]);
 
@@ -1413,17 +1413,17 @@ describe("NWK Handler", () => {
 
         const debugSpy = vi.spyOn(logger, "debug");
 
-        nwkHandler.processCommand(payload, macHeader, nwkHeader);
+        await nwkHandler.processCommand(payload, macHeader, nwkHeader);
 
         expect(debugSpy.mock.calls.some(([, ns]) => ns === "nwk-handler")).toStrictEqual(true);
         debugSpy.mockRestore();
     });
 
-    it("routes ED timeout response through processCommand", () => {
+    it("routes ED timeout response through processCommand", async () => {
         const spy = vi.spyOn(nwkHandler, "processEdTimeoutResponse");
         const payload = Buffer.from([ZigbeeNWKCommandId.ED_TIMEOUT_RESPONSE, 0x00, 0x07]);
 
-        nwkHandler.processCommand(
+        await nwkHandler.processCommand(
             payload,
             {
                 frameControl: {},
@@ -1442,11 +1442,11 @@ describe("NWK Handler", () => {
         spy.mockRestore();
     });
 
-    it("routes link power delta through processCommand", () => {
+    it("routes link power delta through processCommand", async () => {
         const spy = vi.spyOn(nwkHandler, "processLinkPwrDelta");
         const payload = Buffer.from([ZigbeeNWKCommandId.LINK_PWR_DELTA, 0x02, 0x00]);
 
-        nwkHandler.processCommand(
+        await nwkHandler.processCommand(
             payload,
             {
                 frameControl: {},
@@ -1465,11 +1465,11 @@ describe("NWK Handler", () => {
         spy.mockRestore();
     });
 
-    it("routes commissioning response through processCommand", () => {
+    it("routes commissioning response through processCommand", async () => {
         const spy = vi.spyOn(nwkHandler, "processCommissioningResponse");
         const payload = Buffer.from([ZigbeeNWKCommandId.COMMISSIONING_RESPONSE, 0x78, 0x56, 0x00]);
 
-        nwkHandler.processCommand(
+        await nwkHandler.processCommand(
             payload,
             {
                 frameControl: {},
@@ -1488,10 +1488,10 @@ describe("NWK Handler", () => {
         spy.mockRestore();
     });
 
-    it("logs unsupported NWK command", () => {
+    it("logs unsupported NWK command", async () => {
         const errorSpy = vi.spyOn(logger, "error");
 
-        nwkHandler.processCommand(
+        await nwkHandler.processCommand(
             Buffer.from([0xff]),
             {
                 frameControl: {},
@@ -1588,7 +1588,7 @@ describe("NWK Handler", () => {
         expect(filtered?.[0].relayAddresses).toEqual([0x5500]);
     });
 
-    it("stores route record using IEEE source when short address missing", () => {
+    it("stores route record using IEEE source when short address missing", async () => {
         const device64 = 0x00124b0000667788n;
         mockContext.deviceTable.set(device64, {
             address16: 0x7788,
@@ -1607,7 +1607,7 @@ describe("NWK Handler", () => {
 
         const payload = Buffer.from([ZigbeeNWKCommandId.ROUTE_RECORD, 0x01, 0x34, 0x12]);
 
-        nwkHandler.processCommand(
+        await nwkHandler.processCommand(
             payload,
             {
                 frameControl: {},
@@ -1628,7 +1628,7 @@ describe("NWK Handler", () => {
         expect(routes).toHaveLength(2);
     });
 
-    it("updates source route entries when route reply introduces new path", () => {
+    it("updates source route entries when route reply introduces new path", async () => {
         const responder16 = 0x6677;
         const responder64 = 0x00124b0010102020n;
 
@@ -1659,7 +1659,7 @@ describe("NWK Handler", () => {
         offset = payload.writeBigUInt64LE(mockContext.netParams.eui64, offset);
         payload.writeBigUInt64LE(responder64, offset);
 
-        nwkHandler.processCommand(
+        await nwkHandler.processCommand(
             payload,
             {
                 frameControl: {},

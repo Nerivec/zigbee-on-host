@@ -581,7 +581,7 @@ describe("APS Handler", () => {
             }).not.toThrow();
         });
 
-        it("should process Remove Device command", () => {
+        it("should process Remove Device command", async () => {
             const data = Buffer.alloc(20);
             let offset = 0;
 
@@ -597,9 +597,7 @@ describe("APS Handler", () => {
 
             // Should not throw
             // TODO: more complete tests
-            expect(() => {
-                apsHandler.processRemoveDevice(data, 0, macHeader, nwkHeader, apsHeader);
-            }).not.toThrow();
+            await expect(apsHandler.processRemoveDevice(data, 0, macHeader, nwkHeader, apsHeader)).resolves.not.toThrow();
         });
 
         it("should process Tunnel command", () => {
