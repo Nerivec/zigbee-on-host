@@ -4,7 +4,7 @@
  * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
  *   - Zigbee specification (05-3474-23): Revision 23.1
- *   - Base device behavior (16-02828-012): v3.0.1
+ *   - Base device behavior (16-02828-012): v3.1
  *   - ZCL specification (07-5123): Revision 8
  *   - Green Power specification (14-0563-19): Version 1.1.2
  *

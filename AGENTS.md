@@ -457,10 +457,10 @@ docker compose -f docker-dev/compose.yaml down
 - Submit sniffs/captures to help improve compatibility
 - Search for `TODO`, `HACK`, `XXX` markers for areas needing work
 - Maintain zero production dependencies policy
-- Align with Zigbee 3.0 specification
-  - Zigbee specification (05-3474-23): Revision 23.1
-  - Base device behavior (16-02828-012): v3.0.1
-  - ZCL specification (07-5123): Revision 8
+- Align with Zigbee 4.0 specification
+  - Zigbee specification (06-3474-23): Revision 23.2
+  - Base device behavior (22-65816-030): v3.1
+  - ZCL specification (07-5123-08): Revision 8
   - Green Power specification (14-0563-19): Version 1.1.2
 - Use Wireshark property names for consistency
 

@@ -95,7 +95,7 @@ export interface APSHandlerCallbacks {
 
 /** apsDuplicateEntryLifetime: Duration while APS duplicate table entries remain valid (milliseconds). Spec default ≈ 8s. */
 const CONFIG_APS_DUPLICATE_TIMEOUT_MS = 8000; // TODO: verify
-/** apsAckWaitDuration: Default ack wait duration per Zigbee 3.0 spec (milliseconds). */
+/** apsAckWaitDuration: Default ack wait duration per Zigbee 4.0 spec (milliseconds). */
 export const CONFIG_APS_ACK_WAIT_DURATION_MS = 1600 + 500; // some extra for ZoH
 /** apsMaxFrameRetries: Default number of APS retransmissions when ACK is missing. */
 export const CONFIG_APS_MAX_FRAME_RETRIES = 3;

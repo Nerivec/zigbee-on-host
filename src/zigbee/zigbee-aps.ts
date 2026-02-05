@@ -141,7 +141,7 @@ export type ZigbeeAPSPayload = Buffer;
  * 05-3474-23 R23.1, Table 2-69 (APS frame control fields)
  *
  * SPEC COMPLIANCE NOTES:
- * - ✅ Extracts frame type, delivery, security, and extended header bits per Zigbee 3.0 profile
+ * - ✅ Extracts frame type, delivery, security, and extended header bits per Zigbee 4.0 profile
  * - ✅ Treats deprecated indirect bit as reserved, matching Zigbee 2007+ behaviour
  * - ⚠️  Defers extended header parsing to caller since fragmentation format varies by frame type
  * DEVICE SCOPE: All logical devices

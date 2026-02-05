@@ -4,7 +4,7 @@
  * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
  *   - Zigbee specification (05-3474-23): Revision 23.1
- *   - Base device behavior (16-02828-012): v3.0.1
+ *   - Base device behavior (16-02828-012): v3.1
  *   - ZCL specification (07-5123): Revision 8
  *   - Green Power specification (14-0563-19): Version 1.1.2
  *
@@ -48,7 +48,7 @@ import { NETDEF_EXTENDED_PAN_ID, NETDEF_NETWORK_KEY, NETDEF_PAN_ID, NETDEF_TC_KE
 import { createMACFrameControl } from "../utils.js";
 import { captureMacFrame, cloneNetworkParameters, decodeMACFramePayload, NO_ACK_CODE, TEST_DEVICE_EUI64 } from "./utils.js";
 
-describe("Zigbee 3.0 Device Behavior Compliance", () => {
+describe("Zigbee 4.0 Device Behavior Compliance", () => {
     let netParams: NetworkParameters;
     let saveDir: string;
 

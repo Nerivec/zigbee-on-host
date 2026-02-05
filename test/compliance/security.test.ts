@@ -4,7 +4,7 @@
  * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
  *   - Zigbee specification (05-3474-23): Revision 23.1
- *   - Base device behavior (16-02828-012): v3.0.1
+ *   - Base device behavior (16-02828-012): v3.1
  *   - ZCL specification (07-5123): Revision 8
  *   - Green Power specification (14-0563-19): Version 1.1.2
  *
@@ -78,7 +78,7 @@ import {
     registerNeighborDevice,
 } from "./utils.js";
 
-describe("Zigbee 3.0 Security Compliance", () => {
+describe("Zigbee 4.0 Security Compliance", () => {
     let netParams: NetworkParameters;
     let saveDir: string;
 
@@ -911,7 +911,7 @@ describe("Zigbee 3.0 Security Compliance", () => {
 
     /**
      * Zigbee Spec 05-3474-23 §4.6.3.2: Well-Known Keys
-     * Well-known keys SHALL be used according to Zigbee 3.0 specification.
+     * Well-known keys SHALL be used according to Zigbee 4.0 specification.
      */
     describe("Well-Known Keys (Zigbee §4.6.3.2)", () => {
         it("precomputes the trust center verify hash for the ZigBeeAlliance09 link key", () => {
