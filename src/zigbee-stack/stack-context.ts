@@ -642,7 +642,7 @@ export class StackContext {
 
         do {
             // maximum exclusive, minimum inclusive
-            newNetworkAddress = Math.floor(Math.random() * (ZigbeeConsts.BCAST_MIN - 0x0001) + 0x0001);
+            newNetworkAddress = (Math.random() * (ZigbeeConsts.BCAST_MIN - 0x0001) + 0x0001) | 0;
             unique = this.address16ToAddress64.get(newNetworkAddress) === undefined;
         } while (!unique);
 
@@ -768,7 +768,7 @@ export class StackContext {
             return 255;
         }
 
-        return Math.floor(255 / (1 + Math.exp(-0.13 * (rssi - (this.rssiMin + 0.45 * (this.rssiMax - this.rssiMin))))));
+        return (255 / (1 + Math.exp(-0.13 * (rssi - (this.rssiMin + 0.45 * (this.rssiMax - this.rssiMin)))))) | 0;
     }
 
     /**
@@ -796,32 +796,16 @@ export class StackContext {
     /* @__INLINE__ */
     public computeLQA(signalStrength: number, signalQuality?: number): number {
         // HOT PATH: Map RSSI to LQI if not provided
-        if (signalQuality === undefined) {
-            signalQuality = this.mapRSSIToLQI(signalStrength);
-        }
+        let quality = signalQuality ?? this.mapRSSIToLQI(signalStrength);
+        // HOT PATH: Clamp to valid ranges using ternary
+        const strength = signalStrength < this.rssiMin ? this.rssiMin : signalStrength > this.rssiMax ? this.rssiMax : signalStrength;
+        quality = quality < this.lqiMin ? this.lqiMin : quality > this.lqiMax ? this.lqiMax : quality;
+        // HOT PATH: Pre-calculate range deltas
+        const lqiRange = this.lqiMax - this.lqiMin;
+        const rssiRange = this.rssiMax - this.rssiMin;
 
-        // HOT PATH: Clamp signal strength to valid range
-        if (signalStrength < this.rssiMin) {
-            signalStrength = this.rssiMin;
-        }
-
-        if (signalStrength > this.rssiMax) {
-            signalStrength = this.rssiMax;
-        }
-
-        // HOT PATH: Clamp signal quality to valid range
-        if (signalQuality < this.lqiMin) {
-            signalQuality = this.lqiMin;
-        }
-
-        if (signalQuality > this.lqiMax) {
-            signalQuality = this.lqiMax;
-        }
-
-        // HOT PATH: Compute LQA with optimized formula (single Math.floor call)
-        return Math.floor(
-            (((255 * (signalQuality - this.lqiMin)) / (this.lqiMax - this.lqiMin)) * (signalStrength - this.rssiMin)) / (this.rssiMax - this.rssiMin),
-        );
+        // HOT PATH: Compute LQA, use bitwise OR for floor
+        return ((255 * (quality - this.lqiMin) * (strength - this.rssiMin)) / (lqiRange * rssiRange)) | 0;
     }
 
     /**
@@ -884,8 +868,8 @@ export class StackContext {
             }
 
             const sortedLQAs = device.recentLQAs.slice(/* copy */).sort((a, b) => a - b);
-            const midIndex = Math.floor(sortedLQAs.length / 2);
-            const median = Math.floor(sortedLQAs.length % 2 === 1 ? sortedLQAs[midIndex] : (sortedLQAs[midIndex - 1] + sortedLQAs[midIndex]) / 2);
+            const midIndex = (sortedLQAs.length / 2) | 0;
+            const median = (sortedLQAs.length % 2 === 1 ? sortedLQAs[midIndex] : (sortedLQAs[midIndex - 1] + sortedLQAs[midIndex]) / 2) | 0;
 
             return median;
         }
@@ -1204,13 +1188,19 @@ export class StackContext {
                 }
 
                 if (sourceRouteEntries.length > 0) {
-                    const routes = sourceRouteEntries.map((entry) => ({
-                        relayAddresses: entry.relayAddresses,
-                        pathCost: entry.pathCost,
-                        lastUpdated: entry.lastUpdated,
-                        failureCount: 0,
-                        lastUsed: undefined,
-                    }));
+                    const routes: SourceRouteTableEntry[] = [];
+
+                    for (let i = 0; i < sourceRouteEntries.length; i++) {
+                        const entry = sourceRouteEntries[i];
+
+                        routes.push({
+                            relayAddresses: entry.relayAddresses,
+                            pathCost: entry.pathCost,
+                            lastUpdated: entry.lastUpdated,
+                            failureCount: 0,
+                            lastUsed: undefined,
+                        });
+                    }
 
                     this.sourceRouteTable.set(address16, routes);
                 }
@@ -1565,7 +1555,15 @@ export class StackContext {
             // XXX: should only be needed for `rxOnWhenIdle`, but for now always trigger (tricky bit, not always correct)
             for (const [addr16, entries] of this.sourceRouteTable) {
                 // entries using this device as relay are no longer valid
-                const filteredEntries = entries.filter((entry) => !entry.relayAddresses.includes(source16));
+                const filteredEntries: SourceRouteTableEntry[] = [];
+
+                for (let i = 0; i < entries.length; i++) {
+                    const entry = entries[i];
+
+                    if (!entry.relayAddresses.includes(source16)) {
+                        filteredEntries.push(entry);
+                    }
+                }
 
                 if (filteredEntries.length === 0) {
                     this.sourceRouteTable.delete(addr16);

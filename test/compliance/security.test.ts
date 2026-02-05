@@ -1233,30 +1233,6 @@ describe("Zigbee 3.0 Security Compliance", () => {
             mockMACHandlerCallbacks.onSendFrame = vi.fn();
         });
 
-        it("issues verify key command after transporting TC link key", async () => {
-            const device16 = 0x6345;
-            const device64 = 0x00124b00bb660022n;
-            registerNeighborDevice(context, device16, device64);
-
-            const frames: Buffer[] = [];
-            mockMACHandlerCallbacks.onSendFrame = vi.fn((payload: Buffer) => {
-                frames.push(Buffer.from(payload));
-                return Promise.resolve();
-            });
-
-            await apsHandler.sendTransportKeyTC(device16, tcLinkKey, device64);
-            await apsHandler.sendVerifyKey(device16, ZigbeeAPSConsts.CMD_KEY_TC_LINK, device64, context.tcVerifyKeyHash);
-
-            expect(frames).toHaveLength(2);
-            const verifyDecoded = decodeCommandFrame(frames[1]!);
-
-            expect(verifyDecoded.apsPayload.readUInt8(0)).toStrictEqual(ZigbeeAPSCommandId.VERIFY_KEY);
-            expect(verifyDecoded.apsPayload.subarray(10)).toStrictEqual(context.tcVerifyKeyHash);
-            expect(verifyDecoded.apsFrameControl.security).toStrictEqual(false);
-
-            mockMACHandlerCallbacks.onSendFrame = vi.fn();
-        });
-
         it("responds with confirm key success when device proves TC link key", async () => {
             const device16 = 0x6446;
             const device64 = 0x00124b00bb660033n;

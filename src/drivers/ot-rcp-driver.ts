@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { SpinelCommandId } from "../spinel/commands.js";
-import { decodeHdlcFrame, HDLC_TX_CHUNK_SIZE, HdlcReservedByte } from "../spinel/hdlc.js";
+import { HDLC_TX_CHUNK_SIZE, HdlcReservedByte } from "../spinel/hdlc.js";
 import { SpinelPropertyId } from "../spinel/properties.js";
 import {
     decodeSpinelFrame,
@@ -226,13 +226,15 @@ export class OTRCPDriver {
 
         // Emit MAC frames if listeners registered (not in hot path for normal operation)
         if (this.macHandler.emitFrames) {
+            const rssi = metadata?.rssi;
+
             setImmediate(() => {
-                this.#onMACFrame(payload, metadata?.rssi);
+                this.#onMACFrame(payload, rssi);
             });
         }
 
         // Metadata logging
-        if (metadata) {
+        if (metadata !== undefined) {
             logger.debug(
                 () => `<--- SPINEL STREAM_RAW METADATA[rssi=${metadata.rssi} noiseFloor=${metadata.noiseFloor} flags=${metadata.flags}]`,
                 NS,
@@ -248,9 +250,7 @@ export class OTRCPDriver {
     }
 
     public async onFrame(buffer: Buffer): Promise<void> {
-        const hdlcFrame = decodeHdlcFrame(buffer);
-        // logger.debug(() => `<--- HDLC[length=${hdlcFrame.length}]`, NS);
-        const spinelFrame = decodeSpinelFrame(hdlcFrame);
+        const spinelFrame = decodeSpinelFrame(buffer);
 
         /* v8 ignore if -- @preserve */
         if (spinelFrame.header.flg !== SPINEL_HEADER_FLG_SPINEL) {
@@ -336,8 +336,7 @@ export class OTRCPDriver {
         };
         const hdlcFrame = encodeSpinelFrame(spinelFrame);
 
-        // only send what is recorded as "data" (by length)
-        this.writer.writeBuffer(hdlcFrame.data.subarray(0, hdlcFrame.length));
+        this.writer.writeBuffer(hdlcFrame);
 
         if (waitForResponse) {
             return await this.waitForTID(spinelFrame.header.tid, timeout);

@@ -148,8 +148,8 @@ async function convert(dataPath: string): Promise<void> {
         throw new Error("Coordinator Backup not from Zigbee2MQTT not supported");
     }
 
-    const isEmber = Boolean(backup.stack_specific?.ezsp?.hashed_tclk);
-    const isZstack = Boolean(backup.stack_specific?.zstack?.tclk_seed);
+    const isEmber = !!backup.stack_specific?.ezsp?.hashed_tclk;
+    const isZstack = !!backup.stack_specific?.zstack?.tclk_seed;
 
     if (!isEmber && !isZstack) {
         throw new Error("Coordinator Backup not from [ember, zstack] drivers not supported");

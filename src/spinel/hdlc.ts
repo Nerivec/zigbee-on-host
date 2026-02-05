@@ -16,30 +16,6 @@ const HDLC_ESCAPE_XOR = 0x20;
 
 export const HDLC_TX_CHUNK_SIZE = 2048;
 
-export type HdlcFrame = {
-    data: Buffer;
-    /** For decoded frames, this stops before FCS+FLAG */
-    length: number;
-    /** Final value should match HDLC_GOOD_FCS */
-    fcs: number;
-};
-
-/**
- * Check if byte needs HDLC escaping.
- * HOT PATH: Called during frame encoding.
- * Uses simple comparison for fast checking.
- */
-/* @__INLINE__ */
-export function hdlcByteNeedsEscape(aByte: number): boolean {
-    return (
-        aByte === HdlcReservedByte.XON ||
-        aByte === HdlcReservedByte.XOFF ||
-        aByte === HdlcReservedByte.ESCAPE ||
-        aByte === HdlcReservedByte.FLAG ||
-        aByte === HdlcReservedByte.FLAG_SPECIAL
-    );
-}
-
 const HDLC_FCS_TABLE = [
     0x0000, 0x1189, 0x2312, 0x329b, 0x4624, 0x57ad, 0x6536, 0x74bf, 0x8c48, 0x9dc1, 0xaf5a, 0xbed3, 0xca6c, 0xdbe5, 0xe97e, 0xf8f7, 0x1081, 0x0108,
     0x3393, 0x221a, 0x56a5, 0x472c, 0x75b7, 0x643e, 0x9cc9, 0x8d40, 0xbfdb, 0xae52, 0xdaed, 0xcb64, 0xf9ff, 0xe876, 0x2102, 0x308b, 0x0210, 0x1399,
@@ -74,29 +50,28 @@ export function updateFcs(aFcs: number, aByte: number): number {
  * Optimized with minimal allocations and inline FCS checking.
  */
 /* @__INLINE__ */
-export function decodeHdlcFrame(buffer: Buffer): HdlcFrame {
+export function decodeHdlcFrame(buffer: Buffer): Buffer {
+    const bufLen = buffer.byteLength;
+
     // sanity check
-    if (buffer.byteLength > HDLC_TX_CHUNK_SIZE) {
+    if (bufLen > HDLC_TX_CHUNK_SIZE) {
         throw new Error("HDLC frame too long");
     }
 
-    const hdlcFrame: HdlcFrame = {
-        // data can only be smaller than incoming buffer (removed flags/escapes)
-        data: Buffer.alloc(buffer.byteLength),
-        length: 0,
-        fcs: HDLC_INIT_FCS,
-    };
-
+    // data can only be smaller than incoming buffer (removed flags/escapes)
+    const hdlcFrame = Buffer.allocUnsafe(bufLen);
+    let hdlcFrameLen = 0;
+    let fcs = HDLC_INIT_FCS;
     let lastWasEscape = false;
 
-    for (let i = 0; i < buffer.byteLength; i++) {
+    for (let i = 0; i < bufLen; i++) {
         const aByte = buffer[i];
 
         if (aByte === HdlcReservedByte.FLAG) {
             if (i > 0) {
-                if (hdlcFrame.length >= HDLC_FCS_SIZE && hdlcFrame.fcs === HDLC_GOOD_FCS) {
+                if (hdlcFrameLen >= HDLC_FCS_SIZE && fcs === HDLC_GOOD_FCS) {
                     // walk back the FCS writes by ignoring them from data length
-                    hdlcFrame.length -= 2;
+                    hdlcFrameLen -= 2;
                 } else {
                     throw new Error("HDLC parsing error");
                 }
@@ -106,70 +81,72 @@ export function decodeHdlcFrame(buffer: Buffer): HdlcFrame {
         } else {
             if (lastWasEscape) {
                 const newByte = aByte ^ HDLC_ESCAPE_XOR;
-                hdlcFrame.fcs = updateFcs(hdlcFrame.fcs, newByte);
+                fcs = updateFcs(fcs, newByte);
 
-                hdlcFrame.data[hdlcFrame.length] = newByte;
-                hdlcFrame.length += 1;
+                hdlcFrame[hdlcFrameLen] = newByte;
+                hdlcFrameLen += 1;
 
                 lastWasEscape = false;
             } else {
-                hdlcFrame.fcs = updateFcs(hdlcFrame.fcs, aByte);
+                fcs = updateFcs(fcs, aByte);
 
-                hdlcFrame.data[hdlcFrame.length] = aByte;
-                hdlcFrame.length += 1;
+                hdlcFrame[hdlcFrameLen] = aByte;
+                hdlcFrameLen += 1;
             }
         }
     }
 
-    return hdlcFrame;
+    return hdlcFrame.subarray(0, hdlcFrameLen);
 }
 
-/**
- * @returns The new offset after encoded byte is added
- */
-export function encodeByte(hdlcFrame: HdlcFrame, aByte: number, dataOffset: number): number {
-    if (hdlcByteNeedsEscape(aByte)) {
-        hdlcFrame.data[dataOffset] = HdlcReservedByte.ESCAPE;
+/* @__INLINE__ */
+function encodeByte(hdlcFrame: Buffer, fcs: number, aByte: number, dataOffset: number): [offset: number, fcs: number] {
+    if (
+        aByte === HdlcReservedByte.XON ||
+        aByte === HdlcReservedByte.XOFF ||
+        aByte === HdlcReservedByte.ESCAPE ||
+        aByte === HdlcReservedByte.FLAG ||
+        aByte === HdlcReservedByte.FLAG_SPECIAL
+    ) {
+        hdlcFrame[dataOffset] = HdlcReservedByte.ESCAPE;
         dataOffset += 1;
-        hdlcFrame.data[dataOffset] = aByte ^ HDLC_ESCAPE_XOR;
+        hdlcFrame[dataOffset] = aByte ^ HDLC_ESCAPE_XOR;
         dataOffset += 1;
     } else {
-        hdlcFrame.data[dataOffset] = aByte;
+        hdlcFrame[dataOffset] = aByte;
         dataOffset += 1;
     }
 
-    hdlcFrame.fcs = updateFcs(hdlcFrame.fcs, aByte);
-
-    return dataOffset;
+    return [dataOffset, updateFcs(fcs, aByte)];
 }
 
-export function encodeHdlcFrame(buffer: Buffer): HdlcFrame {
+/* @__INLINE__ */
+export function encodeHdlcFrame(buffer: Buffer): Buffer {
+    const bufLen = buffer.byteLength;
+
     // sanity check
-    if (buffer.byteLength > HDLC_TX_CHUNK_SIZE) {
+    if (bufLen > HDLC_TX_CHUNK_SIZE) {
         throw new Error("HDLC frame would be too long");
     }
 
-    const hdlcFrame: HdlcFrame = {
-        // alloc to max possible size (as if each byte needs escaping)
-        data: Buffer.alloc(Math.min(buffer.byteLength * 2 + 6, HDLC_TX_CHUNK_SIZE)),
-        length: 0,
-        fcs: HDLC_INIT_FCS,
-    };
-    hdlcFrame.data[hdlcFrame.length] = HdlcReservedByte.FLAG;
-    hdlcFrame.length += 1;
+    // alloc to max possible size (as if each byte needs escaping)
+    const hdlcFrame = Buffer.allocUnsafe(Math.min(bufLen * 2 + 6, HDLC_TX_CHUNK_SIZE));
+    let hdlcFrameLen = 0;
+    let fcs = HDLC_INIT_FCS;
+    hdlcFrame[hdlcFrameLen] = HdlcReservedByte.FLAG;
+    hdlcFrameLen += 1;
 
-    for (let i = 0; i < buffer.byteLength; i++) {
-        hdlcFrame.length = encodeByte(hdlcFrame, buffer[i], hdlcFrame.length);
+    for (let i = 0; i < bufLen; i++) {
+        [hdlcFrameLen, fcs] = encodeByte(hdlcFrame, fcs, buffer[i], hdlcFrameLen);
     }
 
-    let fcs = hdlcFrame.fcs;
-    fcs ^= HDLC_INIT_FCS;
+    const encodeFcs = fcs ^ HDLC_INIT_FCS;
 
-    hdlcFrame.length = encodeByte(hdlcFrame, fcs & 0xff, hdlcFrame.length);
-    hdlcFrame.length = encodeByte(hdlcFrame, (fcs >> 8) & 0xff, hdlcFrame.length);
+    [hdlcFrameLen, fcs] = encodeByte(hdlcFrame, fcs, encodeFcs & 0xff, hdlcFrameLen);
+    [hdlcFrameLen, fcs] = encodeByte(hdlcFrame, fcs, (encodeFcs >> 8) & 0xff, hdlcFrameLen);
 
-    hdlcFrame.data[hdlcFrame.length] = HdlcReservedByte.FLAG;
-    hdlcFrame.length += 1;
+    hdlcFrame[hdlcFrameLen] = HdlcReservedByte.FLAG;
+    hdlcFrameLen += 1;
 
-    return hdlcFrame;
+    return hdlcFrame.subarray(0, hdlcFrameLen);
 }

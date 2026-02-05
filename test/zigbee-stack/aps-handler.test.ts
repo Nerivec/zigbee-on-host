@@ -444,33 +444,6 @@ describe("APS Handler", () => {
             expect(mockMACHandler.sendFrame).toHaveBeenCalled();
         });
 
-        it("should send Verify Key command", async () => {
-            const destination16 = 0x1234;
-            const destination64 = 0x00124b0087654321n;
-            const keyType = 0x01; // TC key
-            const source64 = 0x00124b0012345678n;
-            const hash = Buffer.alloc(16, 0xff);
-
-            // Add device to device table
-            mockContext.deviceTable.set(destination64, {
-                address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
-            });
-            mockContext.address16ToAddress64.set(destination16, destination64);
-
-            const result = await apsHandler.sendVerifyKey(destination16, keyType, source64, hash);
-
-            expect(result).toStrictEqual(true);
-            expect(mockMACHandler.sendFrame).toHaveBeenCalled();
-        });
-
         it("should send Confirm Key command", async () => {
             const destination16 = 0x1234;
             const destination64 = 0x00124b0087654321n;
@@ -622,33 +595,6 @@ describe("APS Handler", () => {
             // TODO: more complete tests
             expect(() => {
                 apsHandler.processTunnel(data, 0, macHeader, nwkHeader, apsHeader);
-            }).not.toThrow();
-        });
-
-        it("should process Confirm Key command", () => {
-            const data = Buffer.alloc(20);
-            let offset = 0;
-
-            // Command ID
-            data.writeUInt8(0x0f, offset++); // CONFIRM_KEY
-
-            // Status
-            data.writeUInt8(0x00, offset++); // success
-
-            // Key type
-            data.writeUInt8(0x01, offset++); // TC key
-
-            // Destination address
-            data.writeBigUInt64LE(0x00124b0087654321n, offset);
-
-            const macHeader = createMACHeader();
-            const nwkHeader = { frameControl: {} } as ZigbeeNWKHeader;
-            const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
-
-            // Should not throw
-            // TODO: more complete tests
-            expect(() => {
-                apsHandler.processConfirmKey(data, 0, macHeader, nwkHeader, apsHeader);
             }).not.toThrow();
         });
     });
@@ -2437,7 +2383,7 @@ describe("APS Handler", () => {
         routeSpy.mockRestore();
     });
 
-    it("processes tunnel, confirm key and relay commands", async () => {
+    it("handles invalid command ID processing", async () => {
         const macHeader = { frameControl: {}, source16: 0x2001, source64: 0x00124b0022223333n } as MACHeader;
         const nwkHeader = { frameControl: {}, source16: 0x2001, source64: 0x00124b0022223333n } as ZigbeeNWKHeader;
         const apsHeader = {
@@ -2450,34 +2396,10 @@ describe("APS Handler", () => {
                 extendedHeader: false,
             },
         } as ZigbeeAPSHeader;
-
-        const tunnelPayload = Buffer.alloc(1 + 8 + 2);
-        tunnelPayload.writeUInt8(ZigbeeAPSCommandId.TUNNEL, 0);
-        tunnelPayload.writeBigUInt64LE(0x00124b00ccddee00n, 1);
-        tunnelPayload.writeUInt16LE(0x1234, 9);
-        await apsHandler.processCommand(tunnelPayload, macHeader, nwkHeader, apsHeader);
-
-        const confirmPayload = Buffer.alloc(1 + 1 + 1 + 8);
-        confirmPayload.writeUInt8(ZigbeeAPSCommandId.CONFIRM_KEY, 0);
-        confirmPayload.writeUInt8(0x01, 1);
-        confirmPayload.writeUInt8(0x03, 2);
-        confirmPayload.writeBigUInt64LE(0x00124b00aabbccddn, 3);
-        await apsHandler.processCommand(confirmPayload, macHeader, nwkHeader, apsHeader);
-
-        const relayDown = Buffer.alloc(1 + 8);
-        relayDown.writeUInt8(ZigbeeAPSCommandId.RELAY_MESSAGE_DOWNSTREAM, 0);
-        relayDown.writeBigUInt64LE(0x00124b00ddeeff00n, 1);
-        await apsHandler.processCommand(relayDown, macHeader, nwkHeader, apsHeader);
-
-        const relayUp = Buffer.alloc(1 + 8);
-        relayUp.writeUInt8(ZigbeeAPSCommandId.RELAY_MESSAGE_UPSTREAM, 0);
-        relayUp.writeBigUInt64LE(0x00124b00eeff1100n, 1);
-        await apsHandler.processCommand(relayUp, macHeader, nwkHeader, apsHeader);
-
         const warnSpy = vi.spyOn(logger, "warning");
+
         await apsHandler.processCommand(Buffer.from([0xff]), macHeader, nwkHeader, apsHeader);
-        expect(warnSpy).toHaveBeenCalled();
-        warnSpy.mockRestore();
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("<=x= APS CMD[cmdId=255"), "aps-handler");
     });
 
     it("parses transport key payload variants", () => {

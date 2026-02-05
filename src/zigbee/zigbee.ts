@@ -357,7 +357,7 @@ export function combineSecurityControl(control: ZigbeeSecurityControl, levelOver
  * DEVICE SCOPE: All logical devices
  */
 export function makeNonce(header: ZigbeeSecurityHeader, source64: bigint, levelOverride?: number): Buffer {
-    const nonce = Buffer.alloc(ZigbeeConsts.SEC_NONCE_LEN);
+    const nonce = Buffer.allocUnsafe(ZigbeeConsts.SEC_NONCE_LEN);
 
     // TODO: write source64 as all 0/F if undefined?
     nonce.writeBigUInt64LE(source64, 0);
@@ -463,8 +463,8 @@ export function decodeZigbeeSecurityHeader(data: Buffer, offset: number, source6
     offset += 1;
     const level = ZigbeeSecurityLevel.ENC_MIC32; // overrides control & ZigbeeConsts.SEC_CONTROL_LEVEL;
     const keyId = (control & ZigbeeConsts.SEC_CONTROL_KEY) >> 3;
-    const nonce = Boolean((control & ZigbeeConsts.SEC_CONTROL_NONCE) >> 5);
-    const reqVerifiedFc = Boolean((control & ZigbeeConsts.SEC_CONTROL_REQ_VERIFIED_FC) >> 6);
+    const nonce = !!((control & ZigbeeConsts.SEC_CONTROL_NONCE) >> 5);
+    const reqVerifiedFc = !!((control & ZigbeeConsts.SEC_CONTROL_REQ_VERIFIED_FC) >> 6);
 
     const frameCounter = data.readUInt32LE(offset);
     offset += 4;
@@ -632,7 +632,7 @@ export function encryptZigbeePayload(
         adjustedAuthData[controlOffset] &= ~ZigbeeConsts.SEC_CONTROL_LEVEL;
         adjustedAuthData[controlOffset] |= ZigbeeConsts.SEC_CONTROL_LEVEL & ZigbeeSecurityLevel.ENC_MIC32;
 
-        const decryptedData = Buffer.alloc(payload.byteLength + header.micLen!); // payload + auth tag
+        const decryptedData = Buffer.allocUnsafe(payload.byteLength + header.micLen!); // payload + auth tag
 
         payload.copy(decryptedData, 0);
 
@@ -659,7 +659,13 @@ export function encryptZigbeePayload(
  * @returns
  */
 export const convertChannelsToMask = (channels: number[]): number => {
-    return channels.reduce((a, c) => a + (1 << c), 0);
+    let mask = 0;
+
+    for (let i = 0; i < channels.length; i++) {
+        mask += 1 << channels[i];
+    }
+
+    return mask;
 };
 
 /**

@@ -60,7 +60,7 @@ describe("Spinel & HDLC", () => {
         it(`writes Packed Unsigned Integer: ${dec} => ${hex}`, () => {
             const buffer = Buffer.from("0ba124f50000000000", "hex");
             let offset = 4;
-            offset = setPackedUInt(buffer, offset, dec);
+            offset = setPackedUInt(buffer, offset, dec, getPackedUIntSize(dec));
 
             expect(offset).toStrictEqual(4 + hex.length / 2);
             expect(buffer.toString("hex").startsWith(`0ba124f5${hex}`)).toStrictEqual(true);
@@ -121,8 +121,7 @@ describe("Spinel & HDLC", () => {
         expect(encodeHdlcFrameSpy).toHaveBeenCalledTimes(1);
         expect(encodeHdlcFrameSpy.mock.calls[0][0].toString("hex")).toStrictEqual(resetCommandTestVectorHex);
         expect(encFrame.length).toStrictEqual(6);
-        expect(encFrame.data.subarray(0, encFrame.length)).toStrictEqual(Buffer.from(resetCommandTestVectorHdlcHex, "hex"));
-        expect(encFrame.fcs).toStrictEqual(Hdlc.HDLC_GOOD_FCS);
+        expect(encFrame).toStrictEqual(Buffer.from(resetCommandTestVectorHdlcHex, "hex"));
     });
 
     /** see https://datatracker.ietf.org/doc/html/draft-rquattle-spinel-unified#appendix-B.3 */
@@ -132,18 +131,12 @@ describe("Spinel & HDLC", () => {
         // these are technically packed uint21 but we know values are uint8, we can cheat
         payload: Buffer.from([SpinelPropertyId.LAST_STATUS, SpinelStatus.RESET_SOFTWARE]),
     };
-    const resetNotificationTestVectorHex = "80060072";
+    // const resetNotificationTestVectorHex = "80060072";
     /** verified with code from https://github.com/openthread/openthread/tree/main/src/lib/hdlc */
     const resetNotificationTestVectorHdlcHex = "7e80060072fc577e";
 
     it("reads Reset Notification from HDLC", () => {
-        const decHdlcFrame = Hdlc.decodeHdlcFrame(Buffer.from(resetNotificationTestVectorHdlcHex, "hex"));
-
-        expect(decHdlcFrame.length).toStrictEqual(resetNotificationTestVectorHex.length / 2);
-        expect(decHdlcFrame.data.subarray(0, decHdlcFrame.length)).toStrictEqual(Buffer.from(resetNotificationTestVectorHex, "hex"));
-        expect(decHdlcFrame.fcs).toStrictEqual(Hdlc.HDLC_GOOD_FCS);
-
-        const decFrame = decodeSpinelFrame(decHdlcFrame);
+        const decFrame = decodeSpinelFrame(Buffer.from(resetNotificationTestVectorHdlcHex, "hex"));
 
         expect(decFrame).toStrictEqual(resetNotificationTestVectorFrame);
     });
@@ -153,8 +146,7 @@ describe("Spinel & HDLC", () => {
             0x7e, 0x80, 0x06, 0x71, 0x0a, 0x00, 0x03, 0x08, 0xd0, 0xff, 0xff, 0xff, 0xff, 0x07, 0xff, 0xcc, 0xd7, 0x80, 0x00, 0x00, 0x0a, 0x00, 0x19,
             0xff, 0xc3, 0x0c, 0xc7, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x87, 0xe9, 0x7e,
         ]);
-        const decHdlcFrame = Hdlc.decodeHdlcFrame(payload);
-        const decFrame = decodeSpinelFrame(decHdlcFrame);
+        const decFrame = decodeSpinelFrame(payload);
         const [macData, metadata] = readStreamRaw(decFrame.payload, 1);
 
         expect(macData).toStrictEqual(Buffer.from([0x03, 0x08, 0xd0, 0xff, 0xff, 0xff, 0xff, 0x07, 0xff, 0xcc]));
@@ -171,21 +163,6 @@ describe("Spinel & HDLC", () => {
         expect(getPackedUIntSize(1 << 21)).toStrictEqual(4);
         expect(getPackedUIntSize((1 << 28) - 1)).toStrictEqual(4);
         expect(getPackedUIntSize(1 << 28)).toStrictEqual(5);
-    });
-
-    it("setPackedUInt respects explicit size hints", () => {
-        const value = 0x1fffff;
-        const size = getPackedUIntSize(value);
-        const autoBuf = Buffer.alloc(size);
-        const autoOffset = setPackedUInt(autoBuf, 0, value);
-
-        expect(autoOffset).toStrictEqual(size);
-
-        const manualBuf = Buffer.alloc(size);
-        const manualOffset = setPackedUInt(manualBuf, 0, value, size);
-
-        expect(manualOffset).toStrictEqual(size);
-        expect(manualBuf).toStrictEqual(autoBuf);
     });
 
     it("getPackedUInt rejects overly long encodings", () => {
@@ -237,9 +214,11 @@ describe("Spinel & HDLC", () => {
         const protocolId = SpinelPropertyId.PROTOCOL_VERSION;
         const major = 4;
         const minor = 3;
-        const [pairBuf, pairOffset] = writePropertyId(protocolId, getPackedUIntSize(major) + getPackedUIntSize(minor));
-        let cursor = setPackedUInt(pairBuf, pairOffset, major);
-        setPackedUInt(pairBuf, cursor, minor);
+        const majorSize = getPackedUIntSize(major);
+        const minorSize = getPackedUIntSize(minor);
+        const [pairBuf, pairOffset] = writePropertyId(protocolId, majorSize + minorSize);
+        let cursor = setPackedUInt(pairBuf, pairOffset, major, majorSize);
+        setPackedUInt(pairBuf, cursor, minor, minorSize);
 
         expect(readPropertyii(protocolId, pairBuf)).toStrictEqual([major, minor]);
 
@@ -249,7 +228,7 @@ describe("Spinel & HDLC", () => {
         cursor = capsOffset;
 
         for (const cap of caps) {
-            cursor = setPackedUInt(capsBuf, cursor, cap);
+            cursor = setPackedUInt(capsBuf, cursor, cap, getPackedUIntSize(cap));
         }
 
         expect(readPropertyAi(SpinelPropertyId.CAPS, capsBuf)).toStrictEqual(caps);

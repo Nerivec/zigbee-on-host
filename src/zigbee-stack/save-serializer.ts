@@ -399,10 +399,10 @@ export function readDeviceTLVs(buffer: Buffer, startOffset: number, endOffset: n
                 device.capabilities = buffer.readUInt8(offset);
                 break;
             case DeviceTLVTag.DEVICE_AUTHORIZED:
-                device.authorized = Boolean(buffer.readUInt8(offset));
+                device.authorized = !!buffer.readUInt8(offset);
                 break;
             case DeviceTLVTag.DEVICE_NEIGHBOR:
-                device.neighbor = Boolean(buffer.readUInt8(offset));
+                device.neighbor = !!buffer.readUInt8(offset);
                 break;
             case DeviceTLVTag.DEVICE_LAST_NWK_KEY_SEQ:
                 device.lastTransportedNetworkKeySeq = buffer.readUInt8(offset);

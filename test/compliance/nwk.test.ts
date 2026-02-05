@@ -1335,9 +1335,9 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             const options = nwkPayload.readUInt8(1);
 
             expect(nwkPayload.readUInt8(0)).toStrictEqual(ZigbeeNWKCommandId.LEAVE);
-            expect(Boolean(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REQUEST)).toStrictEqual(true);
-            expect(Boolean(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REJOIN)).toStrictEqual(true);
-            expect(Boolean(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REMOVE_CHILDREN)).toStrictEqual(false);
+            expect(!!(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REQUEST)).toStrictEqual(true);
+            expect(!!(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REJOIN)).toStrictEqual(true);
+            expect(!!(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REMOVE_CHILDREN)).toStrictEqual(false);
         });
 
         it("decodes route record command payload and populates source route table", async () => {
@@ -1432,8 +1432,8 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
 
             expect(nwkPayload.readUInt8(0)).toStrictEqual(ZigbeeNWKCommandId.LINK_STATUS);
             expect(options & ZigbeeNWKConsts.CMD_LINK_OPTION_COUNT_MASK).toStrictEqual(links.length);
-            expect(Boolean(options & ZigbeeNWKConsts.CMD_LINK_OPTION_FIRST_FRAME)).toStrictEqual(true);
-            expect(Boolean(options & ZigbeeNWKConsts.CMD_LINK_OPTION_LAST_FRAME)).toStrictEqual(true);
+            expect(!!(options & ZigbeeNWKConsts.CMD_LINK_OPTION_FIRST_FRAME)).toStrictEqual(true);
+            expect(!!(options & ZigbeeNWKConsts.CMD_LINK_OPTION_LAST_FRAME)).toStrictEqual(true);
             expect(firstEntryAddr).toStrictEqual(links[0]!.address);
             expect(firstEntryCosts & ZigbeeNWKConsts.CMD_LINK_INCOMING_COST_MASK).toStrictEqual(links[0]!.incomingCost);
             expect((firstEntryCosts & ZigbeeNWKConsts.CMD_LINK_OUTGOING_COST_MASK) >> 4).toStrictEqual(links[0]!.outgoingCost);
@@ -1491,59 +1491,6 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             expect(typeof messageFactory).toStrictEqual("function");
             const message = (messageFactory as () => string)();
             expect(message).toContain("conflictPANIds=6754,6755");
-            logSpy.mockRestore();
-        });
-
-        it("decodes network update command and reads advertised PAN IDs", async () => {
-            const logSpy = vi.spyOn(logger, "debug");
-            const updateOptions = (1 & ZigbeeNWKConsts.CMD_NWK_UPDATE_COUNT_MASK) | ZigbeeNWKConsts.CMD_NWK_UPDATE_ID_PAN_UPDATE;
-            const buffer = Buffer.alloc(1 + 1 + 8 + 1 + 2);
-            let offset = 0;
-            buffer.writeUInt8(ZigbeeNWKCommandId.NWK_UPDATE, offset);
-            offset += 1;
-            buffer.writeUInt8(updateOptions, offset);
-            offset += 1;
-            buffer.writeBigUInt64LE(0x00124b00ffeeccddn, offset);
-            offset += 8;
-            buffer.writeUInt8(0x09, offset);
-            offset += 1;
-            buffer.writeUInt16LE(0x1b77, offset);
-
-            const macHeader: MACHeader = {
-                frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
-                sequenceNumber: 0x44,
-                destinationPANId: netParams.panId,
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source16: routerShortAddress,
-                commandId: undefined,
-                fcs: 0,
-            };
-            const nwkHeader: ZigbeeNWKHeader = {
-                frameControl: {
-                    frameType: ZigbeeNWKFrameType.CMD,
-                    protocolVersion: ZigbeeNWKConsts.VERSION_2007,
-                    discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
-                    multicast: false,
-                    security: true,
-                    sourceRoute: false,
-                    extendedDestination: false,
-                    extendedSource: false,
-                    endDeviceInitiator: false,
-                },
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source16: routerShortAddress,
-                radius: 3,
-                seqNum: 0x67,
-            };
-
-            await nwkHandler.processCommand(buffer, macHeader, nwkHeader);
-
-            expect(logSpy).toHaveBeenCalled();
-            const messageFactory = logSpy.mock.calls[0]?.[0];
-            expect(typeof messageFactory).toStrictEqual("function");
-            const message = (messageFactory as () => string)();
-            expect(message).toContain("id=9");
-            expect(message).toContain("panIds=7031");
             logSpy.mockRestore();
         });
 
@@ -1848,9 +1795,9 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             const { nwkPayload } = decodeNWKFromMacFrame(macFrame, true);
             const options = nwkPayload.readUInt8(1);
 
-            expect(Boolean(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REQUEST)).toStrictEqual(true);
-            expect(Boolean(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REJOIN)).toStrictEqual(true);
-            expect(Boolean(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REMOVE_CHILDREN)).toStrictEqual(false);
+            expect(!!(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REQUEST)).toStrictEqual(true);
+            expect(!!(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REJOIN)).toStrictEqual(true);
+            expect(!!(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REMOVE_CHILDREN)).toStrictEqual(false);
         });
 
         it("sets the rejoin flag when rejoin parameter is true", async () => {
@@ -1859,8 +1806,8 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             const withOptions = decodeNWKFromMacFrame(withRejoin, true).nwkPayload.readUInt8(1);
             const withoutOptions = decodeNWKFromMacFrame(withoutRejoin, true).nwkPayload.readUInt8(1);
 
-            expect(Boolean(withOptions & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REJOIN)).toStrictEqual(true);
-            expect(Boolean(withoutOptions & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REJOIN)).toStrictEqual(false);
+            expect(!!(withOptions & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REJOIN)).toStrictEqual(true);
+            expect(!!(withoutOptions & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REJOIN)).toStrictEqual(false);
         });
 
         it("marks incoming leave frames with request=false as indications", async () => {
@@ -2238,8 +2185,8 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             expect(frames).toHaveLength(1);
             const [{ options, links: encodedLinks }] = frames;
             expect(options & ZigbeeNWKConsts.CMD_LINK_OPTION_COUNT_MASK).toStrictEqual(links.length);
-            expect(Boolean(options & ZigbeeNWKConsts.CMD_LINK_OPTION_FIRST_FRAME)).toStrictEqual(true);
-            expect(Boolean(options & ZigbeeNWKConsts.CMD_LINK_OPTION_LAST_FRAME)).toStrictEqual(true);
+            expect(!!(options & ZigbeeNWKConsts.CMD_LINK_OPTION_FIRST_FRAME)).toStrictEqual(true);
+            expect(!!(options & ZigbeeNWKConsts.CMD_LINK_OPTION_LAST_FRAME)).toStrictEqual(true);
             expect(encodedLinks).toStrictEqual(links);
         });
 

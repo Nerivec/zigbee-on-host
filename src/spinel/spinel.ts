@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { encodeHdlcFrame, type HdlcFrame } from "./hdlc.js";
+import { decodeHdlcFrame, encodeHdlcFrame } from "./hdlc.js";
 import { SpinelPropertyId } from "./properties.js";
 
 /**
@@ -141,14 +141,15 @@ export const SPINEL_RCP_API_VERSION = 11;
  * HOT PATH: Called for every incoming frame from RCP.
  */
 /* @__INLINE__ */
-export function decodeSpinelFrame(hdlcFrame: HdlcFrame): SpinelFrame {
+export function decodeSpinelFrame(buffer: Buffer): SpinelFrame {
+    const hdlcFrame = decodeHdlcFrame(buffer);
     // HOT PATH: Extract header fields with bitwise operations
-    const header = hdlcFrame.data[0];
+    const header = hdlcFrame[0];
     const tid = header & SPINEL_HEADER_TID_MASK;
     const nli = (header & SPINEL_HEADER_NLI_MASK) >> SPINEL_HEADER_NLI_SHIFT;
     const flg = (header & SPINEL_HEADER_FLG_MASK) >> SPINEL_HEADER_FLG_SHIFT;
-    const [commandId, outOffset] = getPackedUInt(hdlcFrame.data, 1);
-    const payload = hdlcFrame.data.subarray(outOffset, hdlcFrame.length);
+    const [commandId, outOffset] = getPackedUInt(hdlcFrame, 1);
+    const payload = hdlcFrame.subarray(outOffset);
 
     return {
         header: { tid, nli, flg },
@@ -162,9 +163,9 @@ export function decodeSpinelFrame(hdlcFrame: HdlcFrame): SpinelFrame {
  * HOT PATH: Called for every outgoing frame to RCP.
  */
 /* @__INLINE__ */
-export function encodeSpinelFrame(frame: SpinelFrame): HdlcFrame {
+export function encodeSpinelFrame(frame: SpinelFrame): Buffer {
     const cmdIdSize = getPackedUIntSize(frame.commandId);
-    const buffer = Buffer.alloc(frame.payload.byteLength + 1 + cmdIdSize);
+    const buffer = Buffer.allocUnsafe(frame.payload.byteLength + 1 + cmdIdSize);
     const headerByte =
         (frame.header.tid & SPINEL_HEADER_TID_MASK) |
         ((frame.header.nli << SPINEL_HEADER_NLI_SHIFT) & SPINEL_HEADER_NLI_MASK) |
@@ -210,11 +211,7 @@ export function getPackedUIntSize(value: number): number {
  * HOT PATH: Called during frame encoding.
  */
 /* @__INLINE__ */
-export function setPackedUInt(data: Buffer, offset: number, value: number, size?: number): number {
-    if (!size) {
-        size = getPackedUIntSize(value);
-    }
-
+export function setPackedUInt(data: Buffer, offset: number, value: number, size: number): number {
     for (let i = 0; i !== size - 1; i++) {
         data[offset] = (value & SPINEL_PACKED_UINT_MSO_MASK) | SPINEL_PACKED_UINT_MASK;
         offset += 1;
@@ -236,6 +233,7 @@ export function setPackedUInt(data: Buffer, offset: number, value: number, size?
 export function getPackedUInt(data: Buffer, offset: number): [value: number, outOffset: number] {
     let value = 0;
     let i = 0;
+    let byte: number;
 
     // HOT PATH: Decode variable-length integer
     do {
@@ -243,18 +241,19 @@ export function getPackedUInt(data: Buffer, offset: number): [value: number, out
             throw new Error(`Invalid Packed UInt, got ${i}, expected < 40`);
         }
 
-        value |= (data[offset] & SPINEL_PACKED_UINT_MSO_MASK) << i;
+        byte = data[offset];
+        value |= (byte & SPINEL_PACKED_UINT_MSO_MASK) << i;
         i += 7;
         offset += 1;
-    } while ((data[offset - 1] & SPINEL_PACKED_UINT_MASK) === SPINEL_PACKED_UINT_MASK);
+    } while ((byte & SPINEL_PACKED_UINT_MASK) === SPINEL_PACKED_UINT_MASK);
 
     return [value, offset];
 }
 
-/** Create output array of given (size + property size) and set the property ID at index 0 */
+/** Create output Buffer of given (size + property ID size) and set the property ID at index 0 */
 export function writePropertyId(propertyId: SpinelPropertyId, size: number): [Buffer, outOffset: number] {
     const propIdSize = getPackedUIntSize(propertyId);
-    const buf = Buffer.alloc(propIdSize + size);
+    const buf = Buffer.allocUnsafe(propIdSize + size);
     const offset = setPackedUInt(buf, 0, propertyId, propIdSize);
 
     return [buf, offset];

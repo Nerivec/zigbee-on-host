@@ -1841,26 +1841,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             return { nwkFrameControl, nwkHeader, apsFrameControl, apsHeader, apsPayload };
         }
 
-        it("encodes verify key command payload with source IEEE address and hash", async () => {
-            const hash = Buffer.from(context.tcVerifyKeyHash);
-
-            const frame = await captureMacFrame(
-                () => apsHandler.sendVerifyKey(device16, ZigbeeAPSConsts.CMD_KEY_TC_LINK, device64, hash),
-                mockMACHandlerCallbacks,
-            );
-            const { nwkFrameControl, apsFrameControl, apsPayload } = decodeKeyCommandFrame(frame);
-
-            expect(nwkFrameControl.security).toStrictEqual(true);
-            expect(apsFrameControl.security).toStrictEqual(false);
-            expect(apsPayload.length).toStrictEqual(1 + 1 + 8 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
-            expect(apsPayload.readUInt8(0)).toStrictEqual(ZigbeeAPSCommandId.VERIFY_KEY);
-            expect(apsPayload.readUInt8(1)).toStrictEqual(ZigbeeAPSConsts.CMD_KEY_TC_LINK);
-            expect(apsPayload.readBigUInt64LE(2)).toStrictEqual(device64);
-            expect(apsPayload.subarray(10)).toStrictEqual(hash);
-
-            mockMACHandlerCallbacks.onSendFrame = vi.fn();
-        });
-
         it("processes verify key success by replying with confirm key and authorizing the device", async () => {
             const frames: Buffer[] = [];
             mockMACHandlerCallbacks.onSendFrame = vi.fn((payload: Buffer) => {

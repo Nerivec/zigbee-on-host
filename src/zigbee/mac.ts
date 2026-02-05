@@ -397,13 +397,13 @@ export function decodeMACFrameControl(data: Buffer, offset: number): [MACFrameCo
     return [
         {
             frameType,
-            securityEnabled: Boolean((fcf & ZigbeeMACConsts.FCF_SEC_EN) >> 3),
-            framePending: Boolean((fcf & ZigbeeMACConsts.FCF_FRAME_PND) >> 4),
-            ackRequest: Boolean((fcf & ZigbeeMACConsts.FCF_ACK_REQ) >> 5),
-            panIdCompression: Boolean((fcf & ZigbeeMACConsts.FCF_PAN_ID_COMPRESSION) >> 6),
+            securityEnabled: !!((fcf & ZigbeeMACConsts.FCF_SEC_EN) >> 3),
+            framePending: !!((fcf & ZigbeeMACConsts.FCF_FRAME_PND) >> 4),
+            ackRequest: !!((fcf & ZigbeeMACConsts.FCF_ACK_REQ) >> 5),
+            panIdCompression: !!((fcf & ZigbeeMACConsts.FCF_PAN_ID_COMPRESSION) >> 6),
             /* bit 7 reserved */
-            seqNumSuppress: Boolean((fcf & ZigbeeMACConsts.FCF_SEQNO_SUPPRESSION) >> 8),
-            iePresent: Boolean((fcf & ZigbeeMACConsts.FCF_IE_PRESENT) >> 9),
+            seqNumSuppress: !!((fcf & ZigbeeMACConsts.FCF_SEQNO_SUPPRESSION) >> 8),
+            iePresent: !!((fcf & ZigbeeMACConsts.FCF_IE_PRESENT) >> 9),
             destAddrMode: (fcf & ZigbeeMACConsts.FCF_DADDR_MASK) >> 10,
             frameVersion: (fcf & ZigbeeMACConsts.FCF_VERSION) >> 12,
             sourceAddrMode: (fcf & ZigbeeMACConsts.FCF_SADDR_MASK) >> 14,
@@ -515,9 +515,9 @@ function decodeMACSuperframeSpec(data: Buffer, offset: number): [MACSuperframeSp
     const beaconOrder = spec & ZigbeeMACConsts.SUPERFRAME_BEACON_ORDER_MASK;
     const superframeOrder = (spec & ZigbeeMACConsts.SUPERFRAME_ORDER_MASK) >> ZigbeeMACConsts.SUPERFRAME_ORDER_SHIFT;
     const finalCAPSlot = (spec & ZigbeeMACConsts.SUPERFRAME_CAP_MASK) >> ZigbeeMACConsts.SUPERFRAME_CAP_SHIFT;
-    const batteryExtension = Boolean((spec & ZigbeeMACConsts.SUPERFRAME_BATT_EXTENSION_MASK) >> ZigbeeMACConsts.SUPERFRAME_BATT_EXTENSION_SHIFT);
-    const panCoordinator = Boolean((spec & ZigbeeMACConsts.SUPERFRAME_COORD_MASK) >> ZigbeeMACConsts.SUPERFRAME_COORD_SHIFT);
-    const associationPermit = Boolean((spec & ZigbeeMACConsts.SUPERFRAME_ASSOC_PERMIT_MASK) >> ZigbeeMACConsts.SUPERFRAME_ASSOC_PERMIT_SHIFT);
+    const batteryExtension = !!((spec & ZigbeeMACConsts.SUPERFRAME_BATT_EXTENSION_MASK) >> ZigbeeMACConsts.SUPERFRAME_BATT_EXTENSION_SHIFT);
+    const panCoordinator = !!((spec & ZigbeeMACConsts.SUPERFRAME_COORD_MASK) >> ZigbeeMACConsts.SUPERFRAME_COORD_SHIFT);
+    const associationPermit = !!((spec & ZigbeeMACConsts.SUPERFRAME_ASSOC_PERMIT_MASK) >> ZigbeeMACConsts.SUPERFRAME_ASSOC_PERMIT_SHIFT);
 
     return [
         {
@@ -577,7 +577,7 @@ function decodeMACGtsInfo(data: Buffer, offset: number): [MACGtsInfo, offset: nu
     const spec = data.readUInt8(offset);
     offset += 1;
     const count = spec & ZigbeeMACConsts.GTS_COUNT_MASK;
-    const permit = Boolean(spec & ZigbeeMACConsts.GTS_PERMIT_MASK);
+    const permit = !!(spec & ZigbeeMACConsts.GTS_PERMIT_MASK);
 
     if (count > 0) {
         directionByte = data.readUInt8(offset);
@@ -737,14 +737,14 @@ function encodeMACPendAddr(data: Buffer, offset: number, header: MACHeader): num
  */
 export function decodeMACCapabilities(capabilities: number): MACCapabilities {
     return {
-        alternatePANCoordinator: Boolean(capabilities & 0x01),
+        alternatePANCoordinator: !!(capabilities & 0x01),
         deviceType: (capabilities & 0x02) >> 1,
         powerSource: (capabilities & 0x04) >> 2,
-        rxOnWhenIdle: Boolean((capabilities & 0x08) >> 3),
+        rxOnWhenIdle: !!((capabilities & 0x08) >> 3),
         // reserved1: (capabilities & 0x10) >> 4,
         // reserved2: (capabilities & 0x20) >> 5,
-        securityCapability: Boolean((capabilities & 0x40) >> 6),
-        allocateAddress: Boolean((capabilities & 0x80) >> 7),
+        securityCapability: !!((capabilities & 0x40) >> 6),
+        allocateAddress: !!((capabilities & 0x80) >> 7),
     };
 }
 
@@ -1146,7 +1146,7 @@ export function decodeMACPayload(data: Buffer, offset: number, frameControl: MAC
  */
 export function encodeMACFrame(header: MACHeader, payload: Buffer): Buffer {
     let offset = 0;
-    const data = Buffer.alloc(ZigbeeMACConsts.PAYLOAD_MAX_SIZE);
+    const data = Buffer.allocUnsafe(ZigbeeMACConsts.PAYLOAD_MAX_SIZE);
     offset = encodeMACHeader(data, offset, header, false);
     offset += payload.copy(data, offset);
     offset = data.writeUInt16LE(crc16CCITT(data.subarray(0, offset)), offset);
@@ -1186,7 +1186,7 @@ export type MACHeaderZigbee = {
  */
 export function encodeMACFrameZigbee(header: MACHeaderZigbee, payload: Buffer): Buffer {
     let offset = 0;
-    const data = Buffer.alloc(ZigbeeMACConsts.PAYLOAD_MAX_SIZE); // TODO: optimize with max Zigbee header length
+    const data = Buffer.allocUnsafe(ZigbeeMACConsts.PAYLOAD_MAX_SIZE); // TODO: optimize with max Zigbee header length
 
     // always transmit with v2003 (0) frame version @see D.6 Frame Version Value of 05-3474-23
     header.frameControl.frameVersion = MACFrameVersion.V2003;
@@ -1230,12 +1230,11 @@ export function decodeMACZigbeeBeacon(data: Buffer, offset: number): MACZigbeeBe
     offset += 2;
     const profile = beacon & ZigbeeMACConsts.ZIGBEE_BEACON_STACK_PROFILE_MASK;
     const version = (beacon & ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_VERSION_MASK) >> ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_VERSION_SHIFT;
-    const routerCapacity = Boolean(
-        (beacon & ZigbeeMACConsts.ZIGBEE_BEACON_ROUTER_CAPACITY_MASK) >> ZigbeeMACConsts.ZIGBEE_BEACON_ROUTER_CAPACITY_SHIFT,
-    );
+    const routerCapacity = !!((beacon & ZigbeeMACConsts.ZIGBEE_BEACON_ROUTER_CAPACITY_MASK) >> ZigbeeMACConsts.ZIGBEE_BEACON_ROUTER_CAPACITY_SHIFT);
     const deviceDepth = (beacon & ZigbeeMACConsts.ZIGBEE_BEACON_NETWORK_DEPTH_MASK) >> ZigbeeMACConsts.ZIGBEE_BEACON_NETWORK_DEPTH_SHIFT;
-    const endDeviceCapacity = Boolean(
-        (beacon & ZigbeeMACConsts.ZIGBEE_BEACON_END_DEVICE_CAPACITY_MASK) >> ZigbeeMACConsts.ZIGBEE_BEACON_END_DEVICE_CAPACITY_SHIFT,
+    const endDeviceCapacity = !!(
+        (beacon & ZigbeeMACConsts.ZIGBEE_BEACON_END_DEVICE_CAPACITY_MASK) >>
+        ZigbeeMACConsts.ZIGBEE_BEACON_END_DEVICE_CAPACITY_SHIFT
     );
     const extendedPANId = data.readBigUInt64LE(offset);
     offset += 8;
@@ -1266,7 +1265,7 @@ export function decodeMACZigbeeBeacon(data: Buffer, offset: number): MACZigbeeBe
  * DEVICE SCOPE: Beacon transmitters (coordinator/router)
  */
 export function encodeMACZigbeeBeacon(beacon: MACZigbeeBeacon): Buffer {
-    const payload = Buffer.alloc(ZigbeeMACConsts.ZIGBEE_BEACON_LENGTH);
+    const payload = Buffer.allocUnsafe(ZigbeeMACConsts.ZIGBEE_BEACON_LENGTH);
     let offset = 0;
     offset = payload.writeUInt8(0, offset); // protocol ID always 0 on Zigbee beacons
     offset = payload.writeUInt16LE(

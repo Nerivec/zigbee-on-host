@@ -211,7 +211,7 @@ describe("OT RCP Driver", () => {
         };
         const encRespHdlcFrame = encodeSpinelFrame(respSpinelFrame);
 
-        return Buffer.from(encRespHdlcFrame.data.subarray(0, encRespHdlcFrame.length));
+        return Buffer.from(encRespHdlcFrame);
     };
 
     const makeSpinelStreamRaw = (tid: number, macFrame: Buffer, spinelMeta?: Buffer): Buffer => {
@@ -232,7 +232,7 @@ describe("OT RCP Driver", () => {
         };
         const encHdlcFrame = encodeSpinelFrame(spinelFrame);
 
-        return Buffer.from(encHdlcFrame.data.subarray(0, encHdlcFrame.length));
+        return Buffer.from(encHdlcFrame);
     };
 
     const mockStart = async (driver: OTRCPDriver, loadState = true, timeoutReset = false, frames = START_FRAMES_SILABS) => {
@@ -1475,7 +1475,7 @@ describe("OT RCP Driver", () => {
                 payload: Buffer.from([SpinelPropertyId.MAC_ENERGY_SCAN_RESULT, channel, (rssi + 0x100) & 0xff]),
             };
             const enc = encodeSpinelFrame(spinelFrame);
-            driver.parser._transform(Buffer.from(enc.data.subarray(0, enc.length)), "utf8", () => {});
+            driver.parser._transform(Buffer.from(enc), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             expect(infoSpy).toHaveBeenCalledWith(`<=== ENERGY_SCAN[channel=${channel} rssi=${rssi}]`, "ot-rcp-driver");

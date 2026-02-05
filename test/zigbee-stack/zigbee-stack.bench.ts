@@ -269,6 +269,7 @@ describe("Zigbee Stack Handlers", () => {
                     recentLQAs: [],
                     incomingNWKFrameCounter: undefined,
                     endDeviceTimeout: undefined,
+                    linkStatusMisses: undefined,
                 });
                 context.address16ToAddress64.set(source16, source64);
 
@@ -337,6 +338,7 @@ describe("Zigbee Stack Handlers", () => {
                         recentLQAs: [255, 240, 230],
                         incomingNWKFrameCounter: undefined,
                         endDeviceTimeout: undefined,
+                        linkStatusMisses: undefined,
                     });
                     context.address16ToAddress64.set(neighbor.address16, neighbor.address64);
                 }
@@ -410,6 +412,7 @@ describe("Zigbee Stack Handlers", () => {
                     recentLQAs: [],
                     incomingNWKFrameCounter: undefined,
                     endDeviceTimeout: undefined,
+                    linkStatusMisses: undefined,
                 });
                 context.address16ToAddress64.set(dest16, dest64);
 
@@ -515,6 +518,7 @@ describe("Zigbee Stack Handlers", () => {
                     recentLQAs: [],
                     incomingNWKFrameCounter: undefined,
                     endDeviceTimeout: undefined,
+                    linkStatusMisses: undefined,
                 });
                 context.address16ToAddress64.set(source16, source64);
 
@@ -552,6 +556,7 @@ describe("Zigbee Stack Handlers", () => {
                     recentLQAs: [],
                     incomingNWKFrameCounter: undefined,
                     endDeviceTimeout: undefined,
+                    linkStatusMisses: undefined,
                 });
                 context.address16ToAddress64.set(dest16, dest64);
 

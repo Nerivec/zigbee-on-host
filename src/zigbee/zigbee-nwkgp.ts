@@ -212,8 +212,8 @@ export function decodeZigbeeNWKGPFrameControl(data: Buffer, offset: number): [Zi
         {
             frameType: fcf & ZigbeeNWKGPConsts.FCF_FRAME_TYPE,
             protocolVersion: (fcf & ZigbeeNWKGPConsts.FCF_VERSION) >> 2,
-            autoCommissioning: Boolean((fcf & ZigbeeNWKGPConsts.FCF_AUTO_COMMISSIONING) >> 6),
-            nwkFrameControlExtension: Boolean((fcf & ZigbeeNWKGPConsts.FCF_CONTROL_EXTENSION) >> 7),
+            autoCommissioning: !!((fcf & ZigbeeNWKGPConsts.FCF_AUTO_COMMISSIONING) >> 6),
+            nwkFrameControlExtension: !!((fcf & ZigbeeNWKGPConsts.FCF_CONTROL_EXTENSION) >> 7),
         },
         offset,
     ];
@@ -257,8 +257,8 @@ function decodeZigbeeNWKGPFrameControlExt(data: Buffer, offset: number): [Zigbee
         {
             appId: fcf & ZigbeeNWKGPConsts.FCF_EXT_APP_ID,
             securityLevel: (fcf & ZigbeeNWKGPConsts.FCF_EXT_SECURITY_LEVEL) >> 3,
-            securityKey: Boolean((fcf & ZigbeeNWKGPConsts.FCF_EXT_SECURITY_KEY) >> 5),
-            rxAfterTx: Boolean((fcf & ZigbeeNWKGPConsts.FCF_EXT_RX_AFTER_TX) >> 6),
+            securityKey: !!((fcf & ZigbeeNWKGPConsts.FCF_EXT_SECURITY_KEY) >> 5),
+            rxAfterTx: !!((fcf & ZigbeeNWKGPConsts.FCF_EXT_RX_AFTER_TX) >> 6),
             direction: (fcf & ZigbeeNWKGPConsts.FCF_EXT_DIRECTION) >> 7,
         },
         offset,
@@ -442,7 +442,7 @@ function encodeZigbeeNWKGPHeader(data: Buffer, offset: number, header: ZigbeeNWK
  * DEVICE SCOPE: Green Power proxies, Green Power sinks
  */
 function makeGPNonce(header: ZigbeeNWKGPHeader, macSource64: bigint | undefined): Buffer {
-    const nonce = Buffer.alloc(ZigbeeConsts.SEC_NONCE_LEN);
+    const nonce = Buffer.allocUnsafe(ZigbeeConsts.SEC_NONCE_LEN);
     let offset = 0;
 
     if (header.frameControlExt!.appId === ZigbeeNWKGPAppId.DEFAULT) {
@@ -543,13 +543,13 @@ export function encodeZigbeeNWKGPFrame(
     macSource64: bigint | undefined,
 ): Buffer {
     let offset = 0;
-    const data = Buffer.alloc(ZigbeeNWKGPConsts.FRAME_MAX_SIZE);
+    const data = Buffer.allocUnsafe(ZigbeeNWKGPConsts.FRAME_MAX_SIZE);
 
     offset = encodeZigbeeNWKGPHeader(data, offset, header);
 
     if (header.frameControlExt?.securityLevel === ZigbeeNWKGPSecurityLevel.FULLENCR) {
         const nonce = makeGPNonce(header, macSource64);
-        const decryptedData = Buffer.alloc(payload.byteLength + header.micSize!); // payload + auth tag
+        const decryptedData = Buffer.allocUnsafe(payload.byteLength + header.micSize!); // payload + auth tag
 
         payload.copy(decryptedData, 0);
 
@@ -564,7 +564,7 @@ export function encodeZigbeeNWKGPFrame(
         offset += header.micSize!;
     } else if (header.frameControlExt?.securityLevel === ZigbeeNWKGPSecurityLevel.FULL) {
         const nonce = makeGPNonce(header, macSource64);
-        const decryptedData = Buffer.alloc(payload.byteLength + header.micSize!); // payload + auth tag
+        const decryptedData = Buffer.allocUnsafe(payload.byteLength + header.micSize!); // payload + auth tag
 
         payload.copy(decryptedData, 0);
 

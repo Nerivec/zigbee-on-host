@@ -266,10 +266,6 @@ export class MACHandler {
                 offset = await this.processAssocReq(data, offset, macHeader);
                 break;
             }
-            case MACCommandId.ASSOC_RSP: {
-                offset = this.processAssocRsp(data, offset, macHeader);
-                break;
-            }
             case MACCommandId.BEACON_REQ: {
                 offset = await this.processBeaconReq(data, offset, macHeader);
                 break;
@@ -365,33 +361,7 @@ export class MACHandler {
         return offset;
     }
 
-    /**
-     * Process 802.15.4 MAC association response.
-     *
-     * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.3.2.4):
-     * - ✅ Extracts short address and status per Table 6-4
-     * - ✅ Leaves further handling to higher layers (coordinator ignores downstream response)
-     * - ⚠️  No validation of pending association map since coordinator is responder (not requester)
-     * DEVICE SCOPE: Routers (N/A), end devices (N/A)
-     *
-     * @param data Command data
-     * @param offset Current offset in data
-     * @param macHeader MAC header
-     * @returns New offset after processing
-     */
-    public processAssocRsp(data: Buffer, offset: number, macHeader: MACHeader): number {
-        const address = data.readUInt16LE(offset);
-        offset += 2;
-        const status = data.readUInt8(offset);
-        offset += 1;
-
-        logger.debug(
-            () => `<=== MAC ASSOC_RSP[macSrc=${macHeader.source16}:${macHeader.source64} addr16=${address} status=${MACAssociationStatus[status]}]`,
-            NS,
-        );
-
-        return offset;
-    }
+    // NOTE: processAssocRsp DEVICE SCOPE: routers (N/A), end devices (N/A)
 
     /**
      * Process disassociation motification
@@ -436,7 +406,7 @@ export class MACHandler {
     public async sendAssocRsp(dest64: bigint, newAddress16: number, status: MACAssociationStatus | number): Promise<boolean> {
         logger.debug(() => `===> MAC ASSOC_RSP[dst64=${dest64} newAddr16=${newAddress16} status=${status}]`, NS);
 
-        const finalPayload = Buffer.alloc(3);
+        const finalPayload = Buffer.allocUnsafe(3);
         let offset = 0;
         offset = finalPayload.writeUInt16LE(newAddress16, offset);
         offset = finalPayload.writeUInt8(status, offset);
