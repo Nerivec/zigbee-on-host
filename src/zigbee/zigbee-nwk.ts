@@ -305,12 +305,12 @@ export function decodeZigbeeNWKFrameControl(data: Buffer, offset: number): [Zigb
             frameType: fcf & ZigbeeNWKConsts.FCF_FRAME_TYPE,
             protocolVersion: (fcf & ZigbeeNWKConsts.FCF_VERSION) >> 2,
             discoverRoute: (fcf & ZigbeeNWKConsts.FCF_DISCOVER_ROUTE) >> 6,
-            multicast: Boolean((fcf & ZigbeeNWKConsts.FCF_MULTICAST) >> 8),
-            security: Boolean((fcf & ZigbeeNWKConsts.FCF_SECURITY) >> 9),
-            sourceRoute: Boolean((fcf & ZigbeeNWKConsts.FCF_SOURCE_ROUTE) >> 10),
-            extendedDestination: Boolean((fcf & ZigbeeNWKConsts.FCF_EXT_DEST) >> 11),
-            extendedSource: Boolean((fcf & ZigbeeNWKConsts.FCF_EXT_SOURCE) >> 12),
-            endDeviceInitiator: Boolean((fcf & ZigbeeNWKConsts.FCF_END_DEVICE_INITIATOR) >> 13),
+            multicast: !!((fcf & ZigbeeNWKConsts.FCF_MULTICAST) >> 8),
+            security: !!((fcf & ZigbeeNWKConsts.FCF_SECURITY) >> 9),
+            sourceRoute: !!((fcf & ZigbeeNWKConsts.FCF_SOURCE_ROUTE) >> 10),
+            extendedDestination: !!((fcf & ZigbeeNWKConsts.FCF_EXT_DEST) >> 11),
+            extendedSource: !!((fcf & ZigbeeNWKConsts.FCF_EXT_SOURCE) >> 12),
+            endDeviceInitiator: !!((fcf & ZigbeeNWKConsts.FCF_END_DEVICE_INITIATOR) >> 13),
         },
         offset,
     ];
@@ -518,7 +518,7 @@ export function encodeZigbeeNWKFrame(
     encryptKey?: Buffer,
 ): Buffer {
     let offset = 0;
-    const data = Buffer.alloc(ZigbeeNWKConsts.FRAME_MAX_SIZE);
+    const data = Buffer.allocUnsafe(ZigbeeNWKConsts.FRAME_MAX_SIZE);
 
     offset = encodeZigbeeNWKHeader(data, offset, header);
 

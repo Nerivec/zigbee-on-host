@@ -927,29 +927,6 @@ describe("NWK Handler", () => {
             expect(mockMACHandler.sendFrame).toHaveBeenCalled();
         });
 
-        it("should process rejoin response", () => {
-            const device16 = 0x1234;
-            const payload = Buffer.from([device16 & 0xff, (device16 >> 8) & 0xff, MACAssociationStatus.SUCCESS]);
-
-            const offset = nwkHandler.processRejoinResp(
-                payload,
-                0,
-                {
-                    frameControl: {},
-                    source16: device16,
-                    sequenceNumber: 10,
-                } as MACHeader,
-                {
-                    frameControl: {},
-                    source16: device16,
-                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                    seqNum: 20,
-                } as ZigbeeNWKHeader,
-            );
-
-            expect(offset).toStrictEqual(3);
-        });
-
         it("should process end device timeout request", async () => {
             const device16 = 0x1234;
             const device64 = 0x00124b0012345678n;
@@ -996,29 +973,6 @@ describe("NWK Handler", () => {
 
             expect(offset).toStrictEqual(2); // Command ID + requested timeout = 2 (config mask is not read)
             expect(mockMACHandler.sendFrame).toHaveBeenCalled();
-        });
-
-        it("should process end device timeout response", () => {
-            const device16 = 0x1234;
-            const payload = Buffer.from([0x00, 0x04]);
-
-            const offset = nwkHandler.processEdTimeoutResponse(
-                payload,
-                0,
-                {
-                    frameControl: {},
-                    source16: device16,
-                    sequenceNumber: 10,
-                } as MACHeader,
-                {
-                    frameControl: {},
-                    source16: device16,
-                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                    seqNum: 20,
-                } as ZigbeeNWKHeader,
-            );
-
-            expect(offset).toStrictEqual(2);
         });
 
         it("should send end device timeout response", async () => {
@@ -1101,95 +1055,6 @@ describe("NWK Handler", () => {
             expect(offset).toStrictEqual(9); // options (1) + extended PAN ID (8) = 9
         });
 
-        it("logs network update without applying changes", () => {
-            const device16 = 0x1234;
-            // NWK Update needs: options + extended PAN ID + update ID + (PANIDs if update type = 0)
-            const payload = Buffer.from([
-                0x00, // options: update count = 0, update type = 0
-                0xdd,
-                0xdd,
-                0xdd,
-                0xdd,
-                0xdd,
-                0xdd,
-                0xdd,
-                0xdd, // extended PAN ID
-                0x01, // update ID
-                // No PAN IDs since count = 0
-            ]);
-
-            const saveSpy = vi.spyOn(mockContext, "savePeriodicState").mockResolvedValue();
-
-            try {
-                const offset = nwkHandler.processUpdate(
-                    payload,
-                    0,
-                    {
-                        frameControl: {},
-                        source16: device16,
-                        sequenceNumber: 10,
-                    } as MACHeader,
-                    {
-                        frameControl: {},
-                        source16: device16,
-                        destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                        seqNum: 20,
-                    } as ZigbeeNWKHeader,
-                );
-
-                expect(offset).toStrictEqual(10); // options (1) + extended PAN ID (8) + update ID (1) = 10
-                expect(mockContext.netParams.nwkUpdateId).toStrictEqual(netParams.nwkUpdateId);
-                expect(mockContext.netParams.panId).toStrictEqual(netParams.panId);
-                expect(saveSpy).not.toHaveBeenCalled();
-            } finally {
-                saveSpy.mockRestore();
-            }
-        });
-
-        it("ignores PAN ID updates announced by other devices", () => {
-            const device16 = 0x1234;
-            const payload = Buffer.from([
-                0x01, // options: update count = 1, update type = 0 (PAN update)
-                0xdd,
-                0xdd,
-                0xdd,
-                0xdd,
-                0xdd,
-                0xdd,
-                0xdd,
-                0xdd, // extended PAN ID
-                0x02, // update ID (> current)
-                0x44,
-                0x33, // new PAN ID (little-endian)
-            ]);
-
-            const saveSpy = vi.spyOn(mockContext, "savePeriodicState").mockResolvedValue();
-
-            try {
-                nwkHandler.processUpdate(
-                    payload,
-                    0,
-                    {
-                        frameControl: {},
-                        source16: device16,
-                        sequenceNumber: 10,
-                    } as MACHeader,
-                    {
-                        frameControl: {},
-                        source16: device16,
-                        destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                        seqNum: 20,
-                    } as ZigbeeNWKHeader,
-                );
-
-                expect(mockContext.netParams.nwkUpdateId).toStrictEqual(netParams.nwkUpdateId);
-                expect(mockContext.netParams.panId).toStrictEqual(netParams.panId);
-                expect(saveSpy).not.toHaveBeenCalled();
-            } finally {
-                saveSpy.mockRestore();
-            }
-        });
-
         it("should process link power delta", () => {
             const device16 = 0x1234;
             const payload = Buffer.from([
@@ -1240,52 +1105,6 @@ describe("NWK Handler", () => {
             );
 
             expect(offset).toStrictEqual(2); // Command ID + PAN ID (2 bytes) = 3, but channel not read
-        });
-
-        it("should process commissioning response", () => {
-            const device16 = 0x1234;
-            const payload = Buffer.from([0x34, 0x12, 0x00]);
-
-            const offset = nwkHandler.processCommissioningResponse(
-                payload,
-                0,
-                {
-                    frameControl: {},
-                    source16: device16,
-                    sequenceNumber: 10,
-                } as MACHeader,
-                {
-                    frameControl: {},
-                    source16: device16,
-                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                    seqNum: 20,
-                } as ZigbeeNWKHeader,
-            );
-
-            expect(offset).toStrictEqual(3); // Command ID + new address (2 bytes) = 3 (status not read)
-        });
-
-        it("logs error when commissioning response indicates failure", () => {
-            const errorSpy = vi.spyOn(logger, "error");
-
-            nwkHandler.processCommissioningResponse(
-                Buffer.from([0x78, 0x56, MACAssociationStatus.PAN_FULL]),
-                0,
-                {
-                    frameControl: {},
-                    source16: 0x5005,
-                    sequenceNumber: 13,
-                } as MACHeader,
-                {
-                    frameControl: {},
-                    source16: 0x5005,
-                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                    seqNum: 22,
-                } as ZigbeeNWKHeader,
-            );
-
-            expect(errorSpy).toHaveBeenCalled();
-            errorSpy.mockRestore();
         });
 
         it("should send commissioning response", async () => {
@@ -1395,53 +1214,6 @@ describe("NWK Handler", () => {
         });
     });
 
-    it("dispatches rejoin response via processCommand", async () => {
-        const device16 = 0x4321;
-        const payload = Buffer.from([ZigbeeNWKCommandId.REJOIN_RESP, device16 & 0xff, (device16 >> 8) & 0xff, MACAssociationStatus.SUCCESS]);
-
-        const macHeader = {
-            frameControl: {},
-            source16: device16,
-            sequenceNumber: 7,
-        } as MACHeader;
-        const nwkHeader = {
-            frameControl: {},
-            source16: device16,
-            destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-            seqNum: 4,
-        } as ZigbeeNWKHeader;
-
-        const debugSpy = vi.spyOn(logger, "debug");
-
-        await nwkHandler.processCommand(payload, macHeader, nwkHeader);
-
-        expect(debugSpy.mock.calls.some(([, ns]) => ns === "nwk-handler")).toStrictEqual(true);
-        debugSpy.mockRestore();
-    });
-
-    it("routes ED timeout response through processCommand", async () => {
-        const spy = vi.spyOn(nwkHandler, "processEdTimeoutResponse");
-        const payload = Buffer.from([ZigbeeNWKCommandId.ED_TIMEOUT_RESPONSE, 0x00, 0x07]);
-
-        await nwkHandler.processCommand(
-            payload,
-            {
-                frameControl: {},
-                source16: 0x1001,
-                sequenceNumber: 1,
-            } as MACHeader,
-            {
-                frameControl: {},
-                source16: 0x1001,
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                seqNum: 11,
-            } as ZigbeeNWKHeader,
-        );
-
-        expect(spy).toHaveBeenCalledOnce();
-        spy.mockRestore();
-    });
-
     it("routes link power delta through processCommand", async () => {
         const spy = vi.spyOn(nwkHandler, "processLinkPwrDelta");
         const payload = Buffer.from([ZigbeeNWKCommandId.LINK_PWR_DELTA, 0x02, 0x00]);
@@ -1458,29 +1230,6 @@ describe("NWK Handler", () => {
                 source16: 0x2002,
                 destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
                 seqNum: 5,
-            } as ZigbeeNWKHeader,
-        );
-
-        expect(spy).toHaveBeenCalledOnce();
-        spy.mockRestore();
-    });
-
-    it("routes commissioning response through processCommand", async () => {
-        const spy = vi.spyOn(nwkHandler, "processCommissioningResponse");
-        const payload = Buffer.from([ZigbeeNWKCommandId.COMMISSIONING_RESPONSE, 0x78, 0x56, 0x00]);
-
-        await nwkHandler.processCommand(
-            payload,
-            {
-                frameControl: {},
-                source16: 0x3003,
-                sequenceNumber: 9,
-            } as MACHeader,
-            {
-                frameControl: {},
-                source16: 0x3003,
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                seqNum: 6,
             } as ZigbeeNWKHeader,
         );
 

@@ -157,10 +157,10 @@ export function decodeZigbeeAPSFrameControl(data: Buffer, offset: number): [Zigb
             frameType: fcf & ZigbeeAPSConsts.FCF_FRAME_TYPE,
             deliveryMode: (fcf & ZigbeeAPSConsts.FCF_DELIVERY_MODE) >> 2,
             // indirectMode = (fcf & ZigbeeAPSConsts.FCF_INDIRECT_MODE) >> 4,
-            ackFormat: Boolean((fcf & ZigbeeAPSConsts.FCF_ACK_FORMAT) >> 4),
-            security: Boolean((fcf & ZigbeeAPSConsts.FCF_SECURITY) >> 5),
-            ackRequest: Boolean((fcf & ZigbeeAPSConsts.FCF_ACK_REQ) >> 6),
-            extendedHeader: Boolean((fcf & ZigbeeAPSConsts.FCF_EXT_HEADER) >> 7),
+            ackFormat: !!((fcf & ZigbeeAPSConsts.FCF_ACK_FORMAT) >> 4),
+            security: !!((fcf & ZigbeeAPSConsts.FCF_SECURITY) >> 5),
+            ackRequest: !!((fcf & ZigbeeAPSConsts.FCF_ACK_REQ) >> 6),
+            extendedHeader: !!((fcf & ZigbeeAPSConsts.FCF_EXT_HEADER) >> 7),
         },
         offset,
     ];
@@ -457,7 +457,7 @@ export function encodeZigbeeAPSFrame(
     encryptKey?: Buffer,
 ): Buffer {
     let offset = 0;
-    const data = Buffer.alloc(ZigbeeAPSConsts.FRAME_MAX_SIZE);
+    const data = Buffer.allocUnsafe(ZigbeeAPSConsts.FRAME_MAX_SIZE);
 
     offset = encodeZigbeeAPSHeader(data, offset, header);
 
