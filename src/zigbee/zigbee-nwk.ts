@@ -82,6 +82,9 @@ export const enum ZigbeeNWKConsts {
 
     //---- Zigbee NWK Link Power Delta Options
     CMD_NWK_LINK_PWR_DELTA_TYPE_MASK = 0x03,
+    CMD_NWK_LINK_PWR_DELTA_TYPE_NOTIFICATION = 0x0,
+    CMD_NWK_LINK_PWR_DELTA_TYPE_REQUEST = 0x1,
+    CMD_NWK_LINK_PWR_DELTA_TYPE_RESPONSE = 0x2,
 
     //---- MAC Association Status extension
     ASSOC_STATUS_ADDR_CONFLICT = 0xf0,
@@ -122,17 +125,6 @@ export const enum ZigbeeNWKRouteDiscovery {
     FORCE = 0x0003,
 }
 
-export const enum ZigbeeNWKMulticastMode {
-    NONMEMBER = 0x00,
-    MEMBER = 0x01,
-}
-
-export const enum ZigbeeNWKRelayType {
-    NO_RELAY = 0,
-    RELAY_UPSTREAM = 1,
-    RELAY_DOWNSTREAM = 2,
-}
-
 /** Zigbee NWK Command Types */
 export const enum ZigbeeNWKCommandId {
     /* Route Request Command. */
@@ -165,6 +157,13 @@ export const enum ZigbeeNWKCommandId {
     COMMISSIONING_REQUEST = 0x0e,
     /* Network Commissioning Response Command. r23 */
     COMMISSIONING_RESPONSE = 0x0f,
+}
+
+/** Types of Network Commissioning */
+export const enum ZigbeeNWKCommissioningType {
+    INITIAL_JOIN = 0x00,
+    REJOIN = 0x01,
+    ESTABLISH_TRUSTED_LINK = 0x02,
 }
 
 /** Network Status Code Definitions. */
@@ -286,7 +285,7 @@ export type ZigbeeNWKPayload = Buffer;
 /**
  * Decode Zigbee NWK frame control field.
  * HOT PATH: Called for every incoming Zigbee NWK frame.
- * 05-3474-23 R23.1, Table 3-19 (NWK frame control field)
+ * 06-3474-23 R23.1, Table 3-19 (NWK frame control field)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Extracts protocol version, discover route, source route, and security bits per Zigbee PRO
@@ -317,7 +316,7 @@ export function decodeZigbeeNWKFrameControl(data: Buffer, offset: number): [Zigb
 }
 
 /**
- * 05-3474-23 R23.1, Table 3-19 (NWK frame control field)
+ * 06-3474-23 R23.1, Table 3-19 (NWK frame control field)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Encodes NWK FCF bits honouring Zigbee PRO versioning and source route flags
@@ -343,7 +342,7 @@ function encodeZigbeeNWKFrameControl(view: Buffer, offset: number, fcf: ZigbeeNW
 }
 
 /**
- * 05-3474-23 R23.1, Tables 3-20/3-21 (NWK frame formats)
+ * 06-3474-23 R23.1, Tables 3-20/3-21 (NWK frame formats)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Applies frame-type specific field presence rules (extended addressing, source routes)
@@ -421,7 +420,7 @@ export function decodeZigbeeNWKHeader(data: Buffer, offset: number, frameControl
 }
 
 /**
- * 05-3474-23 R23.1, Tables 3-20/3-21 (NWK frame formats)
+ * 06-3474-23 R23.1, Tables 3-20/3-21 (NWK frame formats)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Serialises mandatory radius, sequence, and addressing fields for NWK data/command frames
@@ -469,7 +468,7 @@ function encodeZigbeeNWKHeader(data: Buffer, offset: number, header: ZigbeeNWKHe
  * @param header
  */
 /**
- * 05-3474-23 R23.1, Annex A (NWK security)
+ * 06-3474-23 R23.1, Annex A (NWK security)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Invokes CCM* decrypt when security bit set, storing auxiliary header for Trust Center use
@@ -503,7 +502,7 @@ export function decodeZigbeeNWKPayload(
  * @param encryptKey If undefined, and security=true, use default pre-hashed
  */
 /**
- * 05-3474-23 R23.1, Table 3-20 (NWK data frame format) & Annex A (NWK security)
+ * 06-3474-23 R23.1, Table 3-20 (NWK data frame format) & Annex A (NWK security)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Constructs NWK frame then encrypts/authenticates payload per Zigbee security flag

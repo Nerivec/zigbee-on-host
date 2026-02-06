@@ -19,7 +19,7 @@ import type { StackContext } from "./stack-context.js";
 const NS = "frame-handler";
 
 /**
- * 05-3474-23 (Zigbee PRO) multi-layer processing pipeline
+ * 06-3474-23 (Zigbee PRO) multi-layer processing pipeline
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Decodes MAC CMD/DATA frames and dispatches according to IEEE 802.15.4 frame type

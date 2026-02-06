@@ -3,7 +3,7 @@
  *
  * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
- *   - Zigbee specification (05-3474-23): Revision 23.1
+ *   - Zigbee specification (06-3474-23): Revision 23.1
  *   - Base device behavior (16-02828-012): v3.1
  *   - ZCL specification (07-5123): Revision 8
  *   - Green Power specification (14-0563-19): Version 1.1.2
@@ -237,7 +237,7 @@ describe("Integration and End-to-End Compliance", () => {
             });
 
             // Step 1: Device requests beacon information and coordinator responds with association permit set.
-            await macHandler.processBeaconReq(Buffer.alloc(0), 0, buildBeaconRequestHeader(device64));
+            await macHandler.processBeaconReq(Buffer.alloc(0), buildBeaconRequestHeader(device64));
             expect(frames).toHaveLength(1);
             const beaconFrame = decodeMACFramePayload(frames[0]!);
             expect(beaconFrame.frameControl.frameType).toStrictEqual(MACFrameType.BEACON);
@@ -245,7 +245,7 @@ describe("Integration and End-to-End Compliance", () => {
             expect(beaconFrame.header.superframeSpec?.associationPermit).toStrictEqual(true);
 
             // Step 2: Device issues association request with capabilities.
-            await macHandler.processAssocReq(Buffer.from([encodeMACCapabilities(deviceCapabilities)]), 0, buildAssocHeader(device64));
+            await macHandler.processAssocReq(Buffer.from([encodeMACCapabilities(deviceCapabilities)]), buildAssocHeader(device64));
             const entry = context.deviceTable.get(device64);
             expect(entry).not.toBeUndefined();
             expect(entry?.capabilities).toStrictEqual(deviceCapabilities);
@@ -253,7 +253,7 @@ describe("Integration and End-to-End Compliance", () => {
             expect(assigned16).not.toStrictEqual(0xffff);
 
             // Step 3: Device polls for data to receive the association response.
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader(device64, assigned16, 0x31));
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader(device64, assigned16, 0x31));
             expect(frames).toHaveLength(2);
             const assocFrame = decodeMACFramePayload(frames[1]!);
             expect(assocFrame.frameControl.frameType).toStrictEqual(MACFrameType.CMD);
@@ -264,7 +264,7 @@ describe("Integration and End-to-End Compliance", () => {
             expect(assocPayload.readUInt8(2)).toStrictEqual(MACAssociationStatus.SUCCESS);
 
             // Step 4: Coordinator delivers the network key via APS transport key on the next poll.
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader(device64, assigned16, 0x32));
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader(device64, assigned16, 0x32));
             expect(frames).toHaveLength(3);
             const transportDecoded = decodeApsFromMac(frames[2]!);
             expect(transportDecoded.nwkFrameControl.frameType).toStrictEqual(ZigbeeNWKFrameType.DATA);
@@ -770,7 +770,7 @@ describe("Integration and End-to-End Compliance", () => {
                 await apsHandler.sendTransportKeyNWK(dest16, key, seqNum, dest64);
             });
 
-            await macHandler.processAssocReq(Buffer.from([encodeMACCapabilities(deviceCapabilities)]), 0, buildAssocHeader(device64));
+            await macHandler.processAssocReq(Buffer.from([encodeMACCapabilities(deviceCapabilities)]), buildAssocHeader(device64));
             const pending = context.pendingAssociations.get(device64);
             expect(pending).not.toBeUndefined();
             const deviceEntry = context.deviceTable.get(device64);
@@ -779,8 +779,8 @@ describe("Integration and End-to-End Compliance", () => {
 
             const startCounter = context.netParams.tcKeyFrameCounter;
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader(device64, assigned16, 0x41));
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader(device64, assigned16, 0x42));
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader(device64, assigned16, 0x41));
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader(device64, assigned16, 0x42));
             expect(frames.length).toBeGreaterThan(1);
 
             let decodedTransport: ReturnType<typeof decodeApsFromMac> | undefined;

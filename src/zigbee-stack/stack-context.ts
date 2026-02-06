@@ -86,7 +86,7 @@ export enum NetworkKeyUpdateMethod {
 }
 
 /**
- * see 05-3474-23 #4.7.3
+ * see 06-3474-23 #4.7.3
  */
 export type TrustCenterPolicies = {
     /**
@@ -151,6 +151,8 @@ export type DeviceTableEntry = {
      * Note: this is runtime-only
      */
     recentLQAs: number[];
+    /** Note: this is runtime-only */
+    lastReceivedRssi: number | undefined;
     /** Last accepted NWK security frame counter. Runtime-only. */
     incomingNWKFrameCounter: number | undefined;
     /** End device timeout metadata. Runtime-only. */
@@ -163,7 +165,7 @@ export type DeviceTableEntry = {
           }
         | undefined;
     /** Counter for consecutive missed link status commands. Runtime-only. */
-    linkStatusMisses: number | undefined;
+    linkStatusMisses: number;
 };
 
 export type SourceRouteTableEntry = {
@@ -186,7 +188,7 @@ export type AppLinkKeyStoreEntry = {
 };
 
 /**
- * 05-3474-23 #2.5.5
+ * 06-3474-23 #2.5.5
  */
 export type ConfigurationAttributes = {
     /**
@@ -194,7 +196,7 @@ export type ConfigurationAttributes = {
      */
     address: Buffer;
     /**
-     * 05-3474-23 #2.3.2.3
+     * 06-3474-23 #2.3.2.3
      * The :Config_Node_Descriptor is either created when the application is first loaded or initialized with a commissioning tool prior to when the device begins operations in the network.
      * It is used for service discovery to describe node features to external inquiring devices.
      *
@@ -205,7 +207,7 @@ export type ConfigurationAttributes = {
      */
     nodeDescriptor: Buffer;
     /**
-     * 05-3474-23 #2.3.2.4
+     * 06-3474-23 #2.3.2.4
      * The :Config_Power_Descriptor is either created when the application is first loaded or initialized with a commissioning tool prior to when the device begins operations in the network.
      * It is used for service discovery to describe node power features to external inquiring devices.
      *
@@ -216,7 +218,7 @@ export type ConfigurationAttributes = {
      */
     powerDescriptor: Buffer;
     /**
-     * 05-3474-23 #2.3.2.5
+     * 06-3474-23 #2.3.2.5
      * The :Config_Simple_Descriptors are created when the application is first loaded and are treated as “read-only.”
      * The Simple Descriptor are used for service discovery to describe interfacing features to external inquiring devices.
      *
@@ -262,12 +264,12 @@ export type ConfigurationAttributes = {
      */
     // nwkSecureAllFrames: number; // optional
     /**
-     * 05-3474-23 Table 2-134
+     * 06-3474-23 Table 2-134
      * The value for this configuration attribute is established in the Stack Profile.
      */
     // nwkBroadcastDeliveryTime: number; // optional
     /**
-     * 05-3474-23 Table 2-134
+     * 06-3474-23 Table 2-134
      * The value for this configuration attribute is established in the Stack Profile.
      * This attribute is mandatory for the Zigbee coordinator and Zigbee routers and not used for Zigbee End Devices.
      */
@@ -280,7 +282,7 @@ export type ConfigurationAttributes = {
      */
     // maxAssoc: number; // optional
     /**
-     * 05-3474-23 #3.2.2.16
+     * 06-3474-23 #3.2.2.16
      * :Config_NWK_Join_Direct_Addrs permits the Zigbee Coordinator or Router to be pre-configured with a list of addresses to be direct joined.
      * Consists of the following fields:
      * - DeviceAddress - 64-bit IEEE address for the device to be direct joined.
@@ -337,7 +339,7 @@ export interface StackContextCallbacks {
     onDeviceLeft: StackCallbacks["onDeviceLeft"];
 }
 
-/** Table 3-54 */
+/** Table 3-58 */
 export const END_DEVICE_TIMEOUT_TABLE_MS = [
     10_000,
     2 * 60 * 1000,
@@ -422,7 +424,7 @@ export class StackContext {
     /** MAC association permit flag */
     associationPermit = false;
 
-    //---- Trust Center (see 05-3474-23 #4.7.1)
+    //---- Trust Center (see 06-3474-23 #4.7.1)
 
     #allowJoinTimeout: NodeJS.Timeout | undefined;
 
@@ -454,7 +456,7 @@ export class StackContext {
     // #endregion
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center maintenance)
+     * 06-3474-23 #4.7.6 (Trust Center maintenance)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Schedules periodic state persistence while stack is running
@@ -470,7 +472,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center maintenance)
+     * 06-3474-23 #4.7.6 (Trust Center maintenance)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Cancels pending timers and ensures join window closed on shutdown
@@ -485,7 +487,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center maintenance)
+     * 06-3474-23 #4.7.6 (Trust Center maintenance)
      *
      * Remove the save file and clear tables (just in case)
      *
@@ -533,7 +535,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.4.11.2 (Network Key transport)
+     * 06-3474-23 #4.4.11.2 (Network Key transport)
      *
      * Store a pending network key that will become active once a matching SWITCH_KEY is received.
      *
@@ -563,7 +565,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.4.11.5 (Switch Key)
+     * 06-3474-23 #4.4.11.5 (Switch Key)
      *
      * Activate the staged network key if the sequence number matches.
      * Resets frame counters and re-registers hashed keys for cryptographic operations.
@@ -629,7 +631,7 @@ export class StackContext {
     // }
 
     /**
-     * 05-3474-23 #3.6.1.10 (Network address allocation)
+     * 06-3474-23 #3.6.1.10 (Network address allocation)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Allocates short addresses within 0x0001-0xfff7 range, excluding coordinator and broadcast values
@@ -652,7 +654,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #3.6.1.11 / Table 3-54 (End Device Timeout)
+     * 06-3474-23 #3.6.1.11 / Table 3-54 (End Device Timeout)
      *
      * Update the stored end device timeout metadata for a device.
      *
@@ -693,7 +695,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #3.7.3 (NWK security) / IEEE 802.15.4-2015 #9.4.2
+     * 06-3474-23 #3.7.3 (NWK security) / IEEE 802.15.4-2015 #9.4.2
      *
      * Update and validate the incoming NWK security frame counter for a device.
      *
@@ -774,7 +776,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #3.3.4.3 (Link Quality Assessment)
+     * 06-3474-23 #3.3.4.3 (Link Quality Assessment)
      *
      * LQA_raw (c, r) = 255 * (c - c_min) / (c_max - c_min) * (r - r_min) / (r_max - r_min)
      * - c_min is the lowest signal quality ever reported, i.e. for a packet that can barely be received
@@ -811,7 +813,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #2.4.4.2.3 (Neighbor table reporting)
+     * 06-3474-23 #2.4.4.2.3 (Neighbor table reporting)
      *
      * Compute the median LQA for a device from `recentLQAs` or using `signalStrength` directly if device unknown.
      * If given, stores the computed LQA from given parameters in the `recentLQAs` list of the device before computing median.
@@ -851,6 +853,7 @@ export class StackContext {
             }
 
             if (signalStrength !== undefined) {
+                device.lastReceivedRssi = signalStrength;
                 const lqa = this.computeLQA(signalStrength, signalQuality);
 
                 if (device.recentLQAs.length > maxRecent) {
@@ -880,7 +883,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #3.3.1.5 (NWK radius handling)
+     * 06-3474-23 #3.3.1.5 (NWK radius handling)
      *
      * Decrement radius value for NWK frame forwarding.
      * HOT PATH: Optimized computation
@@ -914,7 +917,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.4.11 (Trust Center link/app keys)
+     * 06-3474-23 #4.4.11 (Trust Center link/app keys)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Retrieves stored application/link key using canonicalized IEEE pair
@@ -933,7 +936,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.4.11.1 (Application Link Key establishment)
+     * 06-3474-23 #4.4.11.1 (Application Link Key establishment)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Stores link/application keys using sorted IEEE tuple to match spec requirement for unordered pairs
@@ -953,7 +956,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.5.1 (Install Code processing)
+     * 06-3474-23 #4.5.1 (Install Code processing)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Validates install code length against permitted sizes (8/10/14/18/22/26 bytes)
@@ -1002,7 +1005,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.5.1 (Install Code lifecycle)
+     * 06-3474-23 #4.5.1 (Install Code lifecycle)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Removes stored install code metadata upon revocation
@@ -1015,7 +1018,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center persistent data)
+     * 06-3474-23 #4.7.6 (Trust Center persistent data)
      *
      * Save state to file system in TLV format.
      *
@@ -1096,7 +1099,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center persistent data)
+     * 06-3474-23 #4.7.6 (Trust Center persistent data)
      *
      * Read the current network state in the save file, if any present.
      *
@@ -1131,7 +1134,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center start-up procedure)
+     * 06-3474-23 #4.7.6 (Trust Center start-up procedure)
      *
      * Load state from file system if exists, else save "initial" state.
      * Afterwards, various keys are pre-hashed and descriptors pre-encoded.
@@ -1179,6 +1182,7 @@ export class StackContext {
                     neighbor,
                     lastTransportedNetworkKeySeq,
                     recentLQAs: [],
+                    lastReceivedRssi: undefined,
                     incomingNWKFrameCounter: undefined, // TODO: record this (should persist across reboots)
                     endDeviceTimeout: undefined,
                     linkStatusMisses: 0, // will stay zero for RFDs
@@ -1236,7 +1240,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #2.3.2.3 (Node Descriptor)
+     * 06-3474-23 #2.3.2.3 (Node Descriptor)
      *
      * Set the manufacturer code in the pre-encoded node descriptor
      *
@@ -1252,7 +1256,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center maintenance)
+     * 06-3474-23 #4.7.6 (Trust Center maintenance)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Persists state at configured interval while refreshing timer to maintain cadence
@@ -1488,9 +1492,10 @@ export class StackContext {
                     neighbor,
                     lastTransportedNetworkKeySeq: undefined,
                     recentLQAs: [],
+                    lastReceivedRssi: undefined,
                     incomingNWKFrameCounter: undefined,
                     endDeviceTimeout: undefined,
-                    linkStatusMisses: 0, // will stay zero for RFDs
+                    linkStatusMisses: 0,
                 });
                 this.address16ToAddress64.set(newAddress16, source64!);
 

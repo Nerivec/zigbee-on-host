@@ -23,6 +23,7 @@ import {
     NETDEF_ZGP_COMMISSIONING,
     NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0,
 } from "../data.js";
+import { defaultDeviceTableEntry } from "../utils.js";
 
 const NO_ACK_CODE = 99999;
 
@@ -261,15 +262,10 @@ describe("Zigbee Stack Handlers", () => {
                 const source64 = macHeader.source64!;
                 const source16 = macHeader.source16!;
                 context.deviceTable.set(source64, {
+                    ...defaultDeviceTableEntry(),
                     address16: source16,
-                    capabilities: undefined,
                     authorized: true,
                     neighbor: true,
-                    lastTransportedNetworkKeySeq: undefined,
-                    recentLQAs: [],
-                    incomingNWKFrameCounter: undefined,
-                    endDeviceTimeout: undefined,
-                    linkStatusMisses: undefined,
                 });
                 context.address16ToAddress64.set(source16, source64);
 
@@ -330,15 +326,11 @@ describe("Zigbee Stack Handlers", () => {
 
                 for (const neighbor of neighbors) {
                     context.deviceTable.set(neighbor.address64, {
+                        ...defaultDeviceTableEntry(),
                         address16: neighbor.address16,
-                        capabilities: undefined,
                         authorized: true,
                         neighbor: true,
-                        lastTransportedNetworkKeySeq: undefined,
                         recentLQAs: [255, 240, 230],
-                        incomingNWKFrameCounter: undefined,
-                        endDeviceTimeout: undefined,
-                        linkStatusMisses: undefined,
                     });
                     context.address16ToAddress64.set(neighbor.address16, neighbor.address64);
                 }
@@ -404,15 +396,10 @@ describe("Zigbee Stack Handlers", () => {
 
                 // Setup device and routing
                 context.deviceTable.set(dest64, {
+                    ...defaultDeviceTableEntry(),
                     address16: dest16,
                     capabilities: undefined,
                     authorized: true,
-                    neighbor: false,
-                    lastTransportedNetworkKeySeq: undefined,
-                    recentLQAs: [],
-                    incomingNWKFrameCounter: undefined,
-                    endDeviceTimeout: undefined,
-                    linkStatusMisses: undefined,
                 });
                 context.address16ToAddress64.set(dest16, dest64);
 
@@ -510,15 +497,8 @@ describe("Zigbee Stack Handlers", () => {
                 const source64 = macHeader.source64!;
                 const source16 = nwkHeader.source16!;
                 context.deviceTable.set(source64, {
+                    ...defaultDeviceTableEntry(),
                     address16: source16,
-                    capabilities: undefined,
-                    authorized: false,
-                    neighbor: false,
-                    lastTransportedNetworkKeySeq: undefined,
-                    recentLQAs: [],
-                    incomingNWKFrameCounter: undefined,
-                    endDeviceTimeout: undefined,
-                    linkStatusMisses: undefined,
                 });
                 context.address16ToAddress64.set(source16, source64);
 
@@ -548,15 +528,8 @@ describe("Zigbee Stack Handlers", () => {
                 const dest16 = 0x1234;
 
                 context.deviceTable.set(dest64, {
+                    ...defaultDeviceTableEntry(),
                     address16: dest16,
-                    capabilities: undefined,
-                    authorized: false,
-                    neighbor: false,
-                    lastTransportedNetworkKeySeq: undefined,
-                    recentLQAs: [],
-                    incomingNWKFrameCounter: undefined,
-                    endDeviceTimeout: undefined,
-                    linkStatusMisses: undefined,
                 });
                 context.address16ToAddress64.set(dest16, dest64);
 

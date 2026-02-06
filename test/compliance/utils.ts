@@ -3,7 +3,7 @@
  *
  * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
- *   - Zigbee specification (05-3474-23): Revision 23.1
+ *   - Zigbee specification (06-3474-23): Revision 23.1
  *   - Base device behavior (16-02828-012): v3.1
  *   - ZCL specification (07-5123): Revision 8
  *   - Green Power specification (14-0563-19): Version 1.1.2
@@ -30,6 +30,7 @@ import {
 } from "../../src/zigbee/zigbee-nwk.js";
 import type { MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
 import type { NetworkParameters, StackContext } from "../../src/zigbee-stack/stack-context.js";
+import { defaultDeviceTableEntry } from "../utils.js";
 
 export const NO_ACK_CODE = 99999;
 
@@ -111,6 +112,7 @@ export async function captureMacFrame(action: () => Promise<unknown> | unknown, 
 
 export function registerNeighborDevice(context: StackContext, address16: number, address64: bigint): void {
     context.deviceTable.set(address64, {
+        ...defaultDeviceTableEntry(),
         address16,
         capabilities: {
             alternatePANCoordinator: false,
@@ -122,26 +124,17 @@ export function registerNeighborDevice(context: StackContext, address16: number,
         },
         authorized: true,
         neighbor: true,
-        recentLQAs: [],
-        incomingNWKFrameCounter: undefined,
-        endDeviceTimeout: undefined,
-        lastTransportedNetworkKeySeq: undefined,
-        linkStatusMisses: undefined,
     });
     context.address16ToAddress64.set(address16, address64);
 }
 
 export function registerDevice(context: StackContext, address16: number, address64: bigint, neighbor: boolean, capabilities?: MACCapabilities): void {
     context.deviceTable.set(address64, {
+        ...defaultDeviceTableEntry(),
         address16,
         capabilities,
         authorized: true,
         neighbor,
-        recentLQAs: [],
-        incomingNWKFrameCounter: undefined,
-        endDeviceTimeout: undefined,
-        lastTransportedNetworkKeySeq: undefined,
-        linkStatusMisses: undefined,
     });
     context.address16ToAddress64.set(address16, address64);
 }

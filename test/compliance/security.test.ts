@@ -3,7 +3,7 @@
  *
  * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
- *   - Zigbee specification (05-3474-23): Revision 23.1
+ *   - Zigbee specification (06-3474-23): Revision 23.1
  *   - Base device behavior (16-02828-012): v3.1
  *   - ZCL specification (07-5123): Revision 8
  *   - Green Power specification (14-0563-19): Version 1.1.2
@@ -160,7 +160,7 @@ describe("Zigbee 4.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.3: Security Processing
+     * Zigbee Spec 06-3474-23 §4.3: Security Processing
      * Security processing SHALL use CCM* (counter with CBC-MAC) mode.
      */
     type CapturedNwkSecurity = {
@@ -387,7 +387,7 @@ describe("Zigbee 4.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.3.1: Security Levels
+     * Zigbee Spec 06-3474-23 §4.3.1: Security Levels
      * Zigbee SHALL use security level 5 (encryption + 32-bit MIC).
      */
     describe("Security Levels (Zigbee §4.3.1)", () => {
@@ -419,7 +419,7 @@ describe("Zigbee 4.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.3.2: Frame Counters
+     * Zigbee Spec 06-3474-23 §4.3.2: Frame Counters
      * Frame counters SHALL be maintained per key and SHALL NOT repeat.
      */
     function decodeSecurityFrame(frame: DecodedMACFrame) {
@@ -644,7 +644,7 @@ describe("Zigbee 4.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.5: Trust Center
+     * Zigbee Spec 06-3474-23 §4.5: Trust Center
      * Trust Center SHALL manage network security and key distribution.
      */
     describe("Trust Center Operations (Zigbee §4.5)", () => {
@@ -695,7 +695,7 @@ describe("Zigbee 4.0 Security Compliance", () => {
                 fcs: 0,
             };
 
-            await macHandler.processAssocReq(Buffer.from([capabilitiesByte]), 0, macHeader);
+            await macHandler.processAssocReq(Buffer.from([capabilitiesByte]), macHeader);
 
             const pending = context.pendingAssociations.get(device64);
             expect(pending).not.toBeUndefined();
@@ -910,7 +910,7 @@ describe("Zigbee 4.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.6.3.2: Well-Known Keys
+     * Zigbee Spec 06-3474-23 §4.6.3.2: Well-Known Keys
      * Well-known keys SHALL be used according to Zigbee 4.0 specification.
      */
     describe("Well-Known Keys (Zigbee §4.6.3.2)", () => {
@@ -939,7 +939,7 @@ describe("Zigbee 4.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.6.3.4: Install Codes
+     * Zigbee Spec 06-3474-23 §4.6.3.4: Install Codes
      * Install codes SHALL be used to derive preconfigured link keys.
      */
     describe("Install Codes (Zigbee §4.6.3.4)", () => {
@@ -1049,7 +1049,7 @@ describe("Zigbee 4.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.6.3.5: Network Key Update
+     * Zigbee Spec 06-3474-23 §4.6.3.5: Network Key Update
      * Network key update SHALL allow periodic key rotation.
      */
     describe("Network Key Update (Zigbee §4.6.3.5)", () => {
@@ -1119,7 +1119,7 @@ describe("Zigbee 4.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.6.3.6: Trust Center Link Key Update
+     * Zigbee Spec 06-3474-23 §4.6.3.6: Trust Center Link Key Update
      * TC link key update SHALL use APS request/verify/confirm key commands.
      */
     describe("Trust Center Link Key Update (Zigbee §4.6.3.6)", () => {
@@ -1304,7 +1304,7 @@ describe("Zigbee 4.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.6.3.7: Application Link Keys
+     * Zigbee Spec 06-3474-23 §4.6.3.7: Application Link Keys
      * Application link keys SHALL be established between communicating devices.
      */
     describe("Application Link Keys (Zigbee §4.6.3.7)", () => {
@@ -1496,7 +1496,7 @@ describe("Zigbee 4.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.7: Key Storage
+     * Zigbee Spec 06-3474-23 §4.7: Key Storage
      * Devices SHALL securely store cryptographic keys.
      */
     describe("Key Storage (Zigbee §4.7)", () => {

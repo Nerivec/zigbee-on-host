@@ -24,7 +24,7 @@ import {
     StackContext,
     type StackContextCallbacks,
 } from "../../src/zigbee-stack/stack-context.js";
-import { createMACHeader } from "../utils.js";
+import { createMACHeader, defaultDeviceTableEntry } from "../utils.js";
 
 describe("APS Handler", () => {
     let saveDir: string;
@@ -182,15 +182,11 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
                 capabilities: undefined,
                 authorized: false,
                 neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -244,15 +240,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -271,15 +260,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -298,15 +280,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -325,15 +300,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -352,15 +320,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -378,15 +339,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -405,15 +359,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -608,15 +555,11 @@ describe("APS Handler", () => {
             const device64 = 0x00124b0000004422n;
 
             mockContext.deviceTable.set(device64, {
+                ...defaultDeviceTableEntry(),
                 address16: device16,
                 capabilities: undefined,
                 authorized: true,
                 neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
 
             const payload = Buffer.alloc(12);
@@ -666,15 +609,8 @@ describe("APS Handler", () => {
             const device64 = 0x00124b0000005522n;
 
             mockContext.deviceTable.set(device64, {
+                ...defaultDeviceTableEntry(),
                 address16: device16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
 
             const payload = Buffer.alloc(12);
@@ -740,6 +676,7 @@ describe("APS Handler", () => {
         it("should generate LQI table response", () => {
             // Add some neighbor devices to device table
             mockContext.deviceTable.set(0x00124b0011111111n, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x1234,
                 capabilities: {
                     alternatePANCoordinator: false,
@@ -751,14 +688,11 @@ describe("APS Handler", () => {
                 },
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [150, 155, 152],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
 
             mockContext.deviceTable.set(0x00124b0022222222n, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x5678,
                 capabilities: {
                     alternatePANCoordinator: false,
@@ -770,23 +704,15 @@ describe("APS Handler", () => {
                 },
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [100],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
 
             mockContext.deviceTable.set(0x00124b0033333333n, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x9abc,
                 capabilities: undefined,
                 authorized: false,
                 neighbor: false, // Not a neighbor, should be skipped
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
 
             const lqiTable = apsHandler.getLQITableResponse(0);
@@ -823,6 +749,7 @@ describe("APS Handler", () => {
             // Add multiple neighbor devices
             for (let i = 0; i < 10; i++) {
                 mockContext.deviceTable.set(BigInt(0x00124b0000000000 + i), {
+                    ...defaultDeviceTableEntry(),
                     address16: 0x1000 + i,
                     capabilities: {
                         alternatePANCoordinator: false,
@@ -834,11 +761,6 @@ describe("APS Handler", () => {
                     },
                     authorized: true,
                     neighbor: true,
-                    lastTransportedNetworkKeySeq: undefined,
-                    recentLQAs: [],
-                    incomingNWKFrameCounter: undefined,
-                    endDeviceTimeout: undefined,
-                    linkStatusMisses: 0,
                 });
             }
 
@@ -1491,15 +1413,8 @@ describe("APS Handler", () => {
     it("resolves IEEE destination when sending data", async () => {
         const destination64 = 0x00124b0099999999n;
         mockContext.deviceTable.set(destination64, {
+            ...defaultDeviceTableEntry(),
             address16: 0x7788,
-            capabilities: undefined,
-            authorized: false,
-            neighbor: false,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(0x7788, destination64);
 
@@ -1607,15 +1522,11 @@ describe("APS Handler", () => {
         const responder64 = 0x00124b0044332211n;
         mockContext.address16ToAddress64.set(0x3344, responder64);
         mockContext.deviceTable.set(responder64, {
+            ...defaultDeviceTableEntry(),
             address16: 0x3344,
             capabilities: undefined,
             authorized: true,
             neighbor: true,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         const apsHeader = {
             frameControl: {
@@ -1652,15 +1563,11 @@ describe("APS Handler", () => {
         mockContext.address16ToAddress64.set(requester16, requester64);
         mockContext.address16ToAddress64.set(partner16, partner64);
         mockContext.deviceTable.set(partner64, {
+            ...defaultDeviceTableEntry(),
             address16: partner16,
             capabilities: undefined,
             authorized: true,
             neighbor: false,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         mockContext.setAppLinkKey(requester64, partner64, cachedKey);
 
@@ -1814,15 +1721,11 @@ describe("APS Handler", () => {
         const dest64 = 0x00124b0000007001n;
 
         mockContext.deviceTable.set(dest64, {
+            ...defaultDeviceTableEntry(),
             address16: dest16,
             capabilities: undefined,
             authorized: true,
             neighbor: true,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -1870,15 +1773,11 @@ describe("APS Handler", () => {
         const dest64 = 0x00124b0000007002n;
 
         mockContext.deviceTable.set(dest64, {
+            ...defaultDeviceTableEntry(),
             address16: dest16,
             capabilities: undefined,
             authorized: true,
             neighbor: true,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -1941,6 +1840,7 @@ describe("APS Handler", () => {
             neighbor: true,
             lastTransportedNetworkKeySeq: undefined,
             recentLQAs: [],
+            lastReceivedRssi: undefined,
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
             linkStatusMisses: 0,
@@ -2038,15 +1938,11 @@ describe("APS Handler", () => {
         const dest64 = 0x00124b0000007004n;
 
         mockContext.deviceTable.set(dest64, {
+            ...defaultDeviceTableEntry(),
             address16: dest16,
             capabilities: undefined,
             authorized: true,
             neighbor: true,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -2106,15 +2002,11 @@ describe("APS Handler", () => {
         const clearTimeoutSpy = vi.spyOn(global, "clearTimeout").mockImplementation(() => {});
 
         mockContext.deviceTable.set(dest64, {
+            ...defaultDeviceTableEntry(),
             address16: dest16,
             capabilities: undefined,
             authorized: true,
             neighbor: true,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -2215,15 +2107,11 @@ describe("APS Handler", () => {
         for (let index = 0; index < 260; index += 1) {
             const address64 = 0x00124b0000100000n + BigInt(index);
             mockContext.deviceTable.set(address64, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x1000 + index,
                 capabilities: undefined,
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
         }
 

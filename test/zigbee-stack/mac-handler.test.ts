@@ -28,7 +28,7 @@ import { ZigbeeConsts } from "../../src/zigbee/zigbee.js";
 import { ZigbeeNWKConsts } from "../../src/zigbee/zigbee-nwk.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
 import { type NetworkParameters, StackContext, type StackContextCallbacks } from "../../src/zigbee-stack/stack-context.js";
-import { createMACFrameControl } from "../utils.js";
+import { createMACFrameControl, defaultDeviceTableEntry } from "../utils.js";
 
 const NO_ACK_CODE = 99999;
 
@@ -143,15 +143,8 @@ describe("MACHandler", () => {
             const dest16 = 0x5678;
 
             mockContext.deviceTable.set(dest64, {
+                ...defaultDeviceTableEntry(),
                 address16: dest16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -411,7 +404,7 @@ describe("MACHandler", () => {
             };
 
             const data = Buffer.from([0x8e]); // capabilities: rxOnWhenIdle=true, deviceType=FFD, powerSource=mains, securityCapability=true, allocateAddress=true
-            await macHandler.processAssocReq(data, 0, macHeader);
+            await macHandler.processAssocReq(data, macHeader);
 
             expect(mockContext.associate).toHaveBeenCalledWith(undefined, 0x00124b0098765432n, true, expect.any(Object), true, false);
             expect(mockContext.pendingAssociations.has(0x00124b0098765432n)).toStrictEqual(true);
@@ -424,15 +417,11 @@ describe("MACHandler", () => {
             const dest16 = 0x5678;
 
             mockContext.deviceTable.set(dest64, {
+                ...defaultDeviceTableEntry(),
                 address16: dest16,
                 capabilities: undefined,
                 authorized: true,
                 neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
 
             const macHeader: MACHeader = {
@@ -446,7 +435,7 @@ describe("MACHandler", () => {
             };
 
             const data = Buffer.from([0x8e]);
-            await macHandler.processAssocReq(data, 0, macHeader);
+            await macHandler.processAssocReq(data, macHeader);
 
             expect(mockContext.associate).toHaveBeenCalledWith(dest16, dest64, false, expect.any(Object), true, false);
         });
@@ -463,7 +452,7 @@ describe("MACHandler", () => {
             };
 
             const data = Buffer.from([0x8e]);
-            await macHandler.processAssocReq(data, 0, macHeader);
+            await macHandler.processAssocReq(data, macHeader);
 
             expect(mockContext.associate).not.toHaveBeenCalled();
         });
@@ -496,7 +485,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processBeaconReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processBeaconReq(Buffer.alloc(0), macHeader);
 
             expect(mockCallbacks.onSendFrame).toHaveBeenCalledOnce();
 
@@ -533,7 +522,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processBeaconReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processBeaconReq(Buffer.alloc(0), macHeader);
 
             expect(mockCallbacks.onSendFrame).toHaveBeenCalledOnce();
 
@@ -569,7 +558,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processDataReq(Buffer.alloc(0), macHeader);
 
             expect(sendResp).toHaveBeenCalledOnce();
             expect(mockContext.pendingAssociations.has(dest64)).toStrictEqual(false);
@@ -594,7 +583,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processDataReq(Buffer.alloc(0), macHeader);
 
             expect(sendResp).not.toHaveBeenCalled();
             expect(mockContext.pendingAssociations.has(dest64)).toStrictEqual(false);
@@ -621,7 +610,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processDataReq(Buffer.alloc(0), macHeader);
 
             expect(sendFrame).toHaveBeenCalledOnce();
             expect(mockContext.indirectTransmissions.get(dest64)?.length).toStrictEqual(0);
@@ -653,7 +642,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processDataReq(Buffer.alloc(0), macHeader);
 
             expect(expiredSendFrame).not.toHaveBeenCalled();
             expect(validSendFrame).toHaveBeenCalledOnce();
@@ -684,7 +673,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processDataReq(Buffer.alloc(0), macHeader);
 
             expect(sendFrame).toHaveBeenCalledOnce();
         });
@@ -732,7 +721,7 @@ describe("MACHandler", () => {
         it("encodes beacon responses with Zigbee beacon payload", async () => {
             getOnSendFrameMock().mockClear();
 
-            await macHandler.processBeaconReq(Buffer.alloc(0), 0, {
+            await macHandler.processBeaconReq(Buffer.alloc(0), {
                 frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
                 sequenceNumber: 0,
                 destinationPANId: 0xffff,
@@ -1104,7 +1093,7 @@ describe("MACHandler", () => {
                     maxIncomingTransferUnit: ZigbeeMACConsts.FRAME_MAX_SIZE,
                 },
                 [GlobalTlv.ROUTER_INFORMATION]: {
-                    bitmap: 0b11110101,
+                    bitmask: 0b11110101,
                 },
             });
             expect(decoded.localTlvs.size).toStrictEqual(0);

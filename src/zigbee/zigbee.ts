@@ -236,7 +236,7 @@ export function aes128MmoHash(data: Buffer): Buffer {
 }
 
 /**
- * 05-3474-23 R23.1, Annex B/A (CCM* mode of operation)
+ * 06-3474-23 R23.1, Annex B/A (CCM* mode of operation)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Implements CCM* counter generation with L=2 for Zigbee network/APS security
@@ -282,7 +282,7 @@ export function aes128CcmStar(M: 0 | 2 | 4 | 8 | 16, key: Buffer, nonce: Buffer,
 }
 
 /**
- * 05-3474-23 R23.1, Annex B (CCM* authentication primitive)
+ * 06-3474-23 R23.1, Annex B (CCM* authentication primitive)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Builds B0 and authentication blocks per Zigbee CCM* definition using zero IV
@@ -330,7 +330,7 @@ export function computeAuthTag(authData: Buffer, M: number, key: Buffer, nonce: 
 }
 
 /**
- * 05-3474-23 R23.1, Figure 4-25 (Security control field)
+ * 06-3474-23 R23.1, Figure 4-25 (Security control field)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Packs security level, key identifier, and nonce flag per Zigbee bit layout
@@ -348,7 +348,7 @@ export function combineSecurityControl(control: ZigbeeSecurityControl, levelOver
 }
 
 /**
- * 05-3474-23 R23.1, Annex B (Nonce construction)
+ * 06-3474-23 R23.1, Annex B (Nonce construction)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Orders IEEE source, frame counter, and security control bytes per Zigbee CCM* requirements
@@ -389,7 +389,7 @@ export function registerDefaultHashedKeys(link: Buffer, nwk: Buffer, transport: 
 }
 
 /**
- * 05-3474-23 R23.1, Annex B.1.4 (Keyed hash for message authentication)
+ * 06-3474-23 R23.1, Annex B.1.4 (Keyed hash for message authentication)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Implements HMAC-like construction using AES-128-MMO with specified ipad/opad constants
@@ -419,7 +419,7 @@ export function makeKeyedHash(key: Buffer, inputByte: number): Buffer {
 }
 
 /**
- * 05-3474-23 R23.1, Annex B.1.5 (Key usage definitions)
+ * 06-3474-23 R23.1, Annex B.1.5 (Key usage definitions)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Returns unhashed NWK/LINK keys and hashed transport/load keys as mandated
@@ -450,7 +450,7 @@ export function makeKeyedHashByType(keyId: ZigbeeKeyType, key: Buffer): Buffer {
 }
 
 /**
- * 05-3474-23 R23.1, Table B-6 (Auxiliary security header)
+ * 06-3474-23 R23.1, Table B-6 (Auxiliary security header)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Parses frame counter, optional extended source, and key sequence per Zigbee security spec
@@ -526,7 +526,7 @@ export function decodeZigbeeSecurityHeader(data: Buffer, offset: number, source6
 }
 
 /**
- * 05-3474-23 R23.1, Table B-6 (Auxiliary security header)
+ * 06-3474-23 R23.1, Table B-6 (Auxiliary security header)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Serialises security control, frame counter, optional IEEE source, and key sequence
@@ -551,7 +551,7 @@ export function encodeZigbeeSecurityHeader(data: Buffer, offset: number, header:
 }
 
 /**
- * 05-3474-23 R23.1, Annex B (Inbound security processing)
+ * 06-3474-23 R23.1, Annex B (Inbound security processing)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Applies CCM* decryption using hashed keys derived per key type definition
@@ -602,7 +602,7 @@ export function decryptZigbeePayload(
 }
 
 /**
- * 05-3474-23 R23.1, Annex B (Outbound security processing)
+ * 06-3474-23 R23.1, Annex B (Outbound security processing)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Computes MIC over NWK/APS header and encrypts payload per CCM* specification

@@ -138,7 +138,7 @@ export type ZigbeeAPSPayload = Buffer;
 /**
  * Decode Zigbee APS frame control field.
  * HOT PATH: Called for every incoming Zigbee APS frame.
- * 05-3474-23 R23.1, Table 2-69 (APS frame control fields)
+ * 06-3474-23 R23.1, Table 2-69 (APS frame control fields)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Extracts frame type, delivery, security, and extended header bits per Zigbee 4.0 profile
@@ -167,7 +167,7 @@ export function decodeZigbeeAPSFrameControl(data: Buffer, offset: number): [Zigb
 }
 
 /**
- * 05-3474-23 R23.1, Table 2-69 (APS frame control fields)
+ * 06-3474-23 R23.1, Table 2-69 (APS frame control fields)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Encodes frame control bits according to Zigbee APS data/command frame requirements
@@ -191,7 +191,7 @@ function encodeZigbeeAPSFrameControl(data: Buffer, offset: number, fcf: ZigbeeAP
 }
 
 /**
- * 05-3474-23 R23.1, Tables 2-69/2-70 (APS data and command frame formats)
+ * 06-3474-23 R23.1, Tables 2-69/2-70 (APS data and command frame formats)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Applies delivery-mode driven presence rules for endpoints, groups, cluster/profile IDs
@@ -311,7 +311,7 @@ export function decodeZigbeeAPSHeader(data: Buffer, offset: number, frameControl
 }
 
 /**
- * 05-3474-23 R23.1, Tables 2-69/2-70 (APS data and command frame formats)
+ * 06-3474-23 R23.1, Tables 2-69/2-70 (APS data and command frame formats)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Serialises endpoint/group fields following delivery-mode matrix mandated by spec
@@ -402,7 +402,7 @@ export function encodeZigbeeAPSHeader(data: Buffer, offset: number, header: Zigb
 }
 
 /**
- * 05-3474-23 R23.1, Annex B (APS security processing)
+ * 06-3474-23 R23.1, Annex B (APS security processing)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Invokes APS encryption/decryption helpers when security bit is asserted, per spec flow
@@ -437,7 +437,7 @@ export function decodeZigbeeAPSPayload(
 }
 
 /**
- * 05-3474-23 R23.1, Table 2-70 (APS data frame format) & Annex B (APS security)
+ * 06-3474-23 R23.1, Table 2-70 (APS data frame format) & Annex B (APS security)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Builds full APS frame, invoking security helper when security flag set

@@ -174,7 +174,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.1 (Application Link Key establishment)
+     * 06-3474-23 #4.4.11.1 (Application Link Key establishment)
      *
      * Get or generate application link key for a device pair
      *
@@ -200,7 +200,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #2.2.6.5 (APS duplicate rejection)
+     * 06-3474-23 #2.2.6.5 (APS duplicate rejection)
      *
      * Check whether an incoming APS frame is a duplicate and update the duplicate table accordingly.
      *
@@ -281,7 +281,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.1 (APS data service)
+     * 06-3474-23 #4.4.1 (APS data service)
      *
      * Send a Zigbee APS DATA frame and track pending ACK if necessary.
      *
@@ -345,7 +345,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.1 (APS data service)
+     * 06-3474-23 #4.4.1 (APS data service)
      *
      * Send a Zigbee APS DATA frame.
      * Throws if could not send.
@@ -524,7 +524,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.5 (APS fragmentation)
+     * 06-3474-23 #4.4.5 (APS fragmentation)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Splits payload into first/remaining chunks respecting fragment overhead constants
@@ -613,7 +613,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.5 (APS fragmentation)
+     * 06-3474-23 #4.4.5 (APS fragmentation)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Advances to next fragment only after prior block acknowledged
@@ -638,7 +638,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.5 (APS fragmentation reassembly)
+     * 06-3474-23 #4.4.5 (APS fragmentation reassembly)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Initializes fragment state on FIRST block and records meta fields
@@ -749,7 +749,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.2.3 (APS acknowledgement management)
+     * 06-3474-23 #4.4.2.3 (APS acknowledgement management)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Starts ack-wait timer using spec default (~1.5 s) and resets on retransmit
@@ -778,7 +778,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.2.3 (APS acknowledgement management)
+     * 06-3474-23 #4.4.2.3 (APS acknowledgement management)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Retries DATA up to CONFIG_APS_MAX_FRAME_RETRIES per spec guidance (default 3)
@@ -821,7 +821,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.2.3 (APS acknowledgement management)
+     * 06-3474-23 #4.4.2.3 (APS acknowledgement management)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Matches ACKs using source short address and APS counter per spec tuple
@@ -870,7 +870,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.2.3 (APS acknowledgement)
+     * 06-3474-23 #4.4.2.3 (APS acknowledgement)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Mirrors counter and cluster metadata per spec Table 4-10
@@ -1008,7 +1008,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4 (APS layer processing)
+     * 06-3474-23 #4.4 (APS layer processing)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Handles DATA, INTERPAN, CMD frame types per spec definitions
@@ -1131,7 +1131,7 @@ export class APSHandler {
     // #region Commands
 
     /**
-     * 05-3474-23 #4.4.11 (APS command frames)
+     * 06-3474-23 #4.4.11 (APS command frames)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Encodes APS command header with appropriate delivery mode and security bit per parameters
@@ -1290,7 +1290,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11 (APS command processing)
+     * 06-3474-23 #4.4.11 (APS command processing)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Dispatches APS command IDs to the appropriate handler per Table 4-28
@@ -1338,7 +1338,7 @@ export class APSHandler {
     // NOTE: processTransportKey DEVICE SCOPE: not Trust Center (N/A)
 
     /**
-     * 05-3474-23 #4.4.11.1
+     * 06-3474-23 #4.4.11.1
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Correctly uses CMD_KEY_TC_LINK type (0x01) per spec Table 4-17
@@ -1404,7 +1404,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.1 #4.4.11.1.3.2
+     * 06-3474-23 #4.4.11.1 #4.4.11.1.3.2
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Correctly uses CMD_KEY_STANDARD_NWK type (0x00) per spec Table 4-17
@@ -1443,7 +1443,7 @@ export class APSHandler {
         offset = finalPayload.writeBigUInt64LE(isBroadcast ? 0n : destination64, offset);
         finalPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
 
-        // see 05-3474-23 #4.4.1.5
+        // see 06-3474-23 #4.4.1.5
         // Conversely, a device receiving an APS transport key command MAY choose whether or not APS encryption is required.
         // This is most often done during initial joining.
         // For example, during joining a device that has no preconfigured link key would only accept unencrypted transport key messages,
@@ -1487,7 +1487,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.1 #4.4.11.1.3.3
+     * 06-3474-23 #4.4.11.1 #4.4.11.1.3.3
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Sets CMD_KEY_APP_LINK (0x03) and includes partner64 + initiator flag per Table 4-17
@@ -1541,7 +1541,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.2
+     * 06-3474-23 #4.4.11.2
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Correctly decodes all mandatory fields: device64, device16, status
@@ -1579,6 +1579,7 @@ export class APSHandler {
         // Zigbee 2006 and later
         const device16 = data.readUInt16LE(offset);
         offset += 2;
+        // ZigbeeAPSUpdateDeviceStatus
         const status = data.readUInt8(offset);
         offset += 1;
         // joiner TLVs: one or more TLVs received during Network Commissioning by the parent router, not present if <R23
@@ -1708,7 +1709,7 @@ export class APSHandler {
     // NOTE: processRemoveDevice DEVICE SCOPE: not Trust Center (N/A)
 
     /**
-     * 05-3474-23 #4.4.11.3
+     * 06-3474-23 #4.4.11.3
      *
      * SPEC COMPLIANCE:
      * - ✅ Includes target IEEE address
@@ -1743,7 +1744,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.4 #4.4.5.2.3
+     * 06-3474-23 #4.4.11.4 #4.4.5.2.3
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Rejects unencrypted APS frames as mandated (request MUST be APS secured)
@@ -1841,7 +1842,7 @@ export class APSHandler {
     // NOTE: processSwitchKey DEVICE SCOPE: not Trust Center (N/A)
 
     /**
-     * 05-3474-23 #4.4.11.5
+     * 06-3474-23 #4.4.11.5
      *
      * SPEC COMPLIANCE:
      * - ✅ Includes sequence number associated with staged network key
@@ -1872,7 +1873,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.6
+     * 06-3474-23 #4.4.11.6
      *
      * SPEC COMPLIANCE:
      * - ✅ Correctly decodes destination address
@@ -1898,7 +1899,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.6
+     * 06-3474-23 #4.4.11.6
      *
      * SPEC COMPLIANCE:
      * - ✅ Includes destination64
@@ -1935,7 +1936,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.7
+     * 06-3474-23 #4.4.11.7
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Decodes keyType, source64, and keyHash correctly
@@ -1998,7 +1999,7 @@ export class APSHandler {
     // NOTE: processConfirmKey DEVICE SCOPE: routers (N/A), end devices (N/A)
 
     /**
-     * 05-3474-23 #4.4.11.8
+     * 06-3474-23 #4.4.11.8
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Sends CONFIRM_KEY with all required fields: status, keyType, destination64
@@ -2048,7 +2049,7 @@ export class APSHandler {
             {
                 control: {
                     level: ZigbeeSecurityLevel.NONE,
-                    keyId: ZigbeeKeyType.LINK, // Per 05-3474-23 #4.4.11.8 confirmation uses the link key being verified
+                    keyId: ZigbeeKeyType.LINK, // Per 06-3474-23 #4.4.11.8 confirmation uses the link key being verified
                     nonce: true,
                     reqVerifiedFc: false,
                 },
@@ -2076,7 +2077,7 @@ export class APSHandler {
     // NOTE: processRelayMessageDownstream DEVICE SCOPE: [unauthorized] routers (N/A), end devices (N/A)
 
     /**
-     * 05-3474-23 #4.4.11.9
+     * 06-3474-23 #4.4.11.9
      *
      * SPEC COMPLIANCE:
      * - TODO
@@ -2117,7 +2118,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.10
+     * 06-3474-23 #4.4.11.10
      *
      * SPEC COMPLIANCE:
      * - TODO
@@ -2192,7 +2193,7 @@ export class APSHandler {
     // #region ZDO Helpers
 
     /**
-     * 05-3474-23 #2.4.4.2.3
+     * 06-3474-23 #2.4.4.2.3
      *
      * Generate LQI (Link Quality Indicator) table response for coordinator.
      * ZDO response to LQI_TABLE_REQUEST.
@@ -2298,7 +2299,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #2.4.4.3.3
+     * 06-3474-23 #2.4.4.3.3
      *
      * Generate routing table response for coordinator.
      * ZDO response to ROUTING_TABLE_REQUEST.

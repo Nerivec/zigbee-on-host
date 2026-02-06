@@ -1,6 +1,12 @@
 import type { RequiredNonNullable } from "../utils/types.js";
 import { ZigbeeConsts } from "./zigbee.js";
 
+export const enum GlobalTlvConsts {
+    KEY_NEGOTATION_METHOD_STATIC = 0b000,
+    KEY_NEGOTATION_METHOD_MMO128 = 0b010,
+    KEY_NEGOTATION_METHOD_SHA256 = 0b100,
+}
+
 export const enum GlobalTlv {
     /** minLen=2 */
     MANUFACTURER_SPECIFIC = 64,
@@ -42,26 +48,26 @@ type GlobalTlvManufacturerSpecific = {
 type GlobalTlvSupportedKeyNegotiatioMethods = {
     /**
      * uint8
-     * - 0: Static Key Request (Zigbee 3.0 Mechanism, TCLK procedure)
-     * - 1: SPEKE using Curve25519 with Hash AES-MMO-128
-     * - 2: SPEKE using Curve25519 with Hash SHA-256
-     * - 3–7: Reserved
+     * - Bit 0: Static Key Request (Zigbee 3.0 Mechanism, TCLK procedure)
+     * - Bit 1: SPEKE using Curve25519 with Hash AES-MMO-128
+     * - Bit 2: SPEKE using Curve25519 with Hash SHA-256
+     * - Bit 3–7: Reserved
      */
     keyNegotiationProtocolsBitmask: number;
     /**
      * uint8
-     * - 0: Symmetric Authentication Token
+     * - Bit 0: Symmetric Authentication Token
      *   - This is a token unique to the Trust Center and network that the device is running on, and is assigned by the Trust center after joining.
      *     The token is used to renegotiate a link key using the Key Negotiation protocol and is good for the life of the device on the network.
-     * - 1: Install Code Key
+     * - Bit 1: Install Code Key
      *   - 128-bit pre-configured link-key derived from install code
-     * - 2: Passcode Key
+     * - Bit 2: Passcode Key
      *   - A variable length passcode for PAKE protocols. This passcode can be shorter for easy entry by a user.
-     * - 3: Basic Access Key
+     * - Bit 3: Basic Access Key
      *   - This key is used by other Zigbee specifications for joining with an alternate pre-shared secret. The definition and usage is defined by those specifications. The usage is optional by the core Zigbee specification.
-     * - 4: Administrative Access Key
+     * - Bit 4: Administrative Access Key
      *   - This key is used by other Zigbee specifications for joining with an alternate pre-shared secret. The definition and usage is defined by those specifications. The usage is optional by the core Zigbee specification.
-     * - 5-7: Reserved
+     * - Bit 5-7: Reserved
      */
     preSharedSecretsBitmask: number;
     sourceDeviceEui64: bigint | undefined;
@@ -90,35 +96,35 @@ type GlobalTlvSummetricPassphrase = {
 type GlobalTlvRouterInformation = {
     /**
      * uint16
-     * - 0: Hub Connectivity
+     * - Bit 0: Hub Connectivity
      *   - This bit indicates the state of nwkHubConnectivity from the NIB of the local device.
      *     It advertises whether the router has connectivity to a Hub device as defined by the higher-level application layer.
      *     A value of 1 means there is connectivity, and avalue of 0 means there is no current Hub connectivity.
-     * - 1: Uptime
+     * - Bit 1: Uptime
      *   - This 1-bit value indicates the uptime of the router.
      *     A value of 1 indicates the router has been up for more than 24 hours.
      *     A value of 0 indicates the router has been up for less than 24 hours.
-     * - 2: Preferred Parent
+     * - Bit 2: Preferred Parent
      *   - This bit indicates the state of nwkPreferredParent from the NIB of the local device.
      *     When supported, it extends Hub Connecivity, advertising the devices capacity to be the parent for an additional device.
      *     A value of 1 means that this device should be preferred.
      *     A value of 0 indicates that it should not be preferred.
      *     Devices that do not make this determination SHALL always report a value of 0.
-     * - 3: Battery Backup
+     * - Bit 3: Battery Backup
      *   - This bit indicates that the router has battery backup and thus will not be affected by temporary losses in power.
-     * - 4: Enhanced Beacon Request Support
+     * - Bit 4: Enhanced Beacon Request Support
      *   - When this bit is set to 1, it indicates that the router supports responding to Enhanced beacon requests as defined by IEEE Std 802.15.4.
      *     A zero for this bit indicates the device has no support for responding to enhanced beacon requests.
-     * - 5: MAC Data Poll Keepalive Support
+     * - Bit 5: MAC Data Poll Keepalive Support
      *   - This indicates that the device has support for the MAC Data Poll Keepalive method for End Device timeouts.
-     * - 6: End Device Keepalive Support
+     * - Bit 6: End Device Keepalive Support
      *   - This indicates that the device has support for the End Device Keepalive method for End Device timeouts.
-     * - 7: Power Negotiation Support
+     * - Bit 7: Power Negotiation Support
      *   - This indicates the device has support for Power Negotiation with end devices.
-     * - 8-15: Reserved
+     * - Bit 8-15: Reserved
      *   - These bits SHALL be set to 0.
      */
-    bitmap: number;
+    bitmask: number;
 };
 
 type GlobalTlvFragmentationParameters = {
@@ -296,7 +302,7 @@ export function readZigbeeTlvs(data: Buffer, offset: number, parent?: number): [
 
                     const bitmap = data.readUInt16LE(tlvOffset);
 
-                    globalTlvs[GlobalTlv.ROUTER_INFORMATION] = { bitmap };
+                    globalTlvs[GlobalTlv.ROUTER_INFORMATION] = { bitmask: bitmap };
 
                     break;
                 }
@@ -431,7 +437,7 @@ export function writeZigbeeTlvFragmentationParameters(
 export function writeZigbeeTlvRouterInformation(data: Buffer, offset: number, tlv: RequiredNonNullable<GlobalTlvRouterInformation>): number {
     offset = data.writeUInt8(GlobalTlv.ROUTER_INFORMATION, offset);
     offset = data.writeUInt8(1, offset); // per spec, actual data length is `length field + 1`
-    offset = data.writeUInt16LE(tlv.bitmap, offset);
+    offset = data.writeUInt16LE(tlv.bitmask, offset);
 
     return offset;
 }

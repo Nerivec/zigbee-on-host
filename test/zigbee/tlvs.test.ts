@@ -59,7 +59,7 @@ describe("Zigbee TLVs", () => {
         expect(globalTlvs[GlobalTlv.NEXT_PAN_ID]).toStrictEqual({ panId: 0x1122 });
         expect(globalTlvs[GlobalTlv.NEXT_CHANNEL_CHANGE]).toStrictEqual({ channel: 0x01020304 });
         expect(globalTlvs[GlobalTlv.SYMMETRIC_PASSPHRASE]?.passphrase).toStrictEqual(Buffer.alloc(ZigbeeConsts.SEC_KEYSIZE, 0xab));
-        expect(globalTlvs[GlobalTlv.ROUTER_INFORMATION]).toStrictEqual({ bitmap: 0x3344 });
+        expect(globalTlvs[GlobalTlv.ROUTER_INFORMATION]).toStrictEqual({ bitmask: 0x3344 });
         expect(globalTlvs[GlobalTlv.FRAGMENTATION_PARAMETERS]).toStrictEqual({
             nwkAddress: 0x5678,
             fragmentationOptions: 0x9a,

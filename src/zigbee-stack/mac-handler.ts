@@ -259,23 +259,21 @@ export class MACHandler {
      * @param macHeader Decoded MAC header for context
      */
     public async processCommand(data: Buffer, macHeader: MACHeader): Promise<void> {
-        let offset = 0;
-
         switch (macHeader.commandId!) {
             case MACCommandId.ASSOC_REQ: {
-                offset = await this.processAssocReq(data, offset, macHeader);
+                await this.processAssocReq(data, macHeader);
                 break;
             }
             case MACCommandId.BEACON_REQ: {
-                offset = await this.processBeaconReq(data, offset, macHeader);
+                await this.processBeaconReq(data, macHeader);
                 break;
             }
             case MACCommandId.DATA_RQ: {
-                offset = await this.processDataReq(data, offset, macHeader);
+                await this.processDataReq(data, macHeader);
                 break;
             }
             case MACCommandId.DISASSOC_NOTIFY: {
-                offset = await this.processDisassocNotify(data, offset, macHeader);
+                await this.processDisassocNotify(data, macHeader);
                 break;
             }
             // TODO: other cases?
@@ -288,11 +286,6 @@ export class MACHandler {
                 return;
             }
         }
-
-        // excess data in packet
-        // if (offset < data.byteLength) {
-        //     logger.debug(() => `<=== MAC CMD contained more data: ${data.toString('hex')}`, NS);
-        // }
     }
 
     /**
@@ -313,52 +306,45 @@ export class MACHandler {
      * - ✅ Delivers TRANSPORT_KEY_NWK after successful association (Zigbee Trust Center requirement)
      * - ✅ Uses MAC capabilities to determine device type correctly
      * DEVICE SCOPE: Coordinator, routers (N/A)
-     *
-     * @param data Command data
-     * @param offset Current offset in data
-     * @param macHeader MAC header
-     * @returns New offset after processing
      */
-    public async processAssocReq(data: Buffer, offset: number, macHeader: MACHeader): Promise<number> {
-        const capabilities = data.readUInt8(offset);
-        offset += 1;
+    public async processAssocReq(data: Buffer, macHeader: MACHeader): Promise<void> {
+        if (macHeader.source64 === undefined) {
+            logger.debug(() => `<=x= MAC ASSOC_REQ[macSrc=${macHeader.source16}:${macHeader.source64}] Invalid source64`, NS);
+            return;
+        }
+
+        const capabilities = data.readUInt8(0);
 
         logger.debug(() => `<=== MAC ASSOC_REQ[macSrc=${macHeader.source16}:${macHeader.source64} cap=${capabilities}]`, NS);
 
-        if (macHeader.source64 === undefined) {
-            logger.debug(() => `<=x= MAC ASSOC_REQ[macSrc=${macHeader.source16}:${macHeader.source64} cap=${capabilities}] Invalid source64`, NS);
-        } else {
-            const device = this.#context.deviceTable.get(macHeader.source64);
-            const address16 = device?.address16;
-            const decodedCap = decodeMACCapabilities(capabilities);
-            const [status, newAddress16, requiresTransportKey] = await this.#context.associate(
-                address16,
-                macHeader.source64,
-                !device?.authorized /* rejoin only if was previously authorized */,
-                decodedCap,
-                true /* neighbor */,
-                address16 === undefined && !this.#context.associationPermit,
-            );
+        const device = this.#context.deviceTable.get(macHeader.source64);
+        const address16 = device?.address16;
+        const decodedCap = decodeMACCapabilities(capabilities);
+        const [status, newAddress16, requiresTransportKey] = await this.#context.associate(
+            address16,
+            macHeader.source64,
+            !device?.authorized /* rejoin only if was previously authorized */,
+            decodedCap,
+            true /* neighbor */,
+            address16 === undefined && !this.#context.associationPermit,
+        );
 
-            this.#context.pendingAssociations.set(macHeader.source64, {
-                sendResp: async () => {
-                    await this.sendAssocRsp(macHeader.source64!, newAddress16, status);
+        this.#context.pendingAssociations.set(macHeader.source64, {
+            sendResp: async () => {
+                await this.sendAssocRsp(macHeader.source64!, newAddress16, status);
 
-                    if (status === MACAssociationStatus.SUCCESS && requiresTransportKey) {
-                        await this.#callbacks.onAPSSendTransportKeyNWK(
-                            newAddress16,
-                            this.#context.netParams.networkKey,
-                            this.#context.netParams.networkKeySequenceNumber,
-                            macHeader.source64!,
-                        );
-                        this.#context.markNetworkKeyTransported(macHeader.source64!);
-                    }
-                },
-                timestamp: Date.now(),
-            });
-        }
-
-        return offset;
+                if (status === MACAssociationStatus.SUCCESS && requiresTransportKey) {
+                    await this.#callbacks.onAPSSendTransportKeyNWK(
+                        newAddress16,
+                        this.#context.netParams.networkKey,
+                        this.#context.netParams.networkKeySequenceNumber,
+                        macHeader.source64!,
+                    );
+                    this.#context.markNetworkKeyTransported(macHeader.source64!);
+                }
+            },
+            timestamp: Date.now(),
+        });
     }
 
     // NOTE: processAssocRsp DEVICE SCOPE: routers (N/A), end devices (N/A)
@@ -372,9 +358,8 @@ export class MACHandler {
      * - ⚠️ Does not emit confirmation back to child (not required for coordinator role)
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
-    public async processDisassocNotify(data: Buffer, offset: number, macHeader: MACHeader): Promise<number> {
-        const reason = data.readUInt8(offset);
-        offset += 1;
+    public async processDisassocNotify(data: Buffer, macHeader: MACHeader): Promise<void> {
+        const reason = data.readUInt8(0);
 
         logger.debug(() => `<=== MAC DISASSOC_NOTIFY[macSrc=${macHeader.source16}:${macHeader.source64} reason=${reason}]`, NS);
 
@@ -384,8 +369,6 @@ export class MACHandler {
 
             await this.#context.disassociate(source16, macHeader.source64);
         }
-
-        return offset;
     }
 
     /**
@@ -397,11 +380,6 @@ export class MACHandler {
      * - ✅ Sends unicast command secured according to caller (none for initial association)
      * - ⚠️  Relies on pendingAssociations bookkeeping to ensure indirect delivery, matching spec requirement
      * DEVICE SCOPE: Coordinator, routers (N/A)
-     *
-     * @param dest64 Destination IEEE address
-     * @param newAddress16 Assigned network address
-     * @param status Association status
-     * @returns True if success sending
      */
     public async sendAssocRsp(dest64: bigint, newAddress16: number, status: MACAssociationStatus | number): Promise<boolean> {
         logger.debug(() => `===> MAC ASSOC_RSP[dst64=${dest64} newAddr16=${newAddress16} status=${status}]`, NS);
@@ -455,13 +433,8 @@ export class MACHandler {
      *         * This is acceptable - indicates no time sync ✅
      *       - updateId from context ✅
      * DEVICE SCOPE: Coordinator, routers (N/A)
-     *
-     * @param _data Command data (unused)
-     * @param offset Current offset in data
-     * @param _macHeader MAC header (unused)
-     * @returns New offset after processing
      */
-    public async processBeaconReq(_data: Buffer, offset: number, _macHeader: MACHeader): Promise<number> {
+    public async processBeaconReq(_data: Buffer, _macHeader: MACHeader): Promise<void> {
         logger.debug(() => "<=== MAC BEACON_REQ[]", NS);
 
         const macSeqNum = this.nextSeqNum();
@@ -513,8 +486,6 @@ export class MACHandler {
         logger.debug(() => `===> MAC BEACON[seqNum=${macSeqNum}]`, NS);
 
         await this.sendFrame(macSeqNum, macFrame, undefined, undefined);
-
-        return offset;
     }
 
     /**
@@ -542,13 +513,8 @@ export class MACHandler {
      * If yes, sends frame. If no, sends ACK with framePending=false"
      * This is handled correctly by the indirect transmission mechanism.
      * DEVICE SCOPE: Coordinator, routers (N/A)
-     *
-     * @param _data Command data (unused)
-     * @param offset Current offset in data
-     * @param macHeader MAC header
-     * @returns New offset after processing
      */
-    public async processDataReq(_data: Buffer, offset: number, macHeader: MACHeader): Promise<number> {
+    public async processDataReq(_data: Buffer, macHeader: MACHeader): Promise<void> {
         logger.debug(() => `<=== MAC DATA_RQ[macSrc=${macHeader.source16}:${macHeader.source64}]`, NS);
 
         let address64 = macHeader.source64;
@@ -585,8 +551,6 @@ export class MACHandler {
                 }
             }
         }
-
-        return offset;
     }
 
     // #endregion

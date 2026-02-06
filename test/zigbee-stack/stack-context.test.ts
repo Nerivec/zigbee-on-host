@@ -14,6 +14,7 @@ import {
     type StackContextCallbacks,
     TrustCenterKeyRequestPolicy,
 } from "../../src/zigbee-stack/stack-context.js";
+import { defaultDeviceTableEntry } from "../utils.js";
 
 const createNetParams = (): NetworkParameters => ({
     eui64: 0x00124b0012345678n,
@@ -420,15 +421,11 @@ describe("StackContext", () => {
             context.netParams.tcKeyFrameCounter = 84;
 
             context.deviceTable.set(device64, {
+                ...defaultDeviceTableEntry(),
                 address16,
                 capabilities,
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(address16, device64);
 
@@ -521,15 +518,11 @@ describe("StackContext", () => {
             const longRelays = Array.from({ length: 70 }, (_, index) => 0x4000 + index);
 
             context.deviceTable.set(device64, {
+                ...defaultDeviceTableEntry(),
                 address16,
                 capabilities,
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(address16, device64);
             context.sourceRouteTable.set(address16, [
@@ -611,15 +604,9 @@ describe("StackContext", () => {
             const address16 = 0x3456;
 
             context.deviceTable.set(device64, {
+                ...defaultDeviceTableEntry(),
                 address16,
                 capabilities,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(address16, device64);
 
@@ -687,15 +674,11 @@ describe("StackContext", () => {
             };
 
             context.deviceTable.set(device64, {
+                ...defaultDeviceTableEntry(),
                 address16,
                 capabilities,
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(address16, device64);
             context.sourceRouteTable.set(address16, [sourceRoute]);

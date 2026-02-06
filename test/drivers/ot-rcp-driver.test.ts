@@ -102,6 +102,7 @@ import {
     NETDEF_ZGP_COMMISSIONING,
     NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0,
 } from "../data.js";
+import { defaultDeviceTableEntry } from "../utils.js";
 
 const randomBigInt = (): bigint => BigInt(`0x${randomBytes(8).toString("hex")}`);
 
@@ -542,48 +543,32 @@ describe("OT RCP Driver", () => {
             ]);
             driver.context.netParams.tcKeyFrameCounter = 896723;
             driver.context.deviceTable.set(1234n, {
+                ...defaultDeviceTableEntry(),
                 address16: 1,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             driver.context.deviceTable.set(12656887476334n, {
+                ...defaultDeviceTableEntry(),
                 address16: 3457,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             driver.context.deviceTable.set(12328965645634n, {
+                ...defaultDeviceTableEntry(),
                 address16: 9674,
                 capabilities: structuredClone(COMMON_RFD_MAC_CAP),
                 authorized: true,
                 neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             driver.context.deviceTable.set(234367481234n, {
+                ...defaultDeviceTableEntry(),
                 address16: 54748,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: false,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             driver.context.sourceRouteTable.set(1, [
                 createTestSourceRouteEntry([], 1, sourceRouteLastUpdated1One),
@@ -630,48 +615,32 @@ describe("OT RCP Driver", () => {
             expect(driver.context.netParams.tcKeyFrameCounter).toStrictEqual(896723 + 1024);
             expect(driver.context.deviceTable.size).toStrictEqual(4);
             expect(driver.context.deviceTable.get(1234n)).toStrictEqual({
+                ...defaultDeviceTableEntry(),
                 address16: 1,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             expect(driver.context.deviceTable.get(12656887476334n)).toStrictEqual({
+                ...defaultDeviceTableEntry(),
                 address16: 3457,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             expect(driver.context.deviceTable.get(12328965645634n)).toStrictEqual({
+                ...defaultDeviceTableEntry(),
                 address16: 9674,
                 capabilities: structuredClone(COMMON_RFD_MAC_CAP),
                 authorized: true,
                 neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             expect(driver.context.deviceTable.get(234367481234n)).toStrictEqual({
+                ...defaultDeviceTableEntry(),
                 address16: 54748,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: false,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             expect(driver.context.address16ToAddress64.size).toStrictEqual(4);
             expect(driver.context.address16ToAddress64.get(1)).toStrictEqual(1234n);
@@ -2013,15 +1982,11 @@ describe("OT RCP Driver", () => {
             // encrypted at NWK+APS
             const source64 = BigInt("0xa4c1386d9b280fdf");
             driver.context.deviceTable.set(source64, {
+                ...defaultDeviceTableEntry(),
                 address16: 0xa18f,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: false,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0xa18f, source64);
 
@@ -2129,15 +2094,12 @@ describe("OT RCP Driver", () => {
             expect(sendAssocRspSpy).toHaveBeenCalledWith(11871832136131022815n, 0xa18f, MACAssociationStatus.SUCCESS);
             expect(sendTransportKeyNWKSpy).toHaveBeenCalledTimes(1);
             expect(driver.context.deviceTable.get(11871832136131022815n)).toStrictEqual({
+                ...defaultDeviceTableEntry(),
                 address16: 0xa18f,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: false,
                 neighbor: true,
                 lastTransportedNetworkKeySeq: 0,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_DEVICE_ANNOUNCE_BCAST, Buffer.from([0xd8, 0xff, 0x00, 0x00])), "utf8", () => {});
@@ -2172,15 +2134,15 @@ describe("OT RCP Driver", () => {
             await vi.advanceTimersByTimeAsync(10);
 
             expect(driver.context.deviceTable.get(11871832136131022815n)).toStrictEqual({
+                ...defaultDeviceTableEntry(),
                 address16: 0xa18f,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
                 lastTransportedNetworkKeySeq: 0,
                 recentLQAs: [200, 153, 178, 188],
+                lastReceivedRssi: -43,
                 incomingNWKFrameCounter: 33498,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
         });
 
@@ -2239,15 +2201,11 @@ describe("OT RCP Driver", () => {
             // joined devices
             // 5c:c7:c1:ff:fe:5e:70:ea
             driver.context.deviceTable.set(6685525477083214058n, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x3ab1,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0x3ab1, 6685525477083214058n);
             // not set on purpose to observe change from actual route record
@@ -3086,85 +3044,61 @@ describe("OT RCP Driver", () => {
             // joined devices
             // 80:4b:50:ff:fe:a4:b9:73
             driver.context.deviceTable.set(9244571720527165811n, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x96ba,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0x96ba, 9244571720527165811n);
             // driver.context.sourceRouteTable.set(0x96ba, [{relayAddresses: [], pathCost: 1}]);
             // 70:ac:08:ff:fe:d0:4a:58
             driver.context.deviceTable.set(8118874123826907736n, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x91d2,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0x91d2, 8118874123826907736n);
             // driver.context.sourceRouteTable.set(0x91d2, [{relayAddresses: [], pathCost: 1}]);
             // 00:12:4b:00:24:c2:e1:e1
             driver.context.deviceTable.set(5149013569626593n, {
+                ...defaultDeviceTableEntry(),
                 address16: 0xcb47,
                 capabilities: structuredClone(COMMON_FFD_MAC_CAP),
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0xcb47, 5149013569626593n);
             // mimic no source route entry for 0xcb47
             // 00:12:4b:00:29:27:fd:8c
             driver.context.deviceTable.set(5149013643361676n, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x6887,
                 capabilities: structuredClone(COMMON_RFD_MAC_CAP),
                 authorized: true,
                 neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0x6887, 5149013643361676n);
             // driver.context.sourceRouteTable.set(0x6887, [{relayAddresses: [0x96ba], pathCost: 2}]);
             // 00:12:4b:00:25:49:f4:42
             driver.context.deviceTable.set(5149013578478658n, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x9ed5,
                 capabilities: structuredClone(COMMON_RFD_MAC_CAP),
                 authorized: true,
                 neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0x9ed5, 5149013578478658n);
             // driver.context.sourceRouteTable.set(0x9ed5, [{relayAddresses: [0x91d2], pathCost: 2}]);
             // 00:12:4b:00:25:02:d0:3b
             driver.context.deviceTable.set(5149013573816379n, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x4b8e,
                 capabilities: structuredClone(COMMON_RFD_MAC_CAP),
                 authorized: true,
                 neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             driver.context.address16ToAddress64.set(0x4b8e, 5149013573816379n);
             // driver.context.sourceRouteTable.set(0x4b8e, [{relayAddresses: [0xcb47], pathCost: 2}]);
