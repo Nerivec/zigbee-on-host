@@ -70,13 +70,16 @@ export type ZigbeeGlobalTlvs = {
         maxIncomingTransferUnit: number | undefined;
     };
     [GlobalTlv.JOINER_ENCAPSULATION]?: {
-        additionalTLVs: ZigbeeGlobalTlvs;
+        additionalTlvs: ZigbeeGlobalTlvs;
+        additionalLocalTlvs: Map<number, Buffer>;
     };
     [GlobalTlv.BEACON_APPENDIX_ENCAPSULATION]?: {
-        additionalTLVs: ZigbeeGlobalTlvs;
+        additionalTlvs: ZigbeeGlobalTlvs;
+        additionalLocalTlvs: Map<number, Buffer>;
     };
     [GlobalTlv.BDB_ENCAPSULATION]?: {
-        additionalTLVs: ZigbeeGlobalTlvs;
+        additionalTlvs: ZigbeeGlobalTlvs;
+        additionalLocalTlvs: Map<number, Buffer>;
     };
     [GlobalTlv.CONFIGURATION_PARAMETERS]?: {
         /** uint16 */
@@ -260,9 +263,9 @@ export function readZigbeeTlvs(data: Buffer, offset: number, parent?: number): [
                         throw new Error(`Malformed TLV, below minimum length (${length})`);
                     }
 
-                    const [additionalTLVs] = readZigbeeTlvs(data.subarray(tlvOffset, tlvOffset + length), 0, tag);
+                    const [additionalTlvs, additionalLocalTlvs] = readZigbeeTlvs(data.subarray(tlvOffset, tlvOffset + length), 0, tag);
 
-                    globalTlvs[GlobalTlv.JOINER_ENCAPSULATION] = { additionalTLVs };
+                    globalTlvs[GlobalTlv.JOINER_ENCAPSULATION] = { additionalTlvs, additionalLocalTlvs };
 
                     break;
                 }
@@ -276,9 +279,9 @@ export function readZigbeeTlvs(data: Buffer, offset: number, parent?: number): [
                         throw new Error(`Malformed TLV, below minimum length (${length})`);
                     }
 
-                    const [additionalTLVs] = readZigbeeTlvs(data.subarray(tlvOffset, tlvOffset + length), 0, tag);
+                    const [additionalTlvs, additionalLocalTlvs] = readZigbeeTlvs(data.subarray(tlvOffset, tlvOffset + length), 0, tag);
 
-                    globalTlvs[GlobalTlv.BEACON_APPENDIX_ENCAPSULATION] = { additionalTLVs };
+                    globalTlvs[GlobalTlv.BEACON_APPENDIX_ENCAPSULATION] = { additionalTlvs, additionalLocalTlvs };
 
                     break;
                 }
@@ -292,9 +295,9 @@ export function readZigbeeTlvs(data: Buffer, offset: number, parent?: number): [
                         throw new Error(`Malformed TLV, below minimum length (${length})`);
                     }
 
-                    const [additionalTLVs] = readZigbeeTlvs(data.subarray(tlvOffset, tlvOffset + length), 0, tag);
+                    const [additionalTlvs, additionalLocalTlvs] = readZigbeeTlvs(data.subarray(tlvOffset, tlvOffset + length), 0, tag);
 
-                    globalTlvs[GlobalTlv.BDB_ENCAPSULATION] = { additionalTLVs };
+                    globalTlvs[GlobalTlv.BDB_ENCAPSULATION] = { additionalTlvs, additionalLocalTlvs };
 
                     break;
                 }

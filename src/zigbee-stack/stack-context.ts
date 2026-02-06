@@ -568,15 +568,17 @@ export class StackContext {
      * Activate the staged network key if the sequence number matches.
      * Resets frame counters and re-registers hashed keys for cryptographic operations.
      *
+     * Expected flow is `apsHandler.sendSwitchKey` => if returned true => `activatePendingNetworkKey`
+     *
      * SPEC COMPLIANCE NOTES:
-     * - ✅ Activates staged key only when sequence matches SWITCH_KEY command
+     * - ✅ Activates staged key only when sequence matches
      * - ✅ Resets NWK frame counter as mandated after key activation
      * - ✅ Re-registers hashed keys for LINK/NWK/TRANSPORT/LOAD contexts to keep crypto in sync
      * - ✅ Clears staging buffers to prevent reuse or leakage
      * - ⚠️  Does not emit management notifications; assumes higher layer handles ANNCE broadcasts
      * DEVICE SCOPE: Trust Center
      *
-     * @param sequenceNumber Sequence number referenced by SWITCH_KEY command
+     * @param sequenceNumber
      * @returns true when activation succeeded, false when no matching pending key exists
      */
     public activatePendingNetworkKey(sequenceNumber: number): boolean {

@@ -1116,64 +1116,6 @@ describe("Zigbee 4.0 Security Compliance", () => {
 
             mockMACHandlerCallbacks.onSendFrame = vi.fn();
         });
-
-        it("activates staged network key only after receiving switch key", async () => {
-            const originalKey = Buffer.from(context.netParams.networkKey);
-            const originalSeq = context.netParams.networkKeySequenceNumber;
-            context.netParams.networkKeyFrameCounter = 42;
-
-            const pendingKey = Buffer.from("fedcba98765432100123456789abcdef", "hex");
-            const pendingSeq = 0x44;
-            context.setPendingNetworkKey(pendingKey, pendingSeq);
-
-            expect(context.netParams.networkKey).toStrictEqual(originalKey);
-            expect(context.netParams.networkKeySequenceNumber).toStrictEqual(originalSeq);
-
-            const payload = Buffer.from([ZigbeeAPSCommandId.SWITCH_KEY, pendingSeq]);
-            const macHeader: MACHeader = {
-                frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
-                sequenceNumber: 0x40,
-                destinationPANId: netParams.panId,
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source16: 0x1234,
-                commandId: undefined,
-                fcs: 0,
-            };
-            const nwkHeader: ZigbeeNWKHeader = {
-                frameControl: {
-                    frameType: ZigbeeNWKFrameType.DATA,
-                    protocolVersion: ZigbeeNWKConsts.VERSION_2007,
-                    discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
-                    multicast: false,
-                    security: true,
-                    sourceRoute: false,
-                    extendedDestination: false,
-                    extendedSource: false,
-                    endDeviceInitiator: false,
-                },
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source16: 0x1234,
-                radius: 5,
-                seqNum: 0x41,
-            };
-            const apsHeader: ZigbeeAPSHeader = {
-                frameControl: {
-                    frameType: ZigbeeAPSFrameType.CMD,
-                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
-                    ackFormat: false,
-                    security: false,
-                    ackRequest: true,
-                    extendedHeader: false,
-                },
-                counter: 0x42,
-            };
-
-            await apsHandler.processCommand(payload, macHeader, nwkHeader, apsHeader);
-
-            expect(context.netParams.networkKey).toStrictEqual(pendingKey);
-            expect(context.netParams.networkKeySequenceNumber).toStrictEqual(pendingSeq);
-            expect(context.netParams.networkKeyFrameCounter).toStrictEqual(0);
-        });
     });
 
     /**

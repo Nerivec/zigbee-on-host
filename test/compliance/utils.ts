@@ -15,6 +15,13 @@
 import { expect, vi } from "vitest";
 import { decodeMACFrameControl, decodeMACHeader, type MACCapabilities } from "../../src/zigbee/mac.js";
 import {
+    decodeZigbeeAPSFrameControl,
+    decodeZigbeeAPSHeader,
+    decodeZigbeeAPSPayload,
+    type ZigbeeAPSFrameControl,
+    type ZigbeeAPSHeader,
+} from "../../src/zigbee/zigbee-aps.js";
+import {
     decodeZigbeeNWKFrameControl,
     decodeZigbeeNWKHeader,
     decodeZigbeeNWKPayload,
@@ -47,7 +54,7 @@ export function decodeMACFramePayload(frame: Buffer): DecodedMACFrame {
     };
 }
 
-export function decodeNwkCommandFromMac(
+export function decodeNwkFromMac(
     frame: Buffer,
     macSource64Fallback: bigint,
 ): {
@@ -63,6 +70,29 @@ export function decodeNwkCommandFromMac(
     const nwkPayload = decodeZigbeeNWKPayload(macPayload, payloadOffset, undefined, macSource64Fallback, nwkFrameControl, nwkHeader);
 
     return { macDecoded, nwkFrameControl, nwkHeader, nwkPayload };
+}
+
+export function decodeApsFromMac(
+    frame: Buffer,
+    macSource64Fallback: bigint,
+): {
+    macDecoded: DecodedMACFrame;
+    nwkFrameControl: ZigbeeNWKFrameControl;
+    nwkHeader: ZigbeeNWKHeader;
+    apsFrameControl: ZigbeeAPSFrameControl;
+    apsHeader: ZigbeeAPSHeader;
+    apsPayload: Buffer;
+} {
+    const macDecoded = decodeMACFramePayload(frame);
+    const macPayload = macDecoded.buffer.subarray(macDecoded.payloadOffset, macDecoded.buffer.length - 2);
+    const [nwkFrameControl, nwkOffset] = decodeZigbeeNWKFrameControl(macPayload, 0);
+    const [nwkHeader, nwkPayloadOffset] = decodeZigbeeNWKHeader(macPayload, nwkOffset, nwkFrameControl);
+    const nwkPayload = decodeZigbeeNWKPayload(macPayload, nwkPayloadOffset, undefined, macSource64Fallback, nwkFrameControl, nwkHeader);
+    const [apsFrameControl, apsOffset] = decodeZigbeeAPSFrameControl(nwkPayload, 0);
+    const [apsHeader, apsPayloadOffset] = decodeZigbeeAPSHeader(nwkPayload, apsOffset, apsFrameControl);
+    const apsPayload = decodeZigbeeAPSPayload(nwkPayload, apsPayloadOffset, undefined, macSource64Fallback, apsFrameControl, apsHeader);
+
+    return { macDecoded, nwkFrameControl, nwkHeader, apsFrameControl, apsHeader, apsPayload };
 }
 
 export async function captureMacFrame(action: () => Promise<unknown> | unknown, callbacks: MACHandlerCallbacks): Promise<DecodedMACFrame> {
@@ -95,6 +125,8 @@ export function registerNeighborDevice(context: StackContext, address16: number,
         recentLQAs: [],
         incomingNWKFrameCounter: undefined,
         endDeviceTimeout: undefined,
+        lastTransportedNetworkKeySeq: undefined,
+        linkStatusMisses: undefined,
     });
     context.address16ToAddress64.set(address16, address64);
 }
@@ -108,6 +140,8 @@ export function registerDevice(context: StackContext, address16: number, address
         recentLQAs: [],
         incomingNWKFrameCounter: undefined,
         endDeviceTimeout: undefined,
+        lastTransportedNetworkKeySeq: undefined,
+        linkStatusMisses: undefined,
     });
     context.address16ToAddress64.set(address16, address64);
 }

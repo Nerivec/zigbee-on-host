@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { logger } from "../../src/utils/logger.js";
 import { MACAssociationStatus, type MACHeader } from "../../src/zigbee/mac.js";
+import { GlobalTlv } from "../../src/zigbee/tlvs.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import {
     ZigbeeAPSCommandId,
@@ -11,6 +12,7 @@ import {
     ZigbeeAPSFragmentation,
     ZigbeeAPSFrameType,
     type ZigbeeAPSHeader,
+    ZigbeeAPSUpdateDeviceStatus,
 } from "../../src/zigbee/zigbee-aps.js";
 import { type ZigbeeNWKHeader, ZigbeeNWKRouteDiscovery } from "../../src/zigbee/zigbee-nwk.js";
 import { APSHandler, type APSHandlerCallbacks, CONFIG_APS_ACK_WAIT_DURATION_MS } from "../../src/zigbee-stack/aps-handler.js";
@@ -316,33 +318,6 @@ describe("APS Handler", () => {
     });
 
     describe("APS Command Sending - Device Management", () => {
-        it("should send Update Device command", async () => {
-            const destination16 = 0x1234;
-            const destination64 = 0x00124b0087654321n;
-            const device64 = 0x00124b0011223344n;
-            const device16 = 0x5678;
-            const status = 0x00; // secured rejoin
-
-            // Add device to device table
-            mockContext.deviceTable.set(destination64, {
-                address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
-            });
-            mockContext.address16ToAddress64.set(destination16, destination64);
-
-            const result = await apsHandler.sendUpdateDevice(destination16, device64, device16, status);
-
-            expect(result).toStrictEqual(true);
-            expect(mockMACHandler.sendFrame).toHaveBeenCalled();
-        });
-
         it("should send Remove Device command", async () => {
             const destination16 = 0x1234;
             const destination64 = 0x00124b0087654321n;
@@ -370,55 +345,6 @@ describe("APS Handler", () => {
     });
 
     describe("APS Command Sending - Key Management", () => {
-        it("should send Request Key command for TC key", async () => {
-            const destination16 = ZigbeeConsts.COORDINATOR_ADDRESS;
-            const destination64 = netParams.eui64;
-
-            // Add coordinator to device table
-            mockContext.deviceTable.set(destination64, {
-                address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
-            });
-            mockContext.address16ToAddress64.set(destination16, destination64);
-
-            const result = await apsHandler.sendRequestKey(destination16, 0x04);
-
-            expect(result).toStrictEqual(true);
-            expect(mockMACHandler.sendFrame).toHaveBeenCalled();
-        });
-
-        it("should send Request Key command for APP key", async () => {
-            const destination16 = ZigbeeConsts.COORDINATOR_ADDRESS;
-            const destination64 = netParams.eui64;
-            const partner64 = 0x00124b0011223344n;
-
-            // Add coordinator to device table
-            mockContext.deviceTable.set(destination64, {
-                address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
-            });
-            mockContext.address16ToAddress64.set(destination16, destination64);
-
-            const result = await apsHandler.sendRequestKey(destination16, 0x02, partner64);
-
-            expect(result).toStrictEqual(true);
-            expect(mockMACHandler.sendFrame).toHaveBeenCalled();
-        });
-
         it("should send Switch Key command", async () => {
             const destination16 = 0x1234;
             const destination64 = 0x00124b0087654321n;
@@ -499,80 +425,6 @@ describe("APS Handler", () => {
     });
 
     describe("APS Command Processing", () => {
-        it("should process Transport Key command", () => {
-            const data = Buffer.alloc(50);
-            let offset = 0;
-
-            // Command ID
-            data.writeUInt8(0x05, offset++); // TRANSPORT_KEY
-
-            // Key type (Network Key)
-            data.writeUInt8(0x01, offset++);
-
-            // Key
-            Buffer.from("0102030405060708090a0b0c0d0e0f10", "hex").copy(data, offset);
-            offset += 16;
-
-            // Sequence number
-            data.writeUInt8(0, offset++);
-
-            // Destination address
-            data.writeBigUInt64LE(0x00124b0012345678n, offset);
-
-            // Source address
-            data.writeBigUInt64LE(0x00224b0012345678n, offset);
-
-            const macHeader = createMACHeader();
-            const nwkHeader = { frameControl: {} } as ZigbeeNWKHeader;
-            const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
-
-            // Should not throw
-            // TODO: more complete tests
-            expect(() => {
-                apsHandler.processTransportKey(data, 0, macHeader, nwkHeader, apsHeader);
-            }).not.toThrow();
-        });
-
-        it("should process Switch Key command", () => {
-            const data = Buffer.alloc(10);
-            let offset = 0;
-
-            // Command ID
-            data.writeUInt8(0x06, offset++); // SWITCH_KEY
-
-            // Sequence number
-            data.writeUInt8(1, offset++);
-
-            const macHeader = createMACHeader();
-            const nwkHeader = { frameControl: {} } as ZigbeeNWKHeader;
-            const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
-
-            // Should not throw
-            // TODO: more complete tests
-            expect(() => {
-                apsHandler.processSwitchKey(data, 0, macHeader, nwkHeader, apsHeader);
-            }).not.toThrow();
-        });
-
-        it("should process Remove Device command", async () => {
-            const data = Buffer.alloc(20);
-            let offset = 0;
-
-            // Command ID
-            data.writeUInt8(0x0b, offset++); // REMOVE_DEVICE
-
-            // Target IEEE address
-            data.writeBigUInt64LE(0x00124b0011223344n, offset);
-
-            const macHeader = createMACHeader();
-            const nwkHeader = { frameControl: {} } as ZigbeeNWKHeader;
-            const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
-
-            // Should not throw
-            // TODO: more complete tests
-            await expect(apsHandler.processRemoveDevice(data, 0, macHeader, nwkHeader, apsHeader)).resolves.not.toThrow();
-        });
-
         it("should process Tunnel command", () => {
             const data = Buffer.alloc(30);
             let offset = 0;
@@ -1399,18 +1251,15 @@ describe("APS Handler", () => {
     });
 
     describe("Update Device Processing", () => {
-        it("should process update device command", async () => {
+        it("should process update device command without TLV", async () => {
             const device16 = 0x1234;
             const device64 = 0x00124b0012345678n;
 
-            const data = Buffer.alloc(12);
+            const data = Buffer.alloc(11);
             let offset = 0;
-
-            data.writeBigUInt64LE(device64, offset);
-            offset += 8;
-            data.writeUInt16LE(device16, offset);
-            offset += 2;
-            data.writeUInt8(0x00, offset); // status = SECURED_REJOIN
+            offset = data.writeBigUInt64LE(device64, offset);
+            offset = data.writeUInt16LE(device16, offset);
+            offset = data.writeUInt8(ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_SECURED_REJOIN, offset);
 
             const macHeader = { frameControl: {}, source16: device16 } as MACHeader;
             const nwkHeader = { frameControl: {}, source16: device16 } as ZigbeeNWKHeader;
@@ -1419,6 +1268,37 @@ describe("APS Handler", () => {
             const result = await apsHandler.processUpdateDevice(data, 0, macHeader, nwkHeader, apsHeader);
 
             expect(result).toBe(11);
+        });
+
+        it("should process update device command with TLV", async () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0012345678n;
+
+            const data = Buffer.alloc(32);
+            let offset = 0;
+            offset = data.writeBigUInt64LE(device64, offset);
+            offset = data.writeUInt16LE(device16, offset);
+            offset = data.writeUInt8(ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_UNSECURED_JOIN, offset);
+            offset = data.writeUInt8(GlobalTlv.JOINER_ENCAPSULATION, offset);
+            offset = data.writeUInt8(18, offset);
+            offset = data.writeUInt8(GlobalTlv.FRAGMENTATION_PARAMETERS, offset);
+            offset = data.writeUInt8(4, offset);
+            offset = data.writeUInt16LE(device16, offset); // nwkAddress
+            offset = data.writeUInt8(0x01, offset); // fragmentationOptions
+            offset = data.writeUInt16LE(0x0052, offset); // maxIncomingTransferUnit
+            offset = data.writeUInt8(GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS, offset);
+            offset = data.writeUInt8(9, offset);
+            offset = data.writeUInt8(0x07, offset); // keyNegotiationProtocolsBitmask
+            offset = data.writeUInt8(0x06, offset); // preSharedSecretsBitmask
+            offset = data.writeBigUInt64LE(device64, offset); // sourceDeviceEui64
+
+            const macHeader = { frameControl: {}, source16: device16 } as MACHeader;
+            const nwkHeader = { frameControl: {}, source16: device16 } as ZigbeeNWKHeader;
+            const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
+
+            const result = await apsHandler.processUpdateDevice(data, 0, macHeader, nwkHeader, apsHeader);
+
+            expect(result).toBe(32);
         });
     });
 
@@ -1966,7 +1846,6 @@ describe("APS Handler", () => {
 
         const clearSpy = vi.spyOn(global, "clearTimeout");
 
-        const ackMacHeader = { frameControl: {}, source16: dest16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
         const ackNwkHeader = { frameControl: {}, source16: dest16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS, seqNum: 0x33 } as ZigbeeNWKHeader;
         const ackHeader = {
             frameControl: {
@@ -1980,7 +1859,7 @@ describe("APS Handler", () => {
             counter: apsCounter,
         } as ZigbeeAPSHeader;
 
-        await apsHandler.processFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackHeader, 180);
+        await apsHandler.resolvePendingAck(ackNwkHeader, ackHeader);
 
         expect(clearSpy).toHaveBeenCalled();
 
@@ -2023,7 +1902,6 @@ describe("APS Handler", () => {
 
         expect(sendFrameMock).toHaveBeenCalledTimes(1);
 
-        const ackMacHeader = { frameControl: {}, source16: dest16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
         const ackNwkHeader = {
             frameControl: {},
             destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
@@ -2042,7 +1920,7 @@ describe("APS Handler", () => {
             counter: apsCounter,
         } as ZigbeeAPSHeader;
 
-        await apsHandler.processFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackHeader, 175);
+        await apsHandler.resolvePendingAck(ackNwkHeader, ackHeader);
 
         await vi.advanceTimersByTimeAsync(CONFIG_APS_ACK_WAIT_DURATION_MS - 1);
         await vi.runOnlyPendingTimersAsync();
@@ -2400,84 +2278,5 @@ describe("APS Handler", () => {
 
         await apsHandler.processCommand(Buffer.from([0xff]), macHeader, nwkHeader, apsHeader);
         expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("<=x= APS CMD[cmdId=255"), "aps-handler");
-    });
-
-    it("parses transport key payload variants", () => {
-        const macHeader = { frameControl: {}, source16: 0x3001, source64: 0x00124b0033334444n } as MACHeader;
-        const nwkHeader = { frameControl: {}, source16: 0x3001, source64: 0x00124b0033334444n } as ZigbeeNWKHeader;
-        const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
-
-        const tcPayload = Buffer.alloc(1 + 16 + 8 + 8);
-        tcPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_TC_LINK, 0);
-        Buffer.alloc(16, 0xaa).copy(tcPayload, 1);
-        tcPayload.writeBigUInt64LE(0x00124b00aaaa0001n, 17);
-        tcPayload.writeBigUInt64LE(0x00124b00bbbb0002n, 25);
-        const tcOffset = apsHandler.processTransportKey(tcPayload, 0, macHeader, nwkHeader, apsHeader);
-        expect(tcOffset).toStrictEqual(tcPayload.length);
-
-        const appPayload = Buffer.alloc(1 + 16 + 8 + 1);
-        appPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_APP_MASTER, 0);
-        Buffer.alloc(16, 0xbb).copy(appPayload, 1);
-        appPayload.writeBigUInt64LE(0x00124b00cccc0003n, 17);
-        appPayload.writeUInt8(0x01, 25);
-        const appOffset = apsHandler.processTransportKey(appPayload, 0, macHeader, nwkHeader, apsHeader);
-        expect(appOffset).toStrictEqual(appPayload.length);
-    });
-
-    it("handles remove device outcomes", async () => {
-        const target64 = 0x00124b0044445555n;
-        mockContext.deviceTable.set(target64, {
-            address16: 0x5566,
-            capabilities: undefined,
-            authorized: true,
-            neighbor: false,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
-        });
-
-        const leaveSpy = vi.spyOn(mockNWKHandler, "sendLeave").mockResolvedValueOnce(false);
-        const warnSpy = vi.spyOn(logger, "warning");
-
-        const payload = Buffer.alloc(1 + 8);
-        payload.writeUInt8(ZigbeeAPSCommandId.REMOVE_DEVICE, 0);
-        payload.writeBigUInt64LE(target64, 1);
-
-        await apsHandler.processRemoveDevice(
-            payload,
-            1,
-            { frameControl: {}, source16: 0x5566 } as MACHeader,
-            {
-                frameControl: {},
-                source16: 0x5566,
-            } as ZigbeeNWKHeader,
-            {} as ZigbeeAPSHeader,
-        );
-
-        expect(leaveSpy).toHaveBeenCalledWith(0x5566, false);
-        expect(mockContext.disassociate).toHaveBeenCalledWith(0x5566, target64);
-
-        // Unknown device branch
-        const unknownPayload = Buffer.alloc(1 + 8);
-        unknownPayload.writeUInt8(ZigbeeAPSCommandId.REMOVE_DEVICE, 0);
-        unknownPayload.writeBigUInt64LE(0x00124b0055556666n, 1);
-
-        await apsHandler.processRemoveDevice(
-            unknownPayload,
-            1,
-            { frameControl: {}, source16: 0x1111 } as MACHeader,
-            {
-                frameControl: {},
-                source16: 0x1111,
-            } as ZigbeeNWKHeader,
-            {} as ZigbeeAPSHeader,
-        );
-
-        expect(warnSpy).toHaveBeenCalled();
-
-        leaveSpy.mockRestore();
-        warnSpy.mockRestore();
     });
 });

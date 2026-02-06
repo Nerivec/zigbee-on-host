@@ -111,21 +111,23 @@ describe("Zigbee TLVs", () => {
         const joinerNested = makeTlv(GlobalTlv.CONFIGURATION_PARAMETERS, Buffer.from([0xaa, 0x55]));
         const beaconNested = makeTlv(GlobalTlv.DEVICE_CAPABILITY_EXTENSION, Buffer.from([0x10, 0x00]));
         const bdbNested = makeTlv(GlobalTlv.PAN_ID_CONFLICT_REPORT, Buffer.from([0x01, 0x00]));
+        const localNested = makeTlv(0x00, Buffer.from([0x03, 0x04]));
 
         const joiner = makeTlv(GlobalTlv.JOINER_ENCAPSULATION, joinerNested);
-        const beacon = makeTlv(GlobalTlv.BEACON_APPENDIX_ENCAPSULATION, beaconNested);
+        const beacon = makeTlv(GlobalTlv.BEACON_APPENDIX_ENCAPSULATION, Buffer.concat([localNested, beaconNested]));
         const bdb = makeTlv(GlobalTlv.BDB_ENCAPSULATION, bdbNested);
 
         const data = Buffer.concat([joiner, beacon, bdb]);
         const [globalTlvs] = readZigbeeTlvs(data, 0);
 
-        expect(globalTlvs[GlobalTlv.JOINER_ENCAPSULATION]?.additionalTLVs[GlobalTlv.CONFIGURATION_PARAMETERS]).toStrictEqual({
+        expect(globalTlvs[GlobalTlv.JOINER_ENCAPSULATION]?.additionalTlvs[GlobalTlv.CONFIGURATION_PARAMETERS]).toStrictEqual({
             parameters: 0x55aa,
         });
-        expect(globalTlvs[GlobalTlv.BEACON_APPENDIX_ENCAPSULATION]?.additionalTLVs[GlobalTlv.DEVICE_CAPABILITY_EXTENSION]).toStrictEqual({
+        expect(globalTlvs[GlobalTlv.BEACON_APPENDIX_ENCAPSULATION]?.additionalTlvs[GlobalTlv.DEVICE_CAPABILITY_EXTENSION]).toStrictEqual({
             capabilityExtension: 0x0010,
         });
-        expect(globalTlvs[GlobalTlv.BDB_ENCAPSULATION]?.additionalTLVs[GlobalTlv.PAN_ID_CONFLICT_REPORT]).toStrictEqual({
+        expect(globalTlvs[GlobalTlv.BEACON_APPENDIX_ENCAPSULATION]?.additionalLocalTlvs.get(0x00)).toStrictEqual(Buffer.from([0x03, 0x04]));
+        expect(globalTlvs[GlobalTlv.BDB_ENCAPSULATION]?.additionalTlvs[GlobalTlv.PAN_ID_CONFLICT_REPORT]).toStrictEqual({
             nwkPanIdConflictCount: 0x0001,
         });
     });
