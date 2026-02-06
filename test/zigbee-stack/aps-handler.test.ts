@@ -1108,9 +1108,8 @@ describe("APS Handler", () => {
 
             const sendSpy = vi.spyOn(apsHandler, "sendTransportKeyAPP");
 
-            const offset = await apsHandler.processRequestKey(data, 0, macHeader, nwkHeader, apsHeader);
+            await apsHandler.processRequestKey(data, 0, macHeader, nwkHeader, apsHeader);
 
-            expect(offset).toBe(1); // Should just consume the key type byte
             expect(sendSpy).not.toHaveBeenCalled();
             sendSpy.mockRestore();
         });
@@ -1265,9 +1264,7 @@ describe("APS Handler", () => {
             const nwkHeader = { frameControl: {}, source16: device16 } as ZigbeeNWKHeader;
             const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
 
-            const result = await apsHandler.processUpdateDevice(data, 0, macHeader, nwkHeader, apsHeader);
-
-            expect(result).toBe(11);
+            await apsHandler.processUpdateDevice(data, 0, macHeader, nwkHeader, apsHeader);
         });
 
         it("should process update device command with TLV", async () => {
@@ -1296,9 +1293,7 @@ describe("APS Handler", () => {
             const nwkHeader = { frameControl: {}, source16: device16 } as ZigbeeNWKHeader;
             const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
 
-            const result = await apsHandler.processUpdateDevice(data, 0, macHeader, nwkHeader, apsHeader);
-
-            expect(result).toBe(32);
+            await apsHandler.processUpdateDevice(data, 0, macHeader, nwkHeader, apsHeader);
         });
     });
 

@@ -1306,23 +1306,23 @@ export class APSHandler {
 
         switch (cmdId) {
             case ZigbeeAPSCommandId.UPDATE_DEVICE: {
-                offset = await this.processUpdateDevice(data, offset, macHeader, nwkHeader, apsHeader);
+                await this.processUpdateDevice(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
             case ZigbeeAPSCommandId.REQUEST_KEY: {
-                offset = await this.processRequestKey(data, offset, macHeader, nwkHeader, apsHeader);
+                await this.processRequestKey(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
             case ZigbeeAPSCommandId.TUNNEL: {
-                offset = this.processTunnel(data, offset, macHeader, nwkHeader, apsHeader);
+                this.processTunnel(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
             case ZigbeeAPSCommandId.VERIFY_KEY: {
-                offset = await this.processVerifyKey(data, offset, macHeader, nwkHeader, apsHeader);
+                await this.processVerifyKey(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
             case ZigbeeAPSCommandId.RELAY_MESSAGE_UPSTREAM: {
-                offset = await this.processRelayMessageUpstream(data, offset, macHeader, nwkHeader, apsHeader);
+                await this.processRelayMessageUpstream(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
             default: {
@@ -1333,11 +1333,6 @@ export class APSHandler {
                 return;
             }
         }
-
-        // excess data in packet
-        // if (offset < data.byteLength) {
-        //     logger.debug(() => `<=== APS CMD contained more data: ${data.toString('hex')}`, NS);
-        // }
     }
 
     // NOTE: processTransportKey DEVICE SCOPE: not Trust Center (N/A)
@@ -1382,7 +1377,7 @@ export class APSHandler {
         // Bit #0: Frame Counter Synchronization Support
         //         When set to ‘1' the peer device supports APS frame counter synchronization; else, when set to '0’, the peer device does not support APS frame counter synchronization.
         // Bits #1..#7 are reserved and SHALL be set to '0' by implementations of the current Revision of this specification and ignored when processing.
-        offset = finalPayload.writeUInt8(0b00000001, offset);
+        finalPayload.writeUInt8(0b00000001, offset);
 
         // encryption NWK=true, APS=true
         return await this.sendCommand(
@@ -1446,7 +1441,7 @@ export class APSHandler {
         offset += key.copy(finalPayload, offset);
         offset = finalPayload.writeUInt8(seqNum, offset);
         offset = finalPayload.writeBigUInt64LE(isBroadcast ? 0n : destination64, offset);
-        offset = finalPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
+        finalPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
 
         // see 05-3474-23 #4.4.1.5
         // Conversely, a device receiving an APS transport key command MAY choose whether or not APS encryption is required.
@@ -1520,7 +1515,7 @@ export class APSHandler {
         // Bit #0: Frame Counter Synchronization Support
         //         When set to ‘1' the peer device supports APS frame counter synchronization; else, when set to '0’, the peer device does not support APS frame counter synchronization.
         // Bits #1..#7 are reserved and SHALL be set to '0' by implementations of the current Revision of this specification and ignored when processing.
-        offset = finalPayload.writeUInt8(0b00000001, offset);
+        finalPayload.writeUInt8(0b00000001, offset);
 
         return await this.sendCommand(
             ZigbeeAPSCommandId.TRANSPORT_KEY,
@@ -1578,7 +1573,7 @@ export class APSHandler {
         macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
-    ): Promise<number> {
+    ): Promise<void> {
         const device64 = data.readBigUInt64LE(offset);
         offset += 8;
         // Zigbee 2006 and later
@@ -1591,8 +1586,7 @@ export class APSHandler {
         //   Joiner Encapsulation Global TLV
         //     - Fragmentation Parameters Global TLV
         //     - If the device is not rejoining: Supported Key Negotiation Methods Global TLV
-        const [globalTlvs, , tlvsOutOffset] = readZigbeeTlvs(data, offset);
-        offset = tlvsOutOffset;
+        const [globalTlvs] = readZigbeeTlvs(data, offset);
         const joinerTlv = globalTlvs[GlobalTlv.JOINER_ENCAPSULATION];
 
         if (joinerTlv !== undefined) {
@@ -1707,8 +1701,6 @@ export class APSHandler {
             //   Security related actions SHALL not be taken on receipt of this. No further processing SHALL be done.
             await this.#context.disassociate(device16, device64);
         }
-
-        return offset;
     }
 
     // NOTE: sendUpdateDevice DEVICE SCOPE: not Trust Center (N/A)
@@ -1736,7 +1728,7 @@ export class APSHandler {
         const finalPayload = Buffer.allocUnsafe(9);
         let offset = 0;
         offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.REMOVE_DEVICE, offset);
-        offset = finalPayload.writeBigUInt64LE(target64, offset);
+        finalPayload.writeBigUInt64LE(target64, offset);
 
         return await this.sendCommand(
             ZigbeeAPSCommandId.REMOVE_DEVICE,
@@ -1769,14 +1761,14 @@ export class APSHandler {
         macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
         apsHeader: ZigbeeAPSHeader,
-    ): Promise<number> {
+    ): Promise<void> {
         // ZigbeeAPSConsts.CMD_KEY_APP_MASTER || ZigbeeAPSConsts.CMD_KEY_TC_LINK
         const keyType = data.readUInt8(offset);
         offset += 1;
 
         // If the APS Command Request Key message is not APS encrypted, the device SHALL drop the message and no further processing SHALL be done.
         if (!apsHeader.frameControl.security) {
-            return offset;
+            return;
         }
 
         const requester64 = nwkHeader.source64 ?? this.#context.address16ToAddress64.get(nwkHeader.source16!);
@@ -1802,7 +1794,6 @@ export class APSHandler {
                 );
             } else if (keyType === ZigbeeAPSConsts.CMD_KEY_APP_MASTER) {
                 const partner = data.readBigUInt64LE(offset);
-                offset += 8;
 
                 logger.debug(
                     () =>
@@ -1843,8 +1834,6 @@ export class APSHandler {
                 NS,
             );
         }
-
-        return offset;
     }
 
     // NOTE: sendRequestKey DEVICE SCOPE: not Trust Center (N/A)
@@ -1896,19 +1885,16 @@ export class APSHandler {
      * IMPACT: Not applicable for Coordinator/Trust Center
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
-    public processTunnel(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
+    public processTunnel(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): void {
         const destination = data.readBigUInt64LE(offset);
         offset += 8;
         const tunneledAPSFrame = data.subarray(offset);
-        offset += tunneledAPSFrame.byteLength;
 
         logger.debug(
             () =>
                 `<=== APS TUNNEL[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} dst=${destination} tAPSFrame=${tunneledAPSFrame}]`,
             NS,
         );
-
-        return offset;
     }
 
     /**
@@ -1934,7 +1920,7 @@ export class APSHandler {
         let offset = 0;
         offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.TUNNEL, offset);
         offset = finalPayload.writeBigUInt64LE(destination64, offset);
-        offset += tApsCmdFrame.copy(finalPayload, offset);
+        tApsCmdFrame.copy(finalPayload, offset);
 
         return await this.sendCommand(
             ZigbeeAPSCommandId.TUNNEL,
@@ -1978,13 +1964,12 @@ export class APSHandler {
         macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
-    ): Promise<number> {
+    ): Promise<void> {
         const keyType = data.readUInt8(offset);
         offset += 1;
         const source = data.readBigUInt64LE(offset);
         offset += 8;
         const keyHash = data.subarray(offset, offset + ZigbeeAPSConsts.CMD_KEY_LENGTH);
-        offset += ZigbeeAPSConsts.CMD_KEY_LENGTH;
 
         if (macHeader.source16 !== ZigbeeMACConsts.BCAST_ADDR) {
             logger.debug(
@@ -2006,8 +1991,6 @@ export class APSHandler {
                 // TODO: APP link key should also sync counters
             }
         }
-
-        return offset;
     }
 
     // NOTE: sendVerifyKey DEVICE SCOPE: routers (N/A), end devices (N/A)
@@ -2052,7 +2035,7 @@ export class APSHandler {
         offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.CONFIRM_KEY, offset);
         offset = finalPayload.writeUInt8(status, offset);
         offset = finalPayload.writeUInt8(keyType, offset);
-        offset = finalPayload.writeBigUInt64LE(destination64, offset);
+        finalPayload.writeBigUInt64LE(destination64, offset);
 
         const result = await this.sendCommand(
             ZigbeeAPSCommandId.CONFIRM_KEY,
@@ -2116,7 +2099,7 @@ export class APSHandler {
         offset = finalPayload.writeUInt8(0x00, offset);
         offset = finalPayload.writeUInt8(8 + tApsFrameLength - 1, offset); // per spec, actual data length is `length field + 1`
         offset = finalPayload.writeBigUInt64LE(destination64, offset);
-        offset += tApsFrame.copy(finalPayload, offset, 0);
+        tApsFrame.copy(finalPayload, offset, 0);
 
         const result = await this.sendCommand(
             ZigbeeAPSCommandId.RELAY_MESSAGE_DOWNSTREAM,
@@ -2147,9 +2130,8 @@ export class APSHandler {
         macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
-    ): Promise<number> {
-        const [, localTlvs, tlvsOutOffset] = readZigbeeTlvs(data, offset);
-        offset = tlvsOutOffset;
+    ): Promise<void> {
+        const [, localTlvs] = readZigbeeTlvs(data, offset);
         const relayMessageTlv = localTlvs.get(0x00);
 
         if (relayMessageTlv !== undefined) {
@@ -2201,8 +2183,6 @@ export class APSHandler {
                 await this.sendRelayMessageDownstream(nwkHeader.source16, nwkHeader.source64, destination64, apsFrame);
             }
         }
-
-        return offset;
     }
 
     // NOTE: sendRelayMessageUpstream DEVICE SCOPE: [unauthorized] routers (N/A), end devices (N/A)
