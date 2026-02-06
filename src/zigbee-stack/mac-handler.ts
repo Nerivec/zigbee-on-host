@@ -494,17 +494,20 @@ export class MACHandler {
                 pendAddr: {},
                 fcs: 0,
             },
-            encodeMACZigbeeBeacon({
-                protocolId: ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_ID,
-                profile: 0x2, // Zigbee PRO
-                version: ZigbeeNWKConsts.VERSION_2007,
-                routerCapacity: true,
-                deviceDepth: 0, // coordinator
-                endDeviceCapacity: true,
-                extendedPANId: this.#context.netParams.extendedPanId,
-                txOffset: 0xffffff, // XXX: value from sniffed frames
-                updateId: this.#context.netParams.nwkUpdateId,
-            }),
+            encodeMACZigbeeBeacon(
+                {
+                    protocolId: ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_ID,
+                    profile: 0x2, // Zigbee PRO
+                    version: ZigbeeNWKConsts.VERSION_2007,
+                    routerCapacity: true,
+                    deviceDepth: 0, // coordinator
+                    endDeviceCapacity: true,
+                    extendedPANId: this.#context.netParams.extendedPanId,
+                    txOffset: 0xffffff, // XXX: value from sniffed frames
+                    updateId: this.#context.netParams.nwkUpdateId,
+                },
+                this.#context.netParams.eui64,
+            ),
         );
 
         logger.debug(() => `===> MAC BEACON[seqNum=${macSeqNum}]`, NS);

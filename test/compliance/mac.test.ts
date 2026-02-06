@@ -31,6 +31,7 @@ import {
     MACSecurityLevel,
     ZigbeeMACConsts,
 } from "../../src/zigbee/mac.js";
+import { GlobalTlv } from "../../src/zigbee/tlvs.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import { decodeZigbeeAPSFrameControl, decodeZigbeeAPSHeader, ZigbeeAPSDeliveryMode, ZigbeeAPSFrameType } from "../../src/zigbee/zigbee-aps.js";
 import {
@@ -677,7 +678,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
 
         it("encodes Zigbee beacon payload with coordinator capabilities", async () => {
             const beacon = await generateBeacon();
-            const payload = decodeMACZigbeeBeacon(beacon.buffer, beacon.payloadOffset);
+            const payload = decodeMACZigbeeBeacon(beacon.buffer.subarray(0, -2), beacon.payloadOffset);
 
             expect(payload.protocolId).toStrictEqual(ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_ID);
             expect(payload.profile).toStrictEqual(0x02);
@@ -688,6 +689,55 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             expect(payload.extendedPANId).toStrictEqual(netParams.extendedPanId);
             expect(payload.txOffset).toStrictEqual(0x00ffffff);
             expect(payload.updateId).toStrictEqual(netParams.nwkUpdateId);
+            expect(payload.globalTlvs).toStrictEqual({
+                [GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS]: {
+                    keyNegotiationProtocolsBitmask: 0b111,
+                    preSharedSecretsBitmask: 0b110,
+                    sourceDeviceEui64: 0x00124b0012345678n,
+                },
+                [GlobalTlv.FRAGMENTATION_PARAMETERS]: {
+                    nwkAddress: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    fragmentationOptions: 0b1,
+                    maxIncomingTransferUnit: ZigbeeMACConsts.FRAME_MAX_SIZE,
+                },
+                [GlobalTlv.ROUTER_INFORMATION]: {
+                    bitmap: 0b11110101,
+                },
+            });
+            expect(payload.localTlvs.size).toStrictEqual(0);
+        });
+
+        it("encodes Zigbee beacon payload with uptime in TLV", async () => {
+            const nowSpy = vi.spyOn(performance, "now").mockReturnValueOnce(86_400_001);
+            const beacon = await generateBeacon();
+            const payload = decodeMACZigbeeBeacon(beacon.buffer.subarray(0, -2), beacon.payloadOffset);
+
+            expect(payload.protocolId).toStrictEqual(ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_ID);
+            expect(payload.profile).toStrictEqual(0x02);
+            expect(payload.version).toStrictEqual(ZigbeeNWKConsts.VERSION_2007);
+            expect(payload.routerCapacity).toStrictEqual(true);
+            expect(payload.deviceDepth).toStrictEqual(0);
+            expect(payload.endDeviceCapacity).toStrictEqual(true);
+            expect(payload.extendedPANId).toStrictEqual(netParams.extendedPanId);
+            expect(payload.txOffset).toStrictEqual(0x00ffffff);
+            expect(payload.globalTlvs).toStrictEqual({
+                [GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS]: {
+                    keyNegotiationProtocolsBitmask: 0b111,
+                    preSharedSecretsBitmask: 0b110,
+                    sourceDeviceEui64: 0x00124b0012345678n,
+                },
+                [GlobalTlv.FRAGMENTATION_PARAMETERS]: {
+                    nwkAddress: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    fragmentationOptions: 0b1,
+                    maxIncomingTransferUnit: ZigbeeMACConsts.FRAME_MAX_SIZE,
+                },
+                [GlobalTlv.ROUTER_INFORMATION]: {
+                    bitmap: 0b11110111,
+                },
+            });
+            expect(payload.localTlvs.size).toStrictEqual(0);
+
+            nowSpy.mockRestore();
         });
     });
 

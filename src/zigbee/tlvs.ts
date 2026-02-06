@@ -1,3 +1,4 @@
+import type { RequiredNonNullable } from "../utils/types.js";
 import { ZigbeeConsts } from "./zigbee.js";
 
 export const enum GlobalTlv {
@@ -26,69 +27,138 @@ export const enum GlobalTlv {
     // Reserved = 77-255
 }
 
+type GlobalTlvEncapsulated = {
+    additionalTlvs: ZigbeeGlobalTlvs;
+    additionalLocalTlvs: Map<number, Buffer>;
+};
+
+type GlobalTlvManufacturerSpecific = {
+    /** uint16 */
+    zigbeeManufacturerId: number;
+    /** variable */
+    additionalData: Buffer;
+};
+
+type GlobalTlvSupportedKeyNegotiatioMethods = {
+    /**
+     * uint8
+     * - 0: Static Key Request (Zigbee 3.0 Mechanism, TCLK procedure)
+     * - 1: SPEKE using Curve25519 with Hash AES-MMO-128
+     * - 2: SPEKE using Curve25519 with Hash SHA-256
+     * - 3–7: Reserved
+     */
+    keyNegotiationProtocolsBitmask: number;
+    /**
+     * uint8
+     * - 0: Symmetric Authentication Token
+     *   - This is a token unique to the Trust Center and network that the device is running on, and is assigned by the Trust center after joining.
+     *     The token is used to renegotiate a link key using the Key Negotiation protocol and is good for the life of the device on the network.
+     * - 1: Install Code Key
+     *   - 128-bit pre-configured link-key derived from install code
+     * - 2: Passcode Key
+     *   - A variable length passcode for PAKE protocols. This passcode can be shorter for easy entry by a user.
+     * - 3: Basic Access Key
+     *   - This key is used by other Zigbee specifications for joining with an alternate pre-shared secret. The definition and usage is defined by those specifications. The usage is optional by the core Zigbee specification.
+     * - 4: Administrative Access Key
+     *   - This key is used by other Zigbee specifications for joining with an alternate pre-shared secret. The definition and usage is defined by those specifications. The usage is optional by the core Zigbee specification.
+     * - 5-7: Reserved
+     */
+    preSharedSecretsBitmask: number;
+    sourceDeviceEui64: bigint | undefined;
+};
+
+type GlobalTlvPanIdConflictReport = {
+    /** uint16 */
+    nwkPanIdConflictCount: number;
+};
+
+type GlobalTlvNextPanId = {
+    /** uint16 */
+    panId: number;
+};
+
+type GlobalTlvNextChannelChange = {
+    /** uint32 */
+    channel: number;
+};
+
+type GlobalTlvSummetricPassphrase = {
+    /** 16-byte */
+    passphrase: Buffer;
+};
+
+type GlobalTlvRouterInformation = {
+    /**
+     * uint16
+     * - 0: Hub Connectivity
+     *   - This bit indicates the state of nwkHubConnectivity from the NIB of the local device.
+     *     It advertises whether the router has connectivity to a Hub device as defined by the higher-level application layer.
+     *     A value of 1 means there is connectivity, and avalue of 0 means there is no current Hub connectivity.
+     * - 1: Uptime
+     *   - This 1-bit value indicates the uptime of the router.
+     *     A value of 1 indicates the router has been up for more than 24 hours.
+     *     A value of 0 indicates the router has been up for less than 24 hours.
+     * - 2: Preferred Parent
+     *   - This bit indicates the state of nwkPreferredParent from the NIB of the local device.
+     *     When supported, it extends Hub Connecivity, advertising the devices capacity to be the parent for an additional device.
+     *     A value of 1 means that this device should be preferred.
+     *     A value of 0 indicates that it should not be preferred.
+     *     Devices that do not make this determination SHALL always report a value of 0.
+     * - 3: Battery Backup
+     *   - This bit indicates that the router has battery backup and thus will not be affected by temporary losses in power.
+     * - 4: Enhanced Beacon Request Support
+     *   - When this bit is set to 1, it indicates that the router supports responding to Enhanced beacon requests as defined by IEEE Std 802.15.4.
+     *     A zero for this bit indicates the device has no support for responding to enhanced beacon requests.
+     * - 5: MAC Data Poll Keepalive Support
+     *   - This indicates that the device has support for the MAC Data Poll Keepalive method for End Device timeouts.
+     * - 6: End Device Keepalive Support
+     *   - This indicates that the device has support for the End Device Keepalive method for End Device timeouts.
+     * - 7: Power Negotiation Support
+     *   - This indicates the device has support for Power Negotiation with end devices.
+     * - 8-15: Reserved
+     *   - These bits SHALL be set to 0.
+     */
+    bitmap: number;
+};
+
+type GlobalTlvFragmentationParameters = {
+    /** uint16 */
+    nwkAddress: number;
+    /**
+     * uint8
+     * - Bit 0 = Application Fragmentation Supported (mirrors AIB attribute 0xd5, apsApplicationFragmentationSupport).
+     * - Bit 1-7 = Reserved for future use
+     */
+    fragmentationOptions: number | undefined;
+    /** uint16 */
+    maxIncomingTransferUnit: number | undefined;
+};
+
+type GlobalTlvConfigurationParameters = {
+    /** uint16 */
+    parameters: number;
+};
+
+type GlobalTlvDeviceCapabilityExtension = {
+    /** uint16 */
+    capabilityExtension: number;
+};
+
 export type ZigbeeGlobalTlvs = {
     /** Should be ignored if unknown */
-    [GlobalTlv.MANUFACTURER_SPECIFIC]?: {
-        /** uint16 */
-        zigbeeManufacturerId: number;
-        /** variable */
-        additionalData: Buffer;
-    };
-    [GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS]?: {
-        /** uint8 */
-        keyNegotiationProtocolsBitmask: number;
-        /** uint8 */
-        preSharedSecretsBitmask: number;
-        sourceDeviceEui64: bigint | undefined;
-    };
-    [GlobalTlv.PAN_ID_CONFLICT_REPORT]?: {
-        /** uint16 */
-        nwkPanIdConflictCount: number;
-    };
-    [GlobalTlv.NEXT_PAN_ID]?: {
-        /** uint16 */
-        panId: number;
-    };
-    [GlobalTlv.NEXT_CHANNEL_CHANGE]?: {
-        /** uint32 */
-        channel: number;
-    };
-    [GlobalTlv.SYMMETRIC_PASSPHRASE]?: {
-        /** 16-byte */
-        passphrase: Buffer;
-    };
-    [GlobalTlv.ROUTER_INFORMATION]?: {
-        /** uint16 */
-        bitmap: number;
-    };
-    [GlobalTlv.FRAGMENTATION_PARAMETERS]?: {
-        /** uint16 */
-        nwkAddress: number;
-        /** uint8 */
-        fragmentationOptions: number | undefined;
-        /** uint16 */
-        maxIncomingTransferUnit: number | undefined;
-    };
-    [GlobalTlv.JOINER_ENCAPSULATION]?: {
-        additionalTlvs: ZigbeeGlobalTlvs;
-        additionalLocalTlvs: Map<number, Buffer>;
-    };
-    [GlobalTlv.BEACON_APPENDIX_ENCAPSULATION]?: {
-        additionalTlvs: ZigbeeGlobalTlvs;
-        additionalLocalTlvs: Map<number, Buffer>;
-    };
-    [GlobalTlv.BDB_ENCAPSULATION]?: {
-        additionalTlvs: ZigbeeGlobalTlvs;
-        additionalLocalTlvs: Map<number, Buffer>;
-    };
-    [GlobalTlv.CONFIGURATION_PARAMETERS]?: {
-        /** uint16 */
-        parameters: number;
-    };
-    [GlobalTlv.DEVICE_CAPABILITY_EXTENSION]?: {
-        /** uint16 */
-        capabilityExtension: number;
-    };
+    [GlobalTlv.MANUFACTURER_SPECIFIC]?: GlobalTlvManufacturerSpecific;
+    [GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS]?: GlobalTlvSupportedKeyNegotiatioMethods;
+    [GlobalTlv.PAN_ID_CONFLICT_REPORT]?: GlobalTlvPanIdConflictReport;
+    [GlobalTlv.NEXT_PAN_ID]?: GlobalTlvNextPanId;
+    [GlobalTlv.NEXT_CHANNEL_CHANGE]?: GlobalTlvNextChannelChange;
+    [GlobalTlv.SYMMETRIC_PASSPHRASE]?: GlobalTlvSummetricPassphrase;
+    [GlobalTlv.ROUTER_INFORMATION]?: GlobalTlvRouterInformation;
+    [GlobalTlv.FRAGMENTATION_PARAMETERS]?: GlobalTlvFragmentationParameters;
+    [GlobalTlv.JOINER_ENCAPSULATION]?: GlobalTlvEncapsulated;
+    [GlobalTlv.BEACON_APPENDIX_ENCAPSULATION]?: GlobalTlvEncapsulated;
+    [GlobalTlv.BDB_ENCAPSULATION]?: GlobalTlvEncapsulated;
+    [GlobalTlv.CONFIGURATION_PARAMETERS]?: GlobalTlvConfigurationParameters;
+    [GlobalTlv.DEVICE_CAPABILITY_EXTENSION]?: GlobalTlvDeviceCapabilityExtension;
 };
 
 /**
@@ -328,4 +398,40 @@ export function readZigbeeTlvs(data: Buffer, offset: number, parent?: number): [
     }
 
     return [globalTlvs, localTlvs, offset];
+}
+
+export function writeZigbeeTlvSupportedKeyNegotiationMethods(
+    data: Buffer,
+    offset: number,
+    tlv: RequiredNonNullable<GlobalTlvSupportedKeyNegotiatioMethods>,
+): number {
+    offset = data.writeUInt8(GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS, offset);
+    offset = data.writeUInt8(9, offset); // per spec, actual data length is `length field + 1`
+    offset = data.writeUInt8(tlv.keyNegotiationProtocolsBitmask, offset);
+    offset = data.writeUInt8(tlv.preSharedSecretsBitmask, offset);
+    offset = data.writeBigUInt64LE(tlv.sourceDeviceEui64, offset);
+
+    return offset;
+}
+
+export function writeZigbeeTlvFragmentationParameters(
+    data: Buffer,
+    offset: number,
+    tlv: RequiredNonNullable<GlobalTlvFragmentationParameters>,
+): number {
+    offset = data.writeUInt8(GlobalTlv.FRAGMENTATION_PARAMETERS, offset);
+    offset = data.writeUInt8(4, offset); // per spec, actual data length is `length field + 1`
+    offset = data.writeUInt16LE(tlv.nwkAddress, offset);
+    offset = data.writeUInt8(tlv.fragmentationOptions, offset);
+    offset = data.writeUInt16LE(tlv.maxIncomingTransferUnit, offset);
+
+    return offset;
+}
+
+export function writeZigbeeTlvRouterInformation(data: Buffer, offset: number, tlv: RequiredNonNullable<GlobalTlvRouterInformation>): number {
+    offset = data.writeUInt8(GlobalTlv.ROUTER_INFORMATION, offset);
+    offset = data.writeUInt8(1, offset); // per spec, actual data length is `length field + 1`
+    offset = data.writeUInt16LE(tlv.bitmap, offset);
+
+    return offset;
 }

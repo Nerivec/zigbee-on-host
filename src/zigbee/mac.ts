@@ -1,3 +1,12 @@
+import {
+    readZigbeeTlvs,
+    writeZigbeeTlvFragmentationParameters,
+    writeZigbeeTlvRouterInformation,
+    writeZigbeeTlvSupportedKeyNegotiationMethods,
+    type ZigbeeGlobalTlvs,
+} from "./tlvs";
+import { ZigbeeConsts } from "./zigbee";
+
 /**
  * const enum with sole purpose of avoiding "magic numbers" in code for well-known values
  */
@@ -1212,6 +1221,8 @@ export type MACZigbeeBeacon = {
     /** The time difference between a device and its parent's beacon. */
     txOffset: number;
     updateId: number;
+    globalTlvs: ZigbeeGlobalTlvs;
+    localTlvs: Map<number, Buffer>;
 };
 
 /**
@@ -1220,7 +1231,6 @@ export type MACZigbeeBeacon = {
  * SPEC COMPLIANCE NOTES:
  * - ✅ Parses routing and end-device capacity bits for join admission logic
  * - ✅ Retains Update ID for network parameter synchronization
- * - ⚠️  Exposes protocolId even though Zigbee fixes it to zero for diagnostics
  * DEVICE SCOPE: Beacon receivers (all logical devices)
  */
 export function decodeMACZigbeeBeacon(data: Buffer, offset: number): MACZigbeeBeacon {
@@ -1239,8 +1249,10 @@ export function decodeMACZigbeeBeacon(data: Buffer, offset: number): MACZigbeeBe
     const extendedPANId = data.readBigUInt64LE(offset);
     offset += 8;
     const endBytes = data.readUInt32LE(offset);
+    offset += 4;
     const txOffset = endBytes & ZigbeeMACConsts.ZIGBEE_BEACON_TX_OFFSET_MASK;
     const updateId = (endBytes & ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_MASK) >> ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_SHIFT;
+    const [globalTlvs, localTlvs] = readZigbeeTlvs(data, offset);
 
     return {
         protocolId,
@@ -1252,6 +1264,8 @@ export function decodeMACZigbeeBeacon(data: Buffer, offset: number): MACZigbeeBe
         extendedPANId,
         txOffset,
         updateId,
+        globalTlvs,
+        localTlvs,
     };
 }
 
@@ -1261,11 +1275,10 @@ export function decodeMACZigbeeBeacon(data: Buffer, offset: number): MACZigbeeBe
  * SPEC COMPLIANCE NOTES:
  * - ✅ Serialises Zigbee beacon descriptor using mandated masks and shifts
  * - ✅ Hardcodes protocol ID to zero per Zigbee specification
- * - ⚠️  Relies on caller to enforce txOffset bounds defined by aMaxBeaconTxOffset
  * DEVICE SCOPE: Beacon transmitters (coordinator/router)
  */
-export function encodeMACZigbeeBeacon(beacon: MACZigbeeBeacon): Buffer {
-    const payload = Buffer.allocUnsafe(ZigbeeMACConsts.ZIGBEE_BEACON_LENGTH);
+export function encodeMACZigbeeBeacon(beacon: Omit<MACZigbeeBeacon, "globalTlvs" | "localTlvs">, eui64: bigint): Buffer {
+    const payload = Buffer.allocUnsafe(ZigbeeMACConsts.ZIGBEE_BEACON_LENGTH + 23 /* tlvs */);
     let offset = 0;
     offset = payload.writeUInt8(0, offset); // protocol ID always 0 on Zigbee beacons
     offset = payload.writeUInt16LE(
@@ -1284,6 +1297,23 @@ export function encodeMACZigbeeBeacon(beacon: MACZigbeeBeacon): Buffer {
             ((beacon.updateId << ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_SHIFT) & ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_MASK),
         offset,
     );
+    // R23 TLVs
+    offset = writeZigbeeTlvSupportedKeyNegotiationMethods(payload, offset, {
+        keyNegotiationProtocolsBitmask: 0b111,
+        // Install Code Key, Passcode Key
+        preSharedSecretsBitmask: 0b00000110,
+        sourceDeviceEui64: eui64,
+    });
+    offset = writeZigbeeTlvFragmentationParameters(payload, offset, {
+        nwkAddress: ZigbeeConsts.COORDINATOR_ADDRESS,
+        fragmentationOptions: 0b1,
+        maxIncomingTransferUnit: ZigbeeMACConsts.FRAME_MAX_SIZE,
+    });
+    const uptimeOver24h = performance.now() > 86_400_000;
+    // Hub Connectivity, Preferred Parent, Enhanced Beacon Request Support,
+    // MAC Data Poll Keepalive Support, End Device Keepalive Support, Power Negotiation Support
+    // TODO: add support for user-configurable "Battery Backup" bit
+    offset = writeZigbeeTlvRouterInformation(payload, offset, { bitmap: uptimeOver24h ? 0b11110111 : 0b11110101 });
 
     return payload;
 }

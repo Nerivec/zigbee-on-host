@@ -21,9 +21,9 @@ import {
     MACSecurityKeyIdMode,
     MACSecurityLevel,
     type MACSuperframeSpec,
-    type MACZigbeeBeacon,
     ZigbeeMACConsts,
 } from "../../src/zigbee/mac.js";
+import { GlobalTlv } from "../../src/zigbee/tlvs.js";
 import { ZigbeeConsts } from "../../src/zigbee/zigbee.js";
 import { ZigbeeNWKConsts } from "../../src/zigbee/zigbee-nwk.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
@@ -1073,24 +1073,41 @@ describe("MACHandler", () => {
         });
 
         it("encodes Zigbee beacon capacity flags", () => {
-            const beacon: MACZigbeeBeacon = {
-                protocolId: ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_ID,
-                profile: 0x02,
-                version: ZigbeeNWKConsts.VERSION_2007,
-                routerCapacity: false,
-                deviceDepth: 0x03,
-                endDeviceCapacity: false,
-                extendedPANId: 0x00124b0000000011n,
-                txOffset: 0x000123,
-                updateId: 0x09,
-            };
-
-            const encoded = encodeMACZigbeeBeacon(beacon);
+            const encoded = encodeMACZigbeeBeacon(
+                {
+                    protocolId: ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_ID,
+                    profile: 0x02,
+                    version: ZigbeeNWKConsts.VERSION_2007,
+                    routerCapacity: false,
+                    deviceDepth: 0x03,
+                    endDeviceCapacity: false,
+                    extendedPANId: 0x00124b0000000011n,
+                    txOffset: 0x000123,
+                    updateId: 0x09,
+                },
+                mockContext.netParams.eui64,
+            );
             const decoded = decodeMACZigbeeBeacon(encoded, 0);
 
             expect(decoded.routerCapacity).toBe(false);
             expect(decoded.endDeviceCapacity).toBe(false);
-            expect(decoded.deviceDepth).toStrictEqual(beacon.deviceDepth);
+            expect(decoded.deviceDepth).toStrictEqual(0x03);
+            expect(decoded.globalTlvs).toStrictEqual({
+                [GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS]: {
+                    keyNegotiationProtocolsBitmask: 0b111,
+                    preSharedSecretsBitmask: 0b110,
+                    sourceDeviceEui64: 0x00124b0012345678n,
+                },
+                [GlobalTlv.FRAGMENTATION_PARAMETERS]: {
+                    nwkAddress: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    fragmentationOptions: 0b1,
+                    maxIncomingTransferUnit: ZigbeeMACConsts.FRAME_MAX_SIZE,
+                },
+                [GlobalTlv.ROUTER_INFORMATION]: {
+                    bitmap: 0b11110101,
+                },
+            });
+            expect(decoded.localTlvs.size).toStrictEqual(0);
         });
 
         it("computes MIC length per security level", () => {

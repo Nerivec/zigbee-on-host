@@ -12,6 +12,7 @@ import {
     type MACCapabilities,
     type MACHeader,
     type MACZigbeeBeacon,
+    ZigbeeMACConsts,
 } from "../../src/zigbee/mac.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import {
@@ -1248,12 +1249,14 @@ describe("Encoding-Decoding", () => {
             extendedPANId: 15987178197214944733n,
             txOffset: 16777215,
             updateId: 0,
+            globalTlvs: {},
+            localTlvs: new Map(),
         };
 
         expect(macHeader).toStrictEqual(expectedMACHeader);
         expect(macPayload.byteLength).toStrictEqual(15);
         expect(beacon).toStrictEqual(expectedBeacon);
-        expect(macPayload).toStrictEqual(encodeMACZigbeeBeacon(beacon));
+        expect(macPayload).toStrictEqual(encodeMACZigbeeBeacon(beacon, 0x1122334455667788n).subarray(0, ZigbeeMACConsts.ZIGBEE_BEACON_LENGTH));
     });
 
     it("NET2_ASSOC_REQ_FROM_DEVICE", () => {
