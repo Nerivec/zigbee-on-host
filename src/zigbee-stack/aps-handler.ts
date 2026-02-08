@@ -1610,60 +1610,78 @@ export class APSHandler {
             NS,
         );
 
-        if (status === ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_SECURED_REJOIN) {
-            await this.#context.associate(device16, device64, undefined, false, false);
-            this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
-        } else if (status === ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_UNSECURED_JOIN) {
-            await this.#context.associate(device16, device64, undefined, false, true);
-            this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
+        switch (status) {
+            case ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_SECURED_REJOIN: {
+                await this.#context.associate(device16, device64, undefined, false, false);
+                this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
 
-            const tApsCmdPayload = Buffer.allocUnsafe(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
-            let tunnelOffset = 0;
-            tunnelOffset = tApsCmdPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, tunnelOffset);
-            tunnelOffset = tApsCmdPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK, tunnelOffset);
-            tunnelOffset += this.#context.netParams.networkKey.copy(tApsCmdPayload, tunnelOffset);
-            tunnelOffset = tApsCmdPayload.writeUInt8(this.#context.netParams.networkKeySequenceNumber, tunnelOffset);
-            tunnelOffset = tApsCmdPayload.writeBigUInt64LE(device64, tunnelOffset);
-            tunnelOffset = tApsCmdPayload.writeBigUInt64LE(this.#context.netParams.eui64, tunnelOffset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
+                break;
+            }
+            case ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_UNSECURED_JOIN: {
+                await this.#context.associate(device16, device64, undefined, false, true);
+                this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
 
-            const tApsCmdFrame = encodeZigbeeAPSFrame(
-                {
-                    frameControl: {
-                        frameType: ZigbeeAPSFrameType.CMD,
-                        deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
-                        ackFormat: false,
-                        security: true,
-                        ackRequest: false,
-                        extendedHeader: false,
+                const tApsCmdPayload = Buffer.allocUnsafe(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
+                let tunnelOffset = 0;
+                tunnelOffset = tApsCmdPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, tunnelOffset);
+                tunnelOffset = tApsCmdPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK, tunnelOffset);
+                tunnelOffset += this.#context.netParams.networkKey.copy(tApsCmdPayload, tunnelOffset);
+                tunnelOffset = tApsCmdPayload.writeUInt8(this.#context.netParams.networkKeySequenceNumber, tunnelOffset);
+                tunnelOffset = tApsCmdPayload.writeBigUInt64LE(device64, tunnelOffset);
+                tunnelOffset = tApsCmdPayload.writeBigUInt64LE(this.#context.netParams.eui64, tunnelOffset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
+
+                const tApsCmdFrame = encodeZigbeeAPSFrame(
+                    {
+                        frameControl: {
+                            frameType: ZigbeeAPSFrameType.CMD,
+                            deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                            ackFormat: false,
+                            security: true,
+                            ackRequest: false,
+                            extendedHeader: false,
+                        },
+                        counter: this.nextCounter(),
                     },
-                    counter: this.nextCounter(),
-                },
-                tApsCmdPayload,
-                {
-                    control: {
-                        level: ZigbeeSecurityLevel.NONE,
-                        keyId: ZigbeeKeyType.TRANSPORT,
-                        nonce: true,
-                        reqVerifiedFc: false,
+                    tApsCmdPayload,
+                    {
+                        control: {
+                            level: ZigbeeSecurityLevel.NONE,
+                            keyId: ZigbeeKeyType.TRANSPORT,
+                            nonce: true,
+                            reqVerifiedFc: false,
+                        },
+                        frameCounter: this.#context.nextTCKeyFrameCounter(),
+                        source64: this.#context.netParams.eui64,
+                        micLen: 4,
                     },
-                    frameCounter: this.#context.nextTCKeyFrameCounter(),
-                    source64: this.#context.netParams.eui64,
-                    micLen: 4,
-                },
-                undefined, // use pre-hashed this.context.netParams.tcKey,
-            );
+                    undefined, // use pre-hashed this.context.netParams.tcKey,
+                );
 
-            await this.sendTunnel(nwkHeader.source16!, device64, tApsCmdFrame);
-            this.#context.markNetworkKeyTransported(device64);
-        } else if (status === ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_TRUST_CENTER_REJOIN) {
-            await this.#context.associate(device16, device64, undefined, false, false);
-            await this.sendTransportKeyNWK(device16, this.#context.netParams.networkKey, this.#context.netParams.networkKeySequenceNumber, device64);
-            this.#context.markNetworkKeyTransported(device64);
-        } else if (status === ZigbeeAPSUpdateDeviceStatus.DEVICE_LEFT) {
-            // TODO: according to spec:
-            //   A Device Left is considered informative but SHOULD NOT be considered authoritative.
-            //   Security related actions SHALL not be taken on receipt of this. No further processing SHALL be done.
-            await this.#context.disassociate(device16, device64);
+                await this.sendTunnel(nwkHeader.source16!, device64, tApsCmdFrame);
+                this.#context.markNetworkKeyTransported(device64);
+
+                break;
+            }
+            case ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_TRUST_CENTER_REJOIN: {
+                await this.#context.associate(device16, device64, undefined, false, false);
+                await this.sendTransportKeyNWK(
+                    device16,
+                    this.#context.netParams.networkKey,
+                    this.#context.netParams.networkKeySequenceNumber,
+                    device64,
+                );
+                this.#context.markNetworkKeyTransported(device64);
+
+                break;
+            }
+            case ZigbeeAPSUpdateDeviceStatus.DEVICE_LEFT: {
+                // TODO: according to spec:
+                //   A Device Left is considered informative but SHOULD NOT be considered authoritative.
+                //   Security related actions SHALL not be taken on receipt of this. No further processing SHALL be done.
+                await this.#context.disassociate(device16, device64);
+
+                break;
+            }
         }
     }
 
