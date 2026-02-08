@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { logger } from "../../src/utils/logger.js";
-import { MACAssociationStatus, type MACCapabilities, type MACHeader } from "../../src/zigbee/mac.js";
+import type { MACCapabilities, MACHeader } from "../../src/zigbee/mac.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import { ZigbeeNWKCommandId, ZigbeeNWKConsts, type ZigbeeNWKHeader } from "../../src/zigbee/zigbee-nwk.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
@@ -60,7 +60,7 @@ describe("NWK Handler", () => {
         // Spy on context methods to track calls while preserving functionality
         vi.spyOn(mockContext, "nextNWKKeyFrameCounter");
         vi.spyOn(mockContext, "nextTCKeyFrameCounter");
-        associateSpy = vi.spyOn(mockContext, "associate").mockResolvedValue([MACAssociationStatus.SUCCESS, 0x1234, false]);
+        associateSpy = vi.spyOn(mockContext, "associate").mockResolvedValue();
         vi.spyOn(mockContext, "disassociate").mockResolvedValue(undefined);
 
         mockMACCallbacks = {
@@ -563,19 +563,8 @@ describe("NWK Handler", () => {
 
             await nwkHandler.processCommand(payload, macHeader, nwkHeader);
 
-            // Should have called associate callback
-            expect(associateSpy).toHaveBeenCalledWith(
-                0x1234,
-                0x00124b0012345678n,
-                false, // rejoin (not initial join)
-                expect.objectContaining({
-                    deviceType: 1,
-                    rxOnWhenIdle: true,
-                    allocateAddress: true,
-                }), // capabilities
-                true, // neighbor
-                true, // denyOverride (security is implicitly false, checks source64 vs trusted center)
-            );
+            // Should not have called associate callback
+            expect(associateSpy).not.toHaveBeenCalled();
 
             // Should have sent rejoin response
             expect(sendFrameSpy).toHaveBeenCalled();
@@ -647,8 +636,7 @@ describe("NWK Handler", () => {
                 } as ZigbeeNWKHeader,
             );
 
-            expect(associateSpy).toHaveBeenCalled();
-            expect(associateSpy.mock.calls[0]?.[5]).toStrictEqual(true);
+            expect(associateSpy).not.toHaveBeenCalled();
         });
     });
 

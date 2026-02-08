@@ -2,7 +2,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { logger } from "../../src/utils/logger.js";
-import { MACAssociationStatus, type MACHeader } from "../../src/zigbee/mac.js";
+import type { MACHeader } from "../../src/zigbee/mac.js";
 import { GlobalTlv } from "../../src/zigbee/tlvs.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import {
@@ -76,13 +76,7 @@ describe("APS Handler", () => {
         vi.spyOn(mockContext, "nextNWKKeyFrameCounter");
         vi.spyOn(mockContext, "nextTCKeyFrameCounter");
         vi.spyOn(mockContext, "computeDeviceLQA").mockReturnValue(150);
-        vi.spyOn(mockContext, "associate").mockImplementation(
-            (source16, _source64, _initialJoin, _capabilities, _neighbor, _denyOverride, _allowOverride) => {
-                const assigned16 = source16 ?? 0x1234;
-
-                return Promise.resolve([MACAssociationStatus.SUCCESS, assigned16, true]);
-            },
-        );
+        vi.spyOn(mockContext, "associate").mockResolvedValue();
         vi.spyOn(mockContext, "disassociate").mockResolvedValue(undefined);
 
         mockMACCallbacks = {

@@ -291,49 +291,47 @@ export class MACHandler {
     /**
      * Process 802.15.4 MAC association request.
      *
-     * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.3.1):
-     * - ✅ Correctly extracts capabilities byte from payload
-     * - ✅ Validates presence of source64 (mandatory per spec)
-     * - ✅ Enforces associationPermit flag for initial joins (PAN access denied when false)
-     * - ✅ Calls context associate to handle higher-layer processing
-     * - ✅ Determines initial join vs rejoin by checking if device is known
-     * - ✅ Stores pending association in map for DATA_REQ retrieval
-     * - ✅ Pending association includes sendResp callback and timestamp
-     * - ✅  SPEC COMPLIANCE: Association response is indirect transmission
-     *       - Per IEEE 802.15.4 #6.3.2, response SHALL be sent via indirect transmission
-     *       - Implementation stores in pendingAssociations for DATA_REQ ✅
-     *       - Respects macResponseWaitTime via timestamp check ✅
-     * - ✅ Delivers TRANSPORT_KEY_NWK after successful association (Zigbee Trust Center requirement)
-     * - ✅ Uses MAC capabilities to determine device type correctly
+     * SPEC COMPLIANCE:
+     * - TODO
+     *
      * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     public async processAssocReq(data: Buffer, macHeader: MACHeader): Promise<void> {
         if (macHeader.source64 === undefined) {
-            logger.debug(() => `<=x= MAC ASSOC_REQ[macSrc=${macHeader.source16}:${macHeader.source64}] Invalid source64`, NS);
-            return;
+            return; // invalid
         }
 
         const capabilities = data.readUInt8(0);
+        const decodedCap = decodeMACCapabilities(capabilities);
 
         logger.debug(() => `<=== MAC ASSOC_REQ[macSrc=${macHeader.source16}:${macHeader.source64} cap=${capabilities}]`, NS);
 
-        const device = this.#context.deviceTable.get(macHeader.source64);
-        const address16 = device?.address16;
-        const decodedCap = decodeMACCapabilities(capabilities);
-        const [status, newAddress16, requiresTransportKey] = await this.#context.associate(
-            address16,
-            macHeader.source64,
-            !device?.authorized /* rejoin only if was previously authorized */,
-            decodedCap,
-            true /* neighbor */,
-            address16 === undefined && !this.#context.associationPermit,
-        );
+        if (this.#context.deviceTable.has(macHeader.source64)) {
+            return; // XXX: duplicate, spec?
+        }
+
+        let newAddress16 = 0xffff;
+        let status = MACAssociationStatus.PAN_ACCESS_DENIED;
+        let requiresTransportKey = false;
+
+        if (this.#context.macAssociationPermit && this.#context.trustCenterPolicies.allowJoins) {
+            newAddress16 = this.#context.assignNetworkAddress();
+
+            if (newAddress16 === 0xffff) {
+                status = MACAssociationStatus.PAN_FULL;
+            } else {
+                status = MACAssociationStatus.SUCCESS;
+                requiresTransportKey = true;
+
+                await this.#context.associate(newAddress16, macHeader.source64, decodedCap, true, true);
+            }
+        }
 
         this.#context.pendingAssociations.set(macHeader.source64, {
             sendResp: async () => {
                 await this.sendAssocRsp(macHeader.source64!, newAddress16, status);
 
-                if (status === MACAssociationStatus.SUCCESS && requiresTransportKey) {
+                if (requiresTransportKey) {
                     await this.#callbacks.onAPSSendTransportKeyNWK(
                         newAddress16,
                         this.#context.netParams.networkKey,
@@ -418,7 +416,7 @@ export class MACHandler {
      *         * Value 0x0f means no GTS, which is typical for Zigbee ✅
      * - ✅ Sets batteryExtension=false (coordinator is mains powered)
      * - ✅ Sets panCoordinator=true (this is the coordinator)
-     * - ✅ Uses associationPermit flag from context
+     * - ✅ Uses macAssociationPermit flag from context
      * - ✅ Sets gtsInfo.permit=false (no GTS support - typical for Zigbee)
      * - ✅ Empty pendAddr (no pending address fields)
      * - ✅ Zigbee Beacon Payload:
@@ -461,7 +459,7 @@ export class MACHandler {
                     finalCAPSlot: 0x0f,
                     batteryExtension: false,
                     panCoordinator: true,
-                    associationPermit: this.#context.associationPermit,
+                    associationPermit: this.#context.macAssociationPermit,
                 },
                 gtsInfo: { permit: false },
                 pendAddr: {},

@@ -1251,27 +1251,9 @@ export class NWKHandler {
      * 06-3474-23 #3.4.6
      * Optional: Child Rejoining the Network to a Legacy Parent (Pre-R23)
      *
-     * SPEC COMPLIANCE NOTES:
-     * - ✅ Correctly decodes capabilities byte
-     * - ✅ Determines rejoin type based on frameControl.security:
-     *       - security=false: Trust Center Rejoin (unsecured)
-     *       - security=true: NWK rejoin (secured with NWK key)
-     * - ✅ TRUST CENTER REJOIN HANDLING:
-     *       - Checks if device is known and authorized ✅
-     *       - Denies rejoin if device unknown or unauthorized ✅
-     * - ✅ Centralized Trust Center enforces coordinator EUI64; distributed/uninitialized modes not supported here (N/A)
-     * - ✅ Calls context associate with correct parameters:
-     *       - initialJoin=false (this is a rejoin) ✅
-     *       - neighbor determined by comparing MAC and NWK source ✅
-     *       - denyOverride based on security analysis ✅
-     * - ✅ Sends REJOIN_RESP with assigned address and status
-     * - ✅ Re-distributes current NWK key when rejoin requires key update
-     * - ✅ Does not require VERIFY_KEY after rejoin per spec note
+     * SPEC COMPLIANCE:
+     * - TODO
      *
-     * SECURITY CONCERNS:
-     * - Unsecured rejoin handling is critical for security
-     * - Must validate device authorization before accepting
-     * - Missing apsTrustCenterAddress validation is a security gap
      * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param data Command data
@@ -1281,70 +1263,70 @@ export class NWKHandler {
      * @returns New offset after processing
      */
     public async processRejoinReq(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<void> {
+        if (nwkHeader.source64 === undefined || nwkHeader.source16 === undefined) {
+            return; // invalid
+        }
+
+        const secured = nwkHeader.frameControl.security;
         const capabilities = data.readUInt8(offset);
         const decodedCap = decodeMACCapabilities(capabilities);
 
         logger.debug(
             () =>
-                `<=== NWK REJOIN_REQ[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} cap=${capabilities}]`,
+                `<=== NWK REJOIN_REQ[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} sec=${secured} cap=${capabilities}]`,
             NS,
         );
 
-        let deny = false;
-        let source64 = nwkHeader.source64;
+        let newAddress16 = 0xffff;
+        let status: MACAssociationStatus | number = MACAssociationStatus.PAN_ACCESS_DENIED;
+        let requiresTransportKey = false;
+        const device = this.#context.deviceTable.get(nwkHeader.source64);
 
-        if (!nwkHeader.frameControl.security) {
-            // Trust Center Rejoin
-            if (source64 === undefined) {
-                if (nwkHeader.source16 === undefined) {
-                    // invalid, drop completely, should never happen
-                    return;
-                }
-
-                source64 = this.#context.address16ToAddress64.get(nwkHeader.source16);
-            }
-
-            if (source64 === undefined) {
-                // can't identify device
-                deny = true;
-            } else {
-                const device = this.#context.deviceTable.get(source64);
-
-                // XXX: Unsecured Packets at the network layer claiming to be from existing neighbors (coordinators, routers or end devices) must not rewrite legitimate data in the nwkNeighborTable.
-                //      if apsTrustCenterAddress is all FF (distributed) / all 00 (pre-TRANSPORT_KEY), reject with PAN_ACCESS_DENIED
-                if (!device?.authorized) {
-                    // device unknown or unauthorized
-                    deny = true;
-                }
-            }
-        }
-
-        const [status, newAddress16, requiresTransportKey] = await this.#context.associate(
-            nwkHeader.source16!,
-            source64,
-            false /* rejoin */,
-            decodedCap,
-            macHeader.source16 === nwkHeader.source16,
-            deny,
-        );
         // TODO:
         // The relationship field of the new neighbor table entry SHALL be set to the value 0x01 only if the mechanism was NWK Rejoin and had NWK Layer security.
         // Otherwise, the relationship field SHALL be set to 0x05 indicating an unauthenticated child.
 
-        await this.sendRejoinResp(nwkHeader.source16!, newAddress16, status);
+        // NOTE: a device does not have to verify its trust center link key with the APSME-VERIFY-KEY services after a rejoin.
 
-        // XXX: is this spec?
-        if (status === MACAssociationStatus.SUCCESS && requiresTransportKey && source64 !== undefined) {
+        // Trust Center Rejoin OR Secured Rejoin (same logic, only key transport changes)
+        // XXX: Unsecured Packets at the network layer claiming to be from existing neighbors (coordinators, routers or end devices) must not rewrite legitimate data in the nwkNeighborTable.
+        //      if apsTrustCenterAddress is all FF (distributed) / all 00 (pre-TRANSPORT_KEY), reject with PAN_ACCESS_DENIED
+        if (device?.authorized) {
+            // device changed its address and it's conflicting, assign new one
+            if (device.address16 !== nwkHeader.source16 && this.#context.address16ToAddress64.has(nwkHeader.source16)) {
+                newAddress16 = this.#context.assignNetworkAddress();
+
+                if (newAddress16 === 0xffff) {
+                    status = MACAssociationStatus.PAN_FULL;
+                } else {
+                    status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                    requiresTransportKey = !secured;
+                    const neighbor = macHeader.source16 === nwkHeader.source16;
+
+                    await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, false);
+                }
+            } else {
+                newAddress16 = nwkHeader.source16;
+                status = MACAssociationStatus.SUCCESS;
+                requiresTransportKey = !secured;
+                const neighbor = macHeader.source16 === nwkHeader.source16;
+
+                await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, false);
+            }
+        }
+
+        await this.sendRejoinResp(nwkHeader.source16, newAddress16, status);
+
+        if (requiresTransportKey) {
+            // XXX: is this spec?
             await this.#callbacks.onAPSSendTransportKeyNWK(
                 newAddress16,
                 this.#context.netParams.networkKey,
                 this.#context.netParams.networkKeySequenceNumber,
-                source64,
+                nwkHeader.source64,
             );
-            this.#context.markNetworkKeyTransported(source64);
+            this.#context.markNetworkKeyTransported(nwkHeader.source64);
         }
-
-        // NOTE: a device does not have to verify its trust center link key with the APSME-VERIFY-KEY services after a rejoin.
     }
 
     // NOTE: sendRejoinReq DEVICE SCOPE: routers (N/A), end devices (N/A)
@@ -1616,7 +1598,7 @@ export class NWKHandler {
      * Per spec, after sending this, should start a timer of `CONFIG_NWK_BCAST_DELIVERY_TIME` then apply the changes internally.
      *
      * SPEC COMPLIANCE NOTES:
-     *   - TODO
+     * - TODO
      *
      * DEVICE SCOPE: Coordinator, routers (N/A)
      */
@@ -1820,7 +1802,7 @@ export class NWKHandler {
      * and only unicast when type is `CMD_NWK_LINK_PWR_DELTA_TYPE_RESPONSE`.
      *
      * SPEC COMPLIANCE:
-     *   - TODO
+     * - TODO
      *
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
@@ -1876,24 +1858,9 @@ export class NWKHandler {
      * 06-3474-23 #3.4.14
      * Optional: R23+
      *
-     * SPEC COMPLIANCE NOTES:
-     * - ✅ Correctly decodes assocType and capabilities
-     * - ✅ Determines initial join vs rejoin from assocType:
-     *       - 0x00 = Initial Join ✅
-     *       - 0x01 = Rejoin ✅
-     * - ✅ Determines neighbor by comparing MAC and NWK source addresses
-     * - ✅ Calls context associate with appropriate parameters
-     * - ✅ Sends COMMISSIONING_RESPONSE with status and address
-     * - ✅ Sends TRANSPORT_KEY_NWK on SUCCESS when required
-     * - ✅ Commissioning TLVs (R23+)
-     * - ⚠️  SPEC NOTE: Comment about sending Remove Device CMD to deny join
-     *       - Alternative to normal rejection mechanism
-     *       - Not implemented here
+     * SPEC COMPLIANCE:
+     * - TODO
      *
-     * COMMISSIONING vs NORMAL JOIN:
-     * - Commissioning is R23+ feature for network commissioning
-     * - May have different security requirements than legacy join
-     * - TLV support is critical for full R23 compliance
      * DEVICE SCOPE: Coordinator
      *
      * @param data Command data
@@ -1903,14 +1870,17 @@ export class NWKHandler {
      * @returns New offset after processing
      */
     public async processCommissioningRequest(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<void> {
+        if (nwkHeader.source64 === undefined || nwkHeader.source16 === undefined) {
+            return; // invalid
+        }
+
         // ZigbeeNWKCommissioningType
         const commissioningType = data.readUInt8(offset);
         offset += 1;
-        const initialJoin = commissioningType === ZigbeeNWKCommissioningType.INITIAL_JOIN;
+        const secured = nwkHeader.frameControl.security;
 
-        if (nwkHeader.frameControl.security && initialJoin) {
-            // per spec, drop
-            return;
+        if (secured && commissioningType === ZigbeeNWKCommissioningType.INITIAL_JOIN) {
+            return; // per spec, drop
         }
 
         const capabilities = data.readUInt8(offset);
@@ -1944,24 +1914,72 @@ export class NWKHandler {
 
         logger.debug(
             () =>
-                `<=== NWK COMMISSIONING_REQUEST[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${commissioningType} cap=${capabilities}]`,
+                `<=== NWK COMMISSIONING_REQUEST[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} sec=${secured} type=${commissioningType} cap=${capabilities}]`,
             NS,
         );
 
         // NOTE: send Remove Device CMD to TC deny the join (or let timeout): `sendRemoveDevice`
 
-        const [status, newAddress16, requiresTransportKey] = await this.#context.associate(
-            nwkHeader.source16!,
-            nwkHeader.source64,
-            initialJoin,
-            decodedCap,
-            macHeader.source16 === nwkHeader.source16,
-            nwkHeader.frameControl.security /* deny if true */,
-        );
+        let newAddress16 = 0xffff;
+        let status: MACAssociationStatus | number = MACAssociationStatus.PAN_ACCESS_DENIED;
+        let requiresTransportKey = false;
 
-        await this.sendCommissioningResponse(nwkHeader.source16!, newAddress16, status);
+        if (commissioningType === ZigbeeNWKCommissioningType.INITIAL_JOIN) {
+            if (this.#context.trustCenterPolicies.allowJoins) {
+                if (this.#context.address16ToAddress64.has(nwkHeader.source16)) {
+                    // device address is conflicting, assign new one
+                    newAddress16 = this.#context.assignNetworkAddress();
 
-        if (status === MACAssociationStatus.SUCCESS) {
+                    if (newAddress16 === 0xffff) {
+                        status = MACAssociationStatus.PAN_FULL;
+                    } else {
+                        status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                        requiresTransportKey = true;
+                        const neighbor = macHeader.source16 === nwkHeader.source16;
+
+                        await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, true);
+                    }
+                } else {
+                    newAddress16 = nwkHeader.source16;
+                    status = MACAssociationStatus.SUCCESS;
+                    requiresTransportKey = true;
+                    const neighbor = macHeader.source16 === nwkHeader.source16;
+
+                    await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, true);
+                }
+            }
+        } else if (commissioningType === ZigbeeNWKCommissioningType.REJOIN) {
+            const device = this.#context.deviceTable.get(nwkHeader.source64);
+
+            if (device?.authorized) {
+                // Secured Rejoin OR Trust Center Rejoin (same logic, only key transport changes)
+                if (device.address16 !== nwkHeader.source16 && this.#context.address16ToAddress64.has(nwkHeader.source16)) {
+                    // device changed its address and it's conflicting, assign new one
+                    newAddress16 = this.#context.assignNetworkAddress();
+
+                    if (newAddress16 === 0xffff) {
+                        status = MACAssociationStatus.PAN_FULL;
+                    } else {
+                        status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                        requiresTransportKey = !secured;
+                        const neighbor = macHeader.source16 === nwkHeader.source16;
+
+                        await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, false);
+                    }
+                } else {
+                    newAddress16 = nwkHeader.source16;
+                    status = MACAssociationStatus.SUCCESS;
+                    requiresTransportKey = !secured;
+                    const neighbor = macHeader.source16 === nwkHeader.source16;
+
+                    await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, false);
+                }
+            }
+        }
+
+        await this.sendCommissioningResponse(nwkHeader.source16, newAddress16, status);
+
+        if (requiresTransportKey) {
             // TODO: might need to be different if R23 or not
             if (selectedKeyNegotiationMethod === GlobalTlvConsts.KEY_NEGOTATION_METHOD_STATIC) {
                 const dest64 = this.#context.address16ToAddress64.get(newAddress16);

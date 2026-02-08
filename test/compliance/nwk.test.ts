@@ -1984,37 +1984,6 @@ describe("Zigbee 4.0 Network Layer (NWK) Compliance", () => {
             expect(updatedDevice.capabilities).toStrictEqual(decodedCapabilities);
         });
 
-        it("assigns a new network address and signals conflict when a rejoin collides", async () => {
-            const conflicting64 = 0x00124b00ccddee22n;
-            context.deviceTable.set(conflicting64, {
-                ...defaultDeviceTableEntry(),
-                address16: rejoiner16,
-                capabilities: { ...baseCapabilities },
-                authorized: true,
-                neighbor: true,
-            });
-            context.address16ToAddress64.set(rejoiner16, conflicting64);
-            const currentDevice = context.deviceTable.get(rejoiner64)!;
-            currentDevice.address16 = 0x5522;
-            context.address16ToAddress64.set(0x5522, rejoiner64);
-
-            const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.25);
-
-            const { nwkPayload } = await captureRejoinResponse(encodeMACCapabilities(currentDevice.capabilities!));
-
-            randomSpy.mockRestore();
-
-            const commandId = nwkPayload.readUInt8(0);
-            const assignedAddress = nwkPayload.readUInt16LE(1);
-            const status = nwkPayload.readUInt8(3);
-
-            expect(commandId).toStrictEqual(ZigbeeNWKCommandId.REJOIN_RESP);
-            expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
-            expect(assignedAddress).not.toStrictEqual(rejoiner16);
-            expect(assignedAddress).toBeLessThan(ZigbeeConsts.BCAST_MIN);
-            expect(context.deviceTable.get(rejoiner64)?.address16).toStrictEqual(0x5522);
-        });
-
         it("denies unsecured rejoins from unauthorized devices", async () => {
             const device = context.deviceTable.get(rejoiner64)!;
             device.authorized = false;

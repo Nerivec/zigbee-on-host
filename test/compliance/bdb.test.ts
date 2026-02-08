@@ -166,10 +166,7 @@ describe("Zigbee 4.0 Device Behavior Compliance", () => {
                 allocateAddress: true,
             };
 
-            const [status, assignedAddress] = await context.associate(undefined, device64, true, capabilities, true);
-
-            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
-            expect(assignedAddress).not.toStrictEqual(ZigbeeConsts.COORDINATOR_ADDRESS);
+            await context.associate(0x1234, device64, capabilities, true, true);
 
             const mutatedPanId = 0x7a7b;
             const mutatedChannel = 21;
@@ -193,7 +190,7 @@ describe("Zigbee 4.0 Device Behavior Compliance", () => {
             expect(restored.netParams.channel).toStrictEqual(mutatedChannel);
             expect(restored.netParams.nwkUpdateId).toStrictEqual(mutatedUpdateId);
             expect(restored.deviceTable.has(device64)).toStrictEqual(true);
-            expect(restored.address16ToAddress64.get(assignedAddress)).toStrictEqual(device64);
+            expect(restored.address16ToAddress64.get(0x1234)).toStrictEqual(device64);
 
             restored.disallowJoins();
         });
@@ -249,33 +246,6 @@ describe("Zigbee 4.0 Device Behavior Compliance", () => {
             expect(context.trustCenterPolicies.allowJoins).toStrictEqual(true);
             expect(decoded.header.superframeSpec?.associationPermit).toStrictEqual(true);
         });
-
-        it("assigns unique short addresses to joining devices", async () => {
-            context.allowJoins(60, true);
-
-            const capabilities: MACCapabilities = {
-                alternatePANCoordinator: false,
-                deviceType: 1,
-                powerSource: 1,
-                rxOnWhenIdle: true,
-                securityCapability: true,
-                allocateAddress: true,
-            };
-
-            const deviceA = 0x00124b0000aaaaf1n;
-            const deviceB = 0x00124b0000bbb0f2n;
-
-            const [statusA, addressA] = await context.associate(undefined, deviceA, true, capabilities, true);
-            const [statusB, addressB] = await context.associate(undefined, deviceB, true, capabilities, true);
-
-            expect(statusA).toStrictEqual(MACAssociationStatus.SUCCESS);
-            expect(statusB).toStrictEqual(MACAssociationStatus.SUCCESS);
-            expect(addressA).not.toStrictEqual(ZigbeeConsts.COORDINATOR_ADDRESS);
-            expect(addressB).not.toStrictEqual(ZigbeeConsts.COORDINATOR_ADDRESS);
-            expect(addressA).not.toStrictEqual(addressB);
-            expect(context.deviceTable.get(deviceA)?.address16).toStrictEqual(addressA);
-            expect(context.deviceTable.get(deviceB)?.address16).toStrictEqual(addressB);
-        });
     });
 
     /**
@@ -296,10 +266,7 @@ describe("Zigbee 4.0 Device Behavior Compliance", () => {
                 allocateAddress: true,
             };
 
-            const [status, address16] = await context.associate(undefined, router64, true, capabilities, true);
-
-            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
-            expect(address16).not.toStrictEqual(ZigbeeConsts.COORDINATOR_ADDRESS);
+            await context.associate(0x1234, router64, capabilities, true, true);
 
             const entry = context.deviceTable.get(router64);
 

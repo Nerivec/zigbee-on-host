@@ -1611,28 +1611,10 @@ export class APSHandler {
         );
 
         if (status === ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_SECURED_REJOIN) {
-            await this.#context.associate(
-                device16,
-                device64,
-                false, // rejoin
-                undefined, // no MAC cap through router
-                false, // not neighbor
-                false,
-                true, // was allowed by parent
-            );
-
+            await this.#context.associate(device16, device64, undefined, false, false);
             this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
         } else if (status === ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_UNSECURED_JOIN) {
-            await this.#context.associate(
-                device16,
-                device64,
-                true, // initial join
-                undefined, // no MAC cap through router
-                false, // not neighbor
-                false,
-                true, // was allowed by parent
-            );
-
+            await this.#context.associate(device16, device64, undefined, false, true);
             this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
 
             const tApsCmdPayload = Buffer.allocUnsafe(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
@@ -1672,31 +1654,12 @@ export class APSHandler {
             );
 
             await this.sendTunnel(nwkHeader.source16!, device64, tApsCmdFrame);
-
             this.#context.markNetworkKeyTransported(device64);
         } else if (status === ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_TRUST_CENTER_REJOIN) {
-            // rejoin
-            const [, , requiresTransportKey] = await this.#context.associate(
-                device16,
-                device64,
-                false, // rejoin
-                undefined, // no MAC cap through router
-                false, // not neighbor
-                false,
-                true, // was allowed by parent, expected valid
-            );
-
-            if (requiresTransportKey) {
-                await this.sendTransportKeyNWK(
-                    device16,
-                    this.#context.netParams.networkKey,
-                    this.#context.netParams.networkKeySequenceNumber,
-                    device64,
-                );
-                this.#context.markNetworkKeyTransported(device64);
-            }
+            await this.#context.associate(device16, device64, undefined, false, false);
+            await this.sendTransportKeyNWK(device16, this.#context.netParams.networkKey, this.#context.netParams.networkKeySequenceNumber, device64);
+            this.#context.markNetworkKeyTransported(device64);
         } else if (status === ZigbeeAPSUpdateDeviceStatus.DEVICE_LEFT) {
-            // left
             // TODO: according to spec:
             //   A Device Left is considered informative but SHOULD NOT be considered authoritative.
             //   Security related actions SHALL not be taken on receipt of this. No further processing SHALL be done.

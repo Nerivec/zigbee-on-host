@@ -17,7 +17,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     encodeMACCapabilities,
-    MACAssociationStatus,
     type MACCapabilities,
     MACCommandId,
     MACFrameAddressMode,
@@ -998,53 +997,6 @@ describe("Zigbee 4.0 Security Compliance", () => {
             Buffer.from([0x00, 0x00]).copy(codeVector, codeVector.byteLength - 2);
 
             expect(() => context.addInstallCode(device64, codeVector)).toThrowError("Invalid install code CRC");
-        });
-
-        it("enforces install code policy when required by the trust center", async () => {
-            const device64 = 0x00124b00ffee0303n;
-            const caps: MACCapabilities = {
-                alternatePANCoordinator: false,
-                deviceType: 0,
-                powerSource: 1,
-                rxOnWhenIdle: true,
-                securityCapability: true,
-                allocateAddress: true,
-            };
-
-            context.trustCenterPolicies.installCode = InstallCodePolicy.REQUIRED;
-            context.allowJoins(60, true);
-
-            const [statusWithoutCode] = await context.associate(undefined, device64, true, caps, true);
-
-            expect(statusWithoutCode).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
-
-            context.addInstallCode(device64, codeVector);
-
-            const [statusWithCode, assignedAddress] = await context.associate(undefined, device64, true, caps, true);
-
-            expect(statusWithCode).toStrictEqual(MACAssociationStatus.SUCCESS);
-            expect(assignedAddress).not.toStrictEqual(0xffff);
-            expect(context.getAppLinkKey(device64, context.netParams.eui64)).toStrictEqual(linkKeyVector);
-        });
-
-        it("allows joins without install codes when policy is not required", async () => {
-            const device64 = 0x00124b00ffee0404n;
-            const caps: MACCapabilities = {
-                alternatePANCoordinator: false,
-                deviceType: 0,
-                powerSource: 1,
-                rxOnWhenIdle: true,
-                securityCapability: true,
-                allocateAddress: true,
-            };
-
-            context.trustCenterPolicies.installCode = InstallCodePolicy.NOT_REQUIRED;
-            context.allowJoins(60, true);
-
-            const [status, assignedAddress] = await context.associate(undefined, device64, true, caps, true);
-
-            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
-            expect(assignedAddress).not.toStrictEqual(0xffff);
         });
     });
 

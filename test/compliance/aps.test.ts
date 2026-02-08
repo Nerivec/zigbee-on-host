@@ -29,6 +29,7 @@ import {
     ZigbeeAPSFragmentation,
     ZigbeeAPSFrameType,
     type ZigbeeAPSHeader,
+    ZigbeeAPSUpdateDeviceStatus,
 } from "../../src/zigbee/zigbee-aps.js";
 import {
     decodeZigbeeNWKFrameControl,
@@ -1151,7 +1152,7 @@ describe("Zigbee 4.0 Application Support (APS) Layer Compliance", () => {
             offset += 8;
             payload.writeUInt16LE(device16, offset);
             offset += 2;
-            payload.writeUInt8(ZigbeeAPSConsts.CMD_UPDATE_STANDARD_UNSEC_JOIN, offset);
+            payload.writeUInt8(ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_UNSECURED_JOIN, offset);
 
             const macHeader: MACHeader = {
                 frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
@@ -1252,7 +1253,7 @@ describe("Zigbee 4.0 Application Support (APS) Layer Compliance", () => {
             offset += 8;
             payload.writeUInt16LE(device16, offset);
             offset += 2;
-            payload.writeUInt8(ZigbeeAPSConsts.CMD_UPDATE_LEAVE, offset);
+            payload.writeUInt8(ZigbeeAPSUpdateDeviceStatus.DEVICE_LEFT, offset);
 
             const macHeader: MACHeader = {
                 frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
@@ -1323,7 +1324,7 @@ describe("Zigbee 4.0 Application Support (APS) Layer Compliance", () => {
             offset += 8;
             payload.writeUInt16LE(newShort, offset);
             offset += 2;
-            payload.writeUInt8(ZigbeeAPSConsts.CMD_UPDATE_STANDARD_UNSEC_REJOIN, offset);
+            payload.writeUInt8(ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_TRUST_CENTER_REJOIN, offset);
 
             const macHeader: MACHeader = {
                 frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
@@ -1376,7 +1377,7 @@ describe("Zigbee 4.0 Application Support (APS) Layer Compliance", () => {
             expect(entry).toBeDefined();
             expect(entry?.address16).toStrictEqual(newShort);
             expect(context.address16ToAddress64.get(newShort)).toStrictEqual(device64);
-            expect(frames).toHaveLength(0);
+            expect(frames).toHaveLength(1);
 
             mockMACHandlerCallbacks.onSendFrame = vi.fn();
         });

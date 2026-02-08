@@ -64,19 +64,7 @@ describe("MACHandler", () => {
 
         mockContext = new StackContext(mockStackContextCallbacks, join(saveDir, "zoh.save"), netParams);
 
-        vi.spyOn(mockContext, "associate").mockImplementation(
-            (_source16, _source64, _initialJoin, _capabilities, _neighbor, denyOverride, allowOverride) => {
-                if (denyOverride) {
-                    return Promise.resolve([MACAssociationStatus.PAN_ACCESS_DENIED, 0xffff, false]);
-                }
-
-                if (allowOverride) {
-                    return Promise.resolve([MACAssociationStatus.SUCCESS, 0x1234, true]);
-                }
-
-                return Promise.resolve([MACAssociationStatus.SUCCESS, 0x1234, true]);
-            },
-        );
+        vi.spyOn(mockContext, "associate").mockResolvedValue();
         vi.spyOn(mockContext, "disassociate").mockResolvedValue(undefined);
 
         mockCallbacks = {
@@ -326,12 +314,13 @@ describe("MACHandler", () => {
 
     describe("processCommand", () => {
         it("should dispatch ASSOC_REQ to handler", async () => {
+            mockContext.allowJoins(0xfe, true);
+
             const macHeader: MACHeader = {
-                frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
+                frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.EXT),
                 sequenceNumber: 1,
                 destinationPANId: 0x1a62,
                 destination16: 0x0000,
-                source16: 0xffff,
                 source64: 0x00124b0098765432n,
                 commandId: MACCommandId.ASSOC_REQ,
                 fcs: 0,
@@ -392,6 +381,7 @@ describe("MACHandler", () => {
     describe("processAssocReq", () => {
         it("should process association request from new device", async () => {
             mockContext.allowJoins(0xfe, true);
+            const assignSpy = vi.spyOn(mockContext, "assignNetworkAddress").mockReturnValueOnce(0x1234);
 
             const macHeader: MACHeader = {
                 frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
@@ -406,11 +396,13 @@ describe("MACHandler", () => {
             const data = Buffer.from([0x8e]); // capabilities: rxOnWhenIdle=true, deviceType=FFD, powerSource=mains, securityCapability=true, allocateAddress=true
             await macHandler.processAssocReq(data, macHeader);
 
-            expect(mockContext.associate).toHaveBeenCalledWith(undefined, 0x00124b0098765432n, true, expect.any(Object), true, false);
+            expect(mockContext.associate).toHaveBeenCalledWith(0x1234, 0x00124b0098765432n, expect.any(Object), true, true);
             expect(mockContext.pendingAssociations.has(0x00124b0098765432n)).toStrictEqual(true);
+
+            assignSpy.mockRestore();
         });
 
-        it("should process association request from known device (rejoin)", async () => {
+        it("should process association request from known device", async () => {
             mockContext.allowJoins(0xfe, true);
 
             const dest64 = 0x00124b0098765432n;
@@ -437,7 +429,8 @@ describe("MACHandler", () => {
             const data = Buffer.from([0x8e]);
             await macHandler.processAssocReq(data, macHeader);
 
-            expect(mockContext.associate).toHaveBeenCalledWith(dest16, dest64, false, expect.any(Object), true, false);
+            // ignored
+            expect(mockContext.associate).not.toHaveBeenCalled();
         });
 
         it("should handle association request without source64", async () => {
@@ -510,7 +503,7 @@ describe("MACHandler", () => {
         });
 
         it("should include association permit in beacon", async () => {
-            mockContext.associationPermit = true;
+            mockContext.macAssociationPermit = true;
             getOnSendFrameMock().mockClear();
 
             const macHeader: MACHeader = {

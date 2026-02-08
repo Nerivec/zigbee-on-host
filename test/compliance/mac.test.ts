@@ -658,10 +658,10 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             expect(baseFrame.panCoordinator).toStrictEqual(true);
             expect(baseFrame.associationPermit).toStrictEqual(false);
 
-            context.associationPermit = true;
+            context.macAssociationPermit = true;
             const permissive = await generateBeacon();
             expect(permissive.header.superframeSpec!.associationPermit).toStrictEqual(true);
-            context.associationPermit = false;
+            context.macAssociationPermit = false;
         });
 
         it("disables GTS and leaves pending address lists empty", async () => {
@@ -939,7 +939,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             await macHandler.processCommand(Buffer.from([defaultCapabilities]), buildAssocHeader());
 
             expect(associateSpy).toHaveBeenCalledTimes(1);
-            const capabilitiesArg = associateSpy.mock.calls[0][3] as MACCapabilities;
+            const capabilitiesArg = associateSpy.mock.calls[0][2] as MACCapabilities;
             expect(capabilitiesArg).toStrictEqual({
                 alternatePANCoordinator: true,
                 deviceType: 1,
@@ -989,27 +989,6 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             expect(mockMACHandlerCallbacks.onAPSSendTransportKeyNWK).toHaveBeenCalledTimes(1);
 
             randomSpy.mockRestore();
-        });
-
-        it("propagates PAN_FULL status to association responses", async () => {
-            const associateSpy = vi.spyOn(context, "associate").mockResolvedValue([MACAssociationStatus.PAN_FULL, 0xffff, false]);
-            const sendCommandSpy = vi.spyOn(macHandler, "sendCommand").mockResolvedValue(true);
-
-            await macHandler.processCommand(Buffer.from([defaultCapabilities]), buildAssocHeader());
-
-            const pending = context.pendingAssociations.get(device64);
-            expect(pending).not.toBeUndefined();
-
-            await pending!.sendResp();
-
-            expect(sendCommandSpy).toHaveBeenCalledTimes(1);
-            const payload = sendCommandSpy.mock.calls[0][4];
-            expect(payload.readUInt16LE(0)).toStrictEqual(0xffff);
-            expect(payload.readUInt8(2)).toStrictEqual(MACAssociationStatus.PAN_FULL);
-            expect(mockMACHandlerCallbacks.onAPSSendTransportKeyNWK).not.toHaveBeenCalled();
-            expect(context.deviceTable.has(device64)).toStrictEqual(false);
-
-            associateSpy.mockRestore();
         });
 
         it("denies association when joins are not permitted", async () => {

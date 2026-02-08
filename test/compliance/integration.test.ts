@@ -1156,41 +1156,6 @@ describe("Integration and End-to-End Compliance", () => {
             await new Promise((resolve) => setImmediate(resolve));
         });
 
-        it("restores unknown devices by issuing rejoin responses", async () => {
-            const device16 = 0x3466;
-            const device64 = 0x00124b00deaf1104n;
-            const rejoinCaps: MACCapabilities = {
-                alternatePANCoordinator: false,
-                deviceType: 0,
-                powerSource: 1,
-                rxOnWhenIdle: false,
-                securityCapability: true,
-                allocateAddress: true,
-            };
-            const frames: Buffer[] = [];
-            mockMACHandlerCallbacks.onSendFrame = vi.fn((payload: Buffer) => {
-                frames.push(Buffer.from(payload));
-                return Promise.resolve();
-            });
-
-            const { macHeader, nwkHeader } = buildRejoinHeaders(device16, device64, true, 0x82, 0x52);
-            const payload = Buffer.from([ZigbeeNWKCommandId.REJOIN_REQ, encodeMACCapabilities(rejoinCaps)]);
-
-            await nwkHandler.processCommand(payload, macHeader, nwkHeader);
-
-            const restored = context.deviceTable.get(device64);
-            expect(restored).not.toBeUndefined();
-            expect(restored!.address16).toStrictEqual(device16);
-            expect(restored!.authorized).toStrictEqual(false);
-            expect(context.address16ToAddress64.get(device16)).toStrictEqual(device64);
-
-            const indirectQueue = context.indirectTransmissions.get(device64);
-            expect(indirectQueue).not.toBeUndefined();
-            expect(indirectQueue!.length).toStrictEqual(1);
-
-            await new Promise((resolve) => setImmediate(resolve));
-        });
-
         it("secures rejoin responses with the network key for secure rejoins", async () => {
             const device16 = 0x4177;
             const device64 = 0x00124b00deaf1105n;
