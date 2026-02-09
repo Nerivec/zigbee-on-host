@@ -1,6 +1,7 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { logger } from "../utils/logger.js";
 import { decodeMACCapabilities, encodeMACCapabilities, type MACCapabilities, type MACHeader } from "../zigbee/mac.js";
+import { KeyNegotationProtocol, PreSharedSecret } from "../zigbee/tlvs.js";
 import {
     aes128MmoHash,
     computeInstallCodeCRC,
@@ -100,6 +101,10 @@ export type TrustCenterPolicies = {
      * A setting of FALSE means rejoins are only allowed with trust center link keys where the KeyAttributes of the apsDeviceKeyPairSet entry indicates VERIFIED_KEY.
      */
     allowRejoinsWithWellKnownKey: boolean;
+    /** R23+ */
+    keyNegotiationProtocol: KeyNegotationProtocol;
+    /** R23+ */
+    preSharedSecret: PreSharedSecret;
     /** This value controls whether devices are allowed to request a Trust Center Link Key after they have joined the network. */
     allowTCKeyRequest: TrustCenterKeyRequestPolicy;
     /** This policy indicates whether a node on the network that transmits a ZDO Mgmt_Permit_Join with a significance set to 1 is allowed to effect the local Trust Center’s policies. */
@@ -389,6 +394,10 @@ export class StackContext {
         allowJoins: false,
         installCode: InstallCodePolicy.NOT_REQUIRED,
         allowRejoinsWithWellKnownKey: true,
+        // TODO: support other protocols
+        keyNegotiationProtocol: KeyNegotationProtocol.Z3,
+        // TODO: support other secrets
+        preSharedSecret: PreSharedSecret.INSTALL_CODE_KEY,
         allowTCKeyRequest: TrustCenterKeyRequestPolicy.ALLOWED,
         networkKeyUpdatePeriod: 0, // disable
         networkKeyUpdateMethod: NetworkKeyUpdateMethod.BROADCAST,

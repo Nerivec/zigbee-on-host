@@ -133,6 +133,9 @@ export class OTRCPDriver {
             onAPSSendTransportKeyNWK: async (address16, key, keySeqNum, destination64) => {
                 await this.apsHandler.sendTransportKeyNWK(address16, key, keySeqNum, destination64);
             },
+            onAPSSendStartKeyUpdateRequest: async (nwkDest16, nwkDest64, keyNegotiationProtocol, preSharedSecret) => {
+                await this.apsHandler.sendStartKeyUpdateRequest(nwkDest16, nwkDest64, keyNegotiationProtocol, preSharedSecret);
+            },
         };
 
         this.nwkHandler = new NWKHandler(this.context, this.macHandler, nwkCallbacks);

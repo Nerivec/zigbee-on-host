@@ -102,6 +102,7 @@ describe("Zigbee 4.0 Network Layer (NWK) Compliance", () => {
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),
+            onAPSSendStartKeyUpdateRequest: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
             onGPFrame: vi.fn(),

@@ -120,6 +120,7 @@ describe("Integration and End-to-End Compliance", () => {
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),
+            onAPSSendStartKeyUpdateRequest: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
             onGPFrame: vi.fn(),

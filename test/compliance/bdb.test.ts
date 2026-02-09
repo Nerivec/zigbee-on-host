@@ -25,6 +25,7 @@ import {
     MACFrameType,
     type MACHeader,
 } from "../../src/zigbee/mac.js";
+import { GlobalTlv, writeZigbeeTlvFragmentationParameters, writeZigbeeTlvSupportedKeyNegotiationMethods } from "../../src/zigbee/tlvs.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import { ZigbeeAPSConsts, ZigbeeAPSDeliveryMode, ZigbeeAPSFrameType, type ZigbeeAPSHeader } from "../../src/zigbee/zigbee-aps.js";
 import {
@@ -94,6 +95,7 @@ describe("Zigbee 4.0 Device Behavior Compliance", () => {
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),
+            onAPSSendStartKeyUpdateRequest: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
             onGPFrame: vi.fn(),
@@ -791,7 +793,23 @@ describe("Zigbee 4.0 Device Behavior Compliance", () => {
                 allocateAddress: true,
             };
             const { mac, nwk } = buildCommissioningHeaders(device64, device16);
-            const payload = Buffer.from([ZigbeeNWKCommandId.COMMISSIONING_REQUEST, 0x00, encodeMACCapabilities(capabilities)]);
+            const payload = Buffer.allocUnsafe(3 + 21);
+            let offset = 0;
+            offset = payload.writeUInt8(ZigbeeNWKCommandId.COMMISSIONING_REQUEST, offset);
+            offset = payload.writeUInt8(0x00, offset);
+            offset = payload.writeUInt8(encodeMACCapabilities(capabilities), offset);
+            offset = payload.writeUInt8(GlobalTlv.JOINER_ENCAPSULATION, offset);
+            offset = payload.writeUInt8(18, offset);
+            offset = writeZigbeeTlvSupportedKeyNegotiationMethods(payload, offset, {
+                keyNegotiationProtocolsBitmask: 0x07,
+                preSharedSecretsBitmask: 0x06,
+                sourceDeviceEui64: device64,
+            });
+            offset = writeZigbeeTlvFragmentationParameters(payload, offset, {
+                nwkAddress: device16,
+                fragmentationOptions: 0x1,
+                maxIncomingTransferUnit: 0x52,
+            });
             const frames: Buffer[] = [];
             mockMACHandlerCallbacks.onSendFrame = vi.fn((frame) => {
                 frames.push(Buffer.from(frame));
@@ -846,7 +864,23 @@ describe("Zigbee 4.0 Device Behavior Compliance", () => {
                 allocateAddress: true,
             };
             const { mac, nwk } = buildCommissioningHeaders(device64, device16);
-            const payload = Buffer.from([ZigbeeNWKCommandId.COMMISSIONING_REQUEST, 0x00, encodeMACCapabilities(capabilities)]);
+            const payload = Buffer.allocUnsafe(3 + 21);
+            let offset = 0;
+            offset = payload.writeUInt8(ZigbeeNWKCommandId.COMMISSIONING_REQUEST, offset);
+            offset = payload.writeUInt8(0x00, offset);
+            offset = payload.writeUInt8(encodeMACCapabilities(capabilities), offset);
+            offset = payload.writeUInt8(GlobalTlv.JOINER_ENCAPSULATION, offset);
+            offset = payload.writeUInt8(18, offset);
+            offset = writeZigbeeTlvSupportedKeyNegotiationMethods(payload, offset, {
+                keyNegotiationProtocolsBitmask: 0x07,
+                preSharedSecretsBitmask: 0x06,
+                sourceDeviceEui64: device64,
+            });
+            offset = writeZigbeeTlvFragmentationParameters(payload, offset, {
+                nwkAddress: device16,
+                fragmentationOptions: 0x1,
+                maxIncomingTransferUnit: 0x52,
+            });
 
             const transportSpy = vi
                 .spyOn(mockNWKHandlerCallbacks, "onAPSSendTransportKeyNWK")

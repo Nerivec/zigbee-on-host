@@ -85,6 +85,7 @@ describe("Zigbee 4.0 Green Power (NWK GP) Compliance", () => {
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),
+            onAPSSendStartKeyUpdateRequest: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
             onGPFrame: vi.fn(),

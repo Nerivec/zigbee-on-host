@@ -94,7 +94,8 @@ describe("APS Handler", () => {
         vi.spyOn(mockMACHandler, "sendFrameDirect");
 
         mockNWKCallbacks = {
-            onAPSSendTransportKeyNWK: vi.fn(async () => {}),
+            onAPSSendTransportKeyNWK: vi.fn(),
+            onAPSSendStartKeyUpdateRequest: vi.fn(),
         };
 
         mockNWKHandler = new NWKHandler(mockContext, mockMACHandler, mockNWKCallbacks);

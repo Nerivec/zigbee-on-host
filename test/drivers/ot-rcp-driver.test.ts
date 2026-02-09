@@ -32,6 +32,7 @@ import {
     type MACHeader,
     ZigbeeMACConsts,
 } from "../../src/zigbee/mac.js";
+import { GlobalTlv, writeZigbeeTlvFragmentationParameters, writeZigbeeTlvSupportedKeyNegotiationMethods } from "../../src/zigbee/tlvs.js";
 import { ZigbeeConsts } from "../../src/zigbee/zigbee.js";
 import {
     decodeZigbeeAPSFrameControl,
@@ -979,7 +980,22 @@ describe("OT RCP Driver", () => {
 
             driver.context.allowJoins(0xfe, true);
 
-            const data = Buffer.from([0x00, 0x8e]);
+            const data = Buffer.allocUnsafe(2 + 21);
+            let offset = 0;
+            offset = data.writeUInt8(0x00, offset);
+            offset = data.writeUInt8(0x8e, offset);
+            offset = data.writeUInt8(GlobalTlv.JOINER_ENCAPSULATION, offset);
+            offset = data.writeUInt8(18, offset);
+            offset = writeZigbeeTlvSupportedKeyNegotiationMethods(data, offset, {
+                keyNegotiationProtocolsBitmask: 0x07,
+                preSharedSecretsBitmask: 0x06,
+                sourceDeviceEui64: destination64,
+            });
+            offset = writeZigbeeTlvFragmentationParameters(data, offset, {
+                nwkAddress: destination16,
+                fragmentationOptions: 0x1,
+                maxIncomingTransferUnit: 0x52,
+            });
             const macHeader = {
                 source16: destination16,
                 source64: destination64,

@@ -98,6 +98,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),
+            onAPSSendStartKeyUpdateRequest: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
             onGPFrame: vi.fn(),

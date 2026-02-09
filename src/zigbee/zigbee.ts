@@ -27,6 +27,7 @@ export const enum ZigbeeConsts {
     //---- ZDO
     ZDO_ENDPOINT = 0x00,
     ZDO_PROFILE_ID = 0x0000,
+    ZDO_SUCCESS = 0x00,
     NETWORK_ADDRESS_REQUEST = 0x0000,
     IEEE_ADDRESS_REQUEST = 0x0001,
     NODE_DESCRIPTOR_REQUEST = 0x0002,
@@ -37,6 +38,8 @@ export const enum ZigbeeConsts {
     LQI_TABLE_REQUEST = 0x0031,
     ROUTING_TABLE_REQUEST = 0x0032,
     NWK_UPDATE_REQUEST = 0x0038,
+    START_KEY_UPDATE_REQUEST = 0x0045,
+    START_KEY_UPDATE_RESPONSE = 0x8045,
 
     //---- Green Power
     GP_ENDPOINT = 0xf2,

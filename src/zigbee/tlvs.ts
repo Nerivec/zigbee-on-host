@@ -1,12 +1,6 @@
 import type { RequiredNonNullable } from "../utils/types.js";
 import { ZigbeeConsts } from "./zigbee.js";
 
-export const enum GlobalTlvConsts {
-    KEY_NEGOTATION_METHOD_STATIC = 0b000,
-    KEY_NEGOTATION_METHOD_MMO128 = 0b010,
-    KEY_NEGOTATION_METHOD_SHA256 = 0b100,
-}
-
 export const enum GlobalTlv {
     /** minLen=2 */
     MANUFACTURER_SPECIFIC = 64,
@@ -31,6 +25,41 @@ export const enum GlobalTlv {
     /** Zigbee Direct */
     DEVICE_CAPABILITY_EXTENSION = 76,
     // Reserved = 77-255
+}
+
+/** uint8 */
+export const enum KeyNegotationProtocol {
+    Z3 = 0x0,
+    MMO128 = 0x1,
+    SHA256 = 0x2,
+}
+
+/** uint8 */
+export const enum KeyNegotationProtocolMask {
+    Z3 = 0b01,
+    MMO128 = 0b10,
+    SHA256 = 0b11,
+}
+
+/** uint8 */
+export const enum PreSharedSecret {
+    SYMMETRIC_AUTHENTICATION_TOKEN = 0x00,
+    INSTALL_CODE_KEY = 0x01,
+    PASSCODE_KEY = 0x02,
+    BASIC_ACCESS_KEY = 0x03,
+    ADMINISTRATIVE_ACCESS_KEY = 0x04,
+    // 0x04-0xfe reserved
+    ANONYMOUS_WELL_KNOWN_SECRET = 0xff,
+}
+
+/** uint8 */
+export const enum PreSharedSecretMask {
+    SYMMETRIC_AUTHENTICATION_TOKEN = 0b00001,
+    INSTALL_CODE_KEY = 0b00010,
+    PASSCODE_KEY = 0b00100,
+    BASIC_ACCESS_KEY = 0b01000,
+    ADMINISTRATIVE_ACCESS_KEY = 0b10000,
+    // others reserved
 }
 
 type GlobalTlvEncapsulated = {
@@ -406,6 +435,7 @@ export function readZigbeeTlvs(data: Buffer, offset: number, parent?: number): [
     return [globalTlvs, localTlvs, offset];
 }
 
+/** Byte length: 12 */
 export function writeZigbeeTlvSupportedKeyNegotiationMethods(
     data: Buffer,
     offset: number,
@@ -420,6 +450,7 @@ export function writeZigbeeTlvSupportedKeyNegotiationMethods(
     return offset;
 }
 
+/** Byte length: 7 */
 export function writeZigbeeTlvFragmentationParameters(
     data: Buffer,
     offset: number,
@@ -434,6 +465,7 @@ export function writeZigbeeTlvFragmentationParameters(
     return offset;
 }
 
+/** Byte length: 4 */
 export function writeZigbeeTlvRouterInformation(data: Buffer, offset: number, tlv: RequiredNonNullable<GlobalTlvRouterInformation>): number {
     offset = data.writeUInt8(GlobalTlv.ROUTER_INFORMATION, offset);
     offset = data.writeUInt8(1, offset); // per spec, actual data length is `length field + 1`

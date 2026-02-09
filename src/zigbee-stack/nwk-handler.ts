@@ -9,7 +9,14 @@ import {
     type MACHeader,
     ZigbeeMACConsts,
 } from "../zigbee/mac.js";
-import { GlobalTlv, GlobalTlvConsts, readZigbeeTlvs } from "../zigbee/tlvs.js";
+import {
+    GlobalTlv,
+    KeyNegotationProtocol,
+    KeyNegotationProtocolMask,
+    type PreSharedSecret,
+    PreSharedSecretMask,
+    readZigbeeTlvs,
+} from "../zigbee/tlvs.js";
 import { ZigbeeConsts, ZigbeeKeyType, type ZigbeeSecurityHeader, ZigbeeSecurityLevel } from "../zigbee/zigbee.js";
 import {
     encodeZigbeeNWKFrame,
@@ -34,6 +41,13 @@ const NS = "nwk-handler";
 export interface NWKHandlerCallbacks {
     /** Send APS TRANSPORT_KEY for network key */
     onAPSSendTransportKeyNWK: (destination16: number, networkKey: Buffer, keySequenceNumber: number, destination64: bigint) => Promise<void>;
+    /** Send APS ZDO START_KEY_UPDATE_REQUEST */
+    onAPSSendStartKeyUpdateRequest: (
+        nwkDest16: number,
+        nwkDest64: bigint,
+        keyNegotiationProtocol: KeyNegotationProtocol,
+        preSharedSecret: PreSharedSecret,
+    ) => Promise<void>;
 }
 
 /** The number of OctetDurations until a route discovery expires. */
@@ -1300,7 +1314,7 @@ export class NWKHandler {
                     status = MACAssociationStatus.PAN_FULL;
                 } else {
                     status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
-                    requiresTransportKey = !secured;
+                    requiresTransportKey = !secured; // only if Trust Center Rejoin
                     const neighbor = macHeader.source16 === nwkHeader.source16;
 
                     await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, false);
@@ -1308,7 +1322,7 @@ export class NWKHandler {
             } else {
                 newAddress16 = nwkHeader.source16;
                 status = MACAssociationStatus.SUCCESS;
-                requiresTransportKey = !secured;
+                requiresTransportKey = !secured; // only if Trust Center Rejoin
                 const neighbor = macHeader.source16 === nwkHeader.source16;
 
                 await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, false);
@@ -1318,7 +1332,7 @@ export class NWKHandler {
         await this.sendRejoinResp(nwkHeader.source16, newAddress16, status);
 
         if (requiresTransportKey) {
-            // XXX: is this spec?
+            // XXX: use tunnel even if direct Coordinator<>rejoiner?
             await this.#callbacks.onAPSSendTransportKeyNWK(
                 newAddress16,
                 this.#context.netParams.networkKey,
@@ -1878,8 +1892,9 @@ export class NWKHandler {
         const commissioningType = data.readUInt8(offset);
         offset += 1;
         const secured = nwkHeader.frameControl.security;
+        const initialJoin = commissioningType === ZigbeeNWKCommissioningType.INITIAL_JOIN;
 
-        if (secured && commissioningType === ZigbeeNWKCommissioningType.INITIAL_JOIN) {
+        if (secured && initialJoin) {
             return; // per spec, drop
         }
 
@@ -1888,28 +1903,37 @@ export class NWKHandler {
         const decodedCap = decodeMACCapabilities(capabilities);
         const [globalTlvs] = readZigbeeTlvs(data, offset);
         const joinerTlv = globalTlvs[GlobalTlv.JOINER_ENCAPSULATION];
-        let selectedKeyNegotiationMethod = GlobalTlvConsts.KEY_NEGOTATION_METHOD_STATIC; // fallback
 
-        if (joinerTlv !== undefined) {
-            // device is R23
-            const fragmentationParametersTlv = joinerTlv.additionalTlvs[GlobalTlv.FRAGMENTATION_PARAMETERS];
-            const supportedKeyNegotiationMethodsTlv = joinerTlv.additionalTlvs[GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS];
+        if (joinerTlv === undefined) {
+            return; // invalid
+        }
 
-            if (fragmentationParametersTlv !== undefined) {
-                // TODO
+        const supportedKeyNegotiationMethodsTlv = joinerTlv.additionalTlvs[GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS];
+        const rejoin = commissioningType === ZigbeeNWKCommissioningType.REJOIN;
+
+        if (supportedKeyNegotiationMethodsTlv === undefined) {
+            if (!rejoin) {
+                return; // invalid
+            }
+        } else {
+            // TODO: support other protocols
+            if (!(supportedKeyNegotiationMethodsTlv.keyNegotiationProtocolsBitmask & KeyNegotationProtocolMask.Z3)) {
+                return; // per spec, must always be supported
             }
 
-            if (supportedKeyNegotiationMethodsTlv !== undefined) {
-                // TODO
-                const bitmask = supportedKeyNegotiationMethodsTlv.keyNegotiationProtocolsBitmask;
+            if (!(supportedKeyNegotiationMethodsTlv.preSharedSecretsBitmask & PreSharedSecretMask.INSTALL_CODE_KEY)) {
+                // XXX: spec?
+                await this.sendCommissioningResponse(nwkHeader.source16, 0xffff, MACAssociationStatus.PAN_ACCESS_DENIED);
 
-                // TODO: by order of "most security"?
-                if (bitmask & GlobalTlvConsts.KEY_NEGOTATION_METHOD_SHA256) {
-                    selectedKeyNegotiationMethod = GlobalTlvConsts.KEY_NEGOTATION_METHOD_SHA256;
-                } else if (bitmask & GlobalTlvConsts.KEY_NEGOTATION_METHOD_MMO128) {
-                    selectedKeyNegotiationMethod = GlobalTlvConsts.KEY_NEGOTATION_METHOD_MMO128;
-                }
+                return; // others currently not supported
             }
+        }
+
+        // TODO: store in state?
+        const fragmentationParametersTlv = joinerTlv.additionalTlvs[GlobalTlv.FRAGMENTATION_PARAMETERS];
+
+        if (fragmentationParametersTlv === undefined) {
+            return; // invalid
         }
 
         logger.debug(
@@ -1924,8 +1948,8 @@ export class NWKHandler {
         let status: MACAssociationStatus | number = MACAssociationStatus.PAN_ACCESS_DENIED;
         let requiresTransportKey = false;
 
-        if (commissioningType === ZigbeeNWKCommissioningType.INITIAL_JOIN) {
-            if (this.#context.trustCenterPolicies.allowJoins) {
+        if (initialJoin) {
+            if (this.#context.macAssociationPermit && this.#context.trustCenterPolicies.allowJoins) {
                 if (this.#context.address16ToAddress64.has(nwkHeader.source16)) {
                     // device address is conflicting, assign new one
                     newAddress16 = this.#context.assignNetworkAddress();
@@ -1948,7 +1972,7 @@ export class NWKHandler {
                     await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, true);
                 }
             }
-        } else if (commissioningType === ZigbeeNWKCommissioningType.REJOIN) {
+        } else if (rejoin) {
             const device = this.#context.deviceTable.get(nwkHeader.source64);
 
             if (device?.authorized) {
@@ -1961,7 +1985,7 @@ export class NWKHandler {
                         status = MACAssociationStatus.PAN_FULL;
                     } else {
                         status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
-                        requiresTransportKey = !secured;
+                        requiresTransportKey = !secured; // only if Trust Center Rejoin
                         const neighbor = macHeader.source16 === nwkHeader.source16;
 
                         await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, false);
@@ -1969,7 +1993,7 @@ export class NWKHandler {
                 } else {
                     newAddress16 = nwkHeader.source16;
                     status = MACAssociationStatus.SUCCESS;
-                    requiresTransportKey = !secured;
+                    requiresTransportKey = !secured; // only if Trust Center Rejoin
                     const neighbor = macHeader.source16 === nwkHeader.source16;
 
                     await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, false);
@@ -1980,21 +2004,29 @@ export class NWKHandler {
         await this.sendCommissioningResponse(nwkHeader.source16, newAddress16, status);
 
         if (requiresTransportKey) {
-            // TODO: might need to be different if R23 or not
-            if (selectedKeyNegotiationMethod === GlobalTlvConsts.KEY_NEGOTATION_METHOD_STATIC) {
-                const dest64 = this.#context.address16ToAddress64.get(newAddress16);
-
-                if (dest64 !== undefined && requiresTransportKey) {
-                    await this.#callbacks.onAPSSendTransportKeyNWK(
-                        newAddress16,
-                        this.#context.netParams.networkKey,
-                        this.#context.netParams.networkKeySequenceNumber,
-                        dest64,
-                    );
-                    this.#context.markNetworkKeyTransported(dest64);
-                }
+            if (this.#context.trustCenterPolicies.keyNegotiationProtocol === KeyNegotationProtocol.Z3) {
+                await this.#callbacks.onAPSSendTransportKeyNWK(
+                    newAddress16,
+                    this.#context.netParams.networkKey,
+                    this.#context.netParams.networkKeySequenceNumber,
+                    nwkHeader.source64,
+                );
+                this.#context.markNetworkKeyTransported(nwkHeader.source64);
             } else {
-                // TODO START_KEY_UPDATE ZDO
+                if (rejoin) {
+                    // At this time this Revision of the specification does not support negotiating a new link key during rejoin.
+                    // Therefore, devices certified to this Revision SHALL not include the Supported Key Negotiation Methods Global TLV
+                    // inside the Joiner Encapsulation TLV so it is clear to the Trust Center that the device does not support this behavior.
+                    // Future revisions of this specification that support this would include this TLV as a clear sign the rejoining device supports this new functionality.
+                    return;
+                }
+
+                await this.#callbacks.onAPSSendStartKeyUpdateRequest(
+                    newAddress16,
+                    nwkHeader.source64,
+                    this.#context.trustCenterPolicies.keyNegotiationProtocol,
+                    this.#context.trustCenterPolicies.preSharedSecret,
+                );
             }
         }
     }
@@ -2029,7 +2061,7 @@ export class NWKHandler {
             false, // nwkSecurity
             ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
             requestSource16, // nwkDest16
-            this.#context.address16ToAddress64.get(requestSource16), // nwkDest64
+            this.#context.address16ToAddress64.get(newAddress16), // nwkDest64
             CONFIG_NWK_MAX_HOPS, // nwkRadius
         );
     }
