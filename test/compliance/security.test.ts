@@ -3,8 +3,8 @@
  *
  * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
- *   - Zigbee specification (05-3474-23): Revision 23.1
- *   - Base device behavior (16-02828-012): v3.0.1
+ *   - Zigbee specification (06-3474-23): Revision 23.1
+ *   - Base device behavior (16-02828-012): v3.1
  *   - ZCL specification (07-5123): Revision 8
  *   - Green Power specification (14-0563-19): Version 1.1.2
  *
@@ -17,7 +17,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     encodeMACCapabilities,
-    MACAssociationStatus,
     type MACCapabilities,
     MACCommandId,
     MACFrameAddressMode,
@@ -78,7 +77,7 @@ import {
     registerNeighborDevice,
 } from "./utils.js";
 
-describe("Zigbee 3.0 Security Compliance", () => {
+describe("Zigbee 4.0 Security Compliance", () => {
     let netParams: NetworkParameters;
     let saveDir: string;
 
@@ -124,6 +123,7 @@ describe("Zigbee 3.0 Security Compliance", () => {
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),
+            onAPSSendStartKeyUpdateRequest: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
             onGPFrame: vi.fn(),
@@ -160,7 +160,7 @@ describe("Zigbee 3.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.3: Security Processing
+     * Zigbee Spec 06-3474-23 §4.3: Security Processing
      * Security processing SHALL use CCM* (counter with CBC-MAC) mode.
      */
     type CapturedNwkSecurity = {
@@ -387,7 +387,7 @@ describe("Zigbee 3.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.3.1: Security Levels
+     * Zigbee Spec 06-3474-23 §4.3.1: Security Levels
      * Zigbee SHALL use security level 5 (encryption + 32-bit MIC).
      */
     describe("Security Levels (Zigbee §4.3.1)", () => {
@@ -419,7 +419,7 @@ describe("Zigbee 3.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.3.2: Frame Counters
+     * Zigbee Spec 06-3474-23 §4.3.2: Frame Counters
      * Frame counters SHALL be maintained per key and SHALL NOT repeat.
      */
     function decodeSecurityFrame(frame: DecodedMACFrame) {
@@ -644,7 +644,7 @@ describe("Zigbee 3.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.5: Trust Center
+     * Zigbee Spec 06-3474-23 §4.5: Trust Center
      * Trust Center SHALL manage network security and key distribution.
      */
     describe("Trust Center Operations (Zigbee §4.5)", () => {
@@ -695,7 +695,7 @@ describe("Zigbee 3.0 Security Compliance", () => {
                 fcs: 0,
             };
 
-            await macHandler.processAssocReq(Buffer.from([capabilitiesByte]), 0, macHeader);
+            await macHandler.processAssocReq(Buffer.from([capabilitiesByte]), macHeader);
 
             const pending = context.pendingAssociations.get(device64);
             expect(pending).not.toBeUndefined();
@@ -910,8 +910,8 @@ describe("Zigbee 3.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.6.3.2: Well-Known Keys
-     * Well-known keys SHALL be used according to Zigbee 3.0 specification.
+     * Zigbee Spec 06-3474-23 §4.6.3.2: Well-Known Keys
+     * Well-known keys SHALL be used according to Zigbee 4.0 specification.
      */
     describe("Well-Known Keys (Zigbee §4.6.3.2)", () => {
         it("precomputes the trust center verify hash for the ZigBeeAlliance09 link key", () => {
@@ -939,7 +939,7 @@ describe("Zigbee 3.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.6.3.4: Install Codes
+     * Zigbee Spec 06-3474-23 §4.6.3.4: Install Codes
      * Install codes SHALL be used to derive preconfigured link keys.
      */
     describe("Install Codes (Zigbee §4.6.3.4)", () => {
@@ -999,57 +999,10 @@ describe("Zigbee 3.0 Security Compliance", () => {
 
             expect(() => context.addInstallCode(device64, codeVector)).toThrowError("Invalid install code CRC");
         });
-
-        it("enforces install code policy when required by the trust center", async () => {
-            const device64 = 0x00124b00ffee0303n;
-            const caps: MACCapabilities = {
-                alternatePANCoordinator: false,
-                deviceType: 0,
-                powerSource: 1,
-                rxOnWhenIdle: true,
-                securityCapability: true,
-                allocateAddress: true,
-            };
-
-            context.trustCenterPolicies.installCode = InstallCodePolicy.REQUIRED;
-            context.allowJoins(60, true);
-
-            const [statusWithoutCode] = await context.associate(undefined, device64, true, caps, true);
-
-            expect(statusWithoutCode).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
-
-            context.addInstallCode(device64, codeVector);
-
-            const [statusWithCode, assignedAddress] = await context.associate(undefined, device64, true, caps, true);
-
-            expect(statusWithCode).toStrictEqual(MACAssociationStatus.SUCCESS);
-            expect(assignedAddress).not.toStrictEqual(0xffff);
-            expect(context.getAppLinkKey(device64, context.netParams.eui64)).toStrictEqual(linkKeyVector);
-        });
-
-        it("allows joins without install codes when policy is not required", async () => {
-            const device64 = 0x00124b00ffee0404n;
-            const caps: MACCapabilities = {
-                alternatePANCoordinator: false,
-                deviceType: 0,
-                powerSource: 1,
-                rxOnWhenIdle: true,
-                securityCapability: true,
-                allocateAddress: true,
-            };
-
-            context.trustCenterPolicies.installCode = InstallCodePolicy.NOT_REQUIRED;
-            context.allowJoins(60, true);
-
-            const [status, assignedAddress] = await context.associate(undefined, device64, true, caps, true);
-
-            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
-            expect(assignedAddress).not.toStrictEqual(0xffff);
-        });
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.6.3.5: Network Key Update
+     * Zigbee Spec 06-3474-23 §4.6.3.5: Network Key Update
      * Network key update SHALL allow periodic key rotation.
      */
     describe("Network Key Update (Zigbee §4.6.3.5)", () => {
@@ -1116,68 +1069,10 @@ describe("Zigbee 3.0 Security Compliance", () => {
 
             mockMACHandlerCallbacks.onSendFrame = vi.fn();
         });
-
-        it("activates staged network key only after receiving switch key", async () => {
-            const originalKey = Buffer.from(context.netParams.networkKey);
-            const originalSeq = context.netParams.networkKeySequenceNumber;
-            context.netParams.networkKeyFrameCounter = 42;
-
-            const pendingKey = Buffer.from("fedcba98765432100123456789abcdef", "hex");
-            const pendingSeq = 0x44;
-            context.setPendingNetworkKey(pendingKey, pendingSeq);
-
-            expect(context.netParams.networkKey).toStrictEqual(originalKey);
-            expect(context.netParams.networkKeySequenceNumber).toStrictEqual(originalSeq);
-
-            const payload = Buffer.from([ZigbeeAPSCommandId.SWITCH_KEY, pendingSeq]);
-            const macHeader: MACHeader = {
-                frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
-                sequenceNumber: 0x40,
-                destinationPANId: netParams.panId,
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source16: 0x1234,
-                commandId: undefined,
-                fcs: 0,
-            };
-            const nwkHeader: ZigbeeNWKHeader = {
-                frameControl: {
-                    frameType: ZigbeeNWKFrameType.DATA,
-                    protocolVersion: ZigbeeNWKConsts.VERSION_2007,
-                    discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
-                    multicast: false,
-                    security: true,
-                    sourceRoute: false,
-                    extendedDestination: false,
-                    extendedSource: false,
-                    endDeviceInitiator: false,
-                },
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source16: 0x1234,
-                radius: 5,
-                seqNum: 0x41,
-            };
-            const apsHeader: ZigbeeAPSHeader = {
-                frameControl: {
-                    frameType: ZigbeeAPSFrameType.CMD,
-                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
-                    ackFormat: false,
-                    security: false,
-                    ackRequest: true,
-                    extendedHeader: false,
-                },
-                counter: 0x42,
-            };
-
-            await apsHandler.processCommand(payload, macHeader, nwkHeader, apsHeader);
-
-            expect(context.netParams.networkKey).toStrictEqual(pendingKey);
-            expect(context.netParams.networkKeySequenceNumber).toStrictEqual(pendingSeq);
-            expect(context.netParams.networkKeyFrameCounter).toStrictEqual(0);
-        });
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.6.3.6: Trust Center Link Key Update
+     * Zigbee Spec 06-3474-23 §4.6.3.6: Trust Center Link Key Update
      * TC link key update SHALL use APS request/verify/confirm key commands.
      */
     describe("Trust Center Link Key Update (Zigbee §4.6.3.6)", () => {
@@ -1362,7 +1257,7 @@ describe("Zigbee 3.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.6.3.7: Application Link Keys
+     * Zigbee Spec 06-3474-23 §4.6.3.7: Application Link Keys
      * Application link keys SHALL be established between communicating devices.
      */
     describe("Application Link Keys (Zigbee §4.6.3.7)", () => {
@@ -1554,7 +1449,7 @@ describe("Zigbee 3.0 Security Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §4.7: Key Storage
+     * Zigbee Spec 06-3474-23 §4.7: Key Storage
      * Devices SHALL securely store cryptographic keys.
      */
     describe("Key Storage (Zigbee §4.7)", () => {

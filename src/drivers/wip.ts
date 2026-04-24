@@ -1,7 +1,7 @@
 import type { TrustCenterPolicies } from "../zigbee-stack/stack-context";
 
 /**
- * see 05-3474-23 #3.6.1.7
+ * see 06-3474-23 #3.6.1.7
  *
  * SHALL contain information on every device on the current Zigbee network within transmission range, up to some implementation-dependent limit.
  * The neighbor does not store information about potential networks and candidate parents to join or rejoin.
@@ -153,14 +153,14 @@ export type NeighborTableEntry = {
 };
 
 /**
- * see 05-3474-23 Table 4-2
+ * see 06-3474-23 Table 4-2
  * TODO
  * This set contains the network keying material, which SHOULD be accessible to commissioning applications.
  */
 export type NWKSecurityMaterialSet = undefined;
 
 /**
- * see 05-3474-23 Table 2-24
+ * see 06-3474-23 Table 2-24
  * TODO
  * The binding table for this device. Binding provides a separation of concerns in the sense that applications MAY operate without having to manage recipient address information for the frames they emit. This information can be input at commissioning time without the main application on the device even being aware of it.
  */
@@ -169,7 +169,7 @@ export type APSBindingTable = {
 };
 
 /**
- * see 05-3474-23 Table 4-35
+ * see 06-3474-23 Table 4-35
  * A set of key-pair descriptors containing link keys shared with other devices.
  */
 export type APSDeviceKeyPairSet = {

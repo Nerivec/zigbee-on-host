@@ -3,8 +3,8 @@
  *
  * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
- *   - Zigbee specification (05-3474-23): Revision 23.1
- *   - Base device behavior (16-02828-012): v3.0.1
+ *   - Zigbee specification (06-3474-23): Revision 23.1
+ *   - Base device behavior (16-02828-012): v3.1
  *   - ZCL specification (07-5123): Revision 8
  *   - Green Power specification (14-0563-19): Version 1.1.2
  *
@@ -72,7 +72,7 @@ import {
 } from "../../src/zigbee-stack/stack-context.js";
 import { NETDEF_EXTENDED_PAN_ID, NETDEF_NETWORK_KEY, NETDEF_PAN_ID, NETDEF_TC_KEY } from "../data.js";
 import { createMACFrameControl } from "../utils.js";
-import { decodeMACFramePayload, decodeNwkCommandFromMac, NO_ACK_CODE, registerDevice, registerNeighborDevice } from "./utils.js";
+import { decodeMACFramePayload, decodeNwkFromMac, NO_ACK_CODE, registerDevice, registerNeighborDevice } from "./utils.js";
 
 describe("Integration and End-to-End Compliance", () => {
     let netParams: NetworkParameters;
@@ -120,6 +120,7 @@ describe("Integration and End-to-End Compliance", () => {
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),
+            onAPSSendStartKeyUpdateRequest: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
             onGPFrame: vi.fn(),
@@ -182,7 +183,7 @@ describe("Integration and End-to-End Compliance", () => {
             source64: device64,
             commandId: MACCommandId.BEACON_REQ,
             fcs: 0,
-        } satisfies MACHeader;
+        };
     }
 
     function buildAssocHeader(device64: bigint, sequenceNumber = 0x26, source16 = ZigbeeMACConsts.NO_ADDR16): MACHeader {
@@ -196,7 +197,7 @@ describe("Integration and End-to-End Compliance", () => {
             source64: device64,
             commandId: MACCommandId.ASSOC_REQ,
             fcs: 0,
-        } satisfies MACHeader;
+        };
     }
 
     function buildDataRequestHeader(device64: bigint, source16: number, sequenceNumber: number): MACHeader {
@@ -210,7 +211,7 @@ describe("Integration and End-to-End Compliance", () => {
             source64: device64,
             commandId: MACCommandId.DATA_RQ,
             fcs: 0,
-        } satisfies MACHeader;
+        };
     }
 
     describe("Complete Join Procedure", () => {
@@ -237,7 +238,7 @@ describe("Integration and End-to-End Compliance", () => {
             });
 
             // Step 1: Device requests beacon information and coordinator responds with association permit set.
-            await macHandler.processBeaconReq(Buffer.alloc(0), 0, buildBeaconRequestHeader(device64));
+            await macHandler.processBeaconReq(Buffer.alloc(0), buildBeaconRequestHeader(device64));
             expect(frames).toHaveLength(1);
             const beaconFrame = decodeMACFramePayload(frames[0]!);
             expect(beaconFrame.frameControl.frameType).toStrictEqual(MACFrameType.BEACON);
@@ -245,7 +246,7 @@ describe("Integration and End-to-End Compliance", () => {
             expect(beaconFrame.header.superframeSpec?.associationPermit).toStrictEqual(true);
 
             // Step 2: Device issues association request with capabilities.
-            await macHandler.processAssocReq(Buffer.from([encodeMACCapabilities(deviceCapabilities)]), 0, buildAssocHeader(device64));
+            await macHandler.processAssocReq(Buffer.from([encodeMACCapabilities(deviceCapabilities)]), buildAssocHeader(device64));
             const entry = context.deviceTable.get(device64);
             expect(entry).not.toBeUndefined();
             expect(entry?.capabilities).toStrictEqual(deviceCapabilities);
@@ -253,7 +254,7 @@ describe("Integration and End-to-End Compliance", () => {
             expect(assigned16).not.toStrictEqual(0xffff);
 
             // Step 3: Device polls for data to receive the association response.
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader(device64, assigned16, 0x31));
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader(device64, assigned16, 0x31));
             expect(frames).toHaveLength(2);
             const assocFrame = decodeMACFramePayload(frames[1]!);
             expect(assocFrame.frameControl.frameType).toStrictEqual(MACFrameType.CMD);
@@ -264,7 +265,7 @@ describe("Integration and End-to-End Compliance", () => {
             expect(assocPayload.readUInt8(2)).toStrictEqual(MACAssociationStatus.SUCCESS);
 
             // Step 4: Coordinator delivers the network key via APS transport key on the next poll.
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader(device64, assigned16, 0x32));
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader(device64, assigned16, 0x32));
             expect(frames).toHaveLength(3);
             const transportDecoded = decodeApsFromMac(frames[2]!);
             expect(transportDecoded.nwkFrameControl.frameType).toStrictEqual(ZigbeeNWKFrameType.DATA);
@@ -291,26 +292,7 @@ describe("Integration and End-to-End Compliance", () => {
             const indirectQueue = context.indirectTransmissions.get(device64);
             expect(indirectQueue === undefined || indirectQueue.length === 0).toStrictEqual(true);
 
-            // Step 5: Trust Center notifies the network of the unsecured join using Update Device.
-            const frameCountBeforeUpdate = frames.length;
-            context.address16ToAddress64.set(ZigbeeConsts.COORDINATOR_ADDRESS, context.netParams.eui64);
-            const updateSent = await apsHandler.sendUpdateDevice(
-                ZigbeeConsts.COORDINATOR_ADDRESS,
-                device64,
-                assigned16,
-                ZigbeeAPSConsts.CMD_UPDATE_STANDARD_UNSEC_JOIN,
-            );
-            expect(updateSent).toStrictEqual(true);
-            expect(frames).toHaveLength(frameCountBeforeUpdate + 1);
-            const updateDecoded = decodeApsFromMac(frames[frameCountBeforeUpdate]!);
-            expect(updateDecoded.nwkFrameControl.security).toStrictEqual(true);
-            expect(updateDecoded.apsFrameControl.security).toStrictEqual(false);
-            expect(updateDecoded.apsPayload.readUInt8(0)).toStrictEqual(ZigbeeAPSCommandId.UPDATE_DEVICE);
-            expect(updateDecoded.apsPayload.readBigUInt64LE(1)).toStrictEqual(device64);
-            expect(updateDecoded.apsPayload.readUInt16LE(9)).toStrictEqual(assigned16);
-            expect(updateDecoded.apsPayload.readUInt8(11)).toStrictEqual(ZigbeeAPSConsts.CMD_UPDATE_STANDARD_UNSEC_JOIN);
-
-            // Step 6: Device broadcasts an end device announce and the stack reports it to external callbacks.
+            // Step 5: Device broadcasts an end device announce and the stack reports it to external callbacks.
             const announcePayload = Buffer.alloc(1 + 2 + 8 + 1);
             let announceOffset = 0;
             announcePayload.writeUInt8(0x21, announceOffset);
@@ -583,7 +565,7 @@ describe("Integration and End-to-End Compliance", () => {
                 expect(frames.length).toBeGreaterThanOrEqual(2);
 
                 const discoveryFrames = frames.slice(1);
-                const decodedDiscovery = discoveryFrames.map((frame) => decodeNwkCommandFromMac(frame, context.netParams.eui64));
+                const decodedDiscovery = discoveryFrames.map((frame) => decodeNwkFromMac(frame, context.netParams.eui64));
                 const routeRequests = decodedDiscovery.filter(({ nwkFrameControl, nwkPayload }) => {
                     if (nwkFrameControl.frameType !== ZigbeeNWKFrameType.CMD) {
                         return false;
@@ -707,7 +689,7 @@ describe("Integration and End-to-End Compliance", () => {
             );
 
             expect(frames).toHaveLength(1);
-            const { macDecoded, nwkFrameControl, nwkHeader } = decodeNwkCommandFromMac(frames[0]!, context.netParams.eui64);
+            const { macDecoded, nwkFrameControl, nwkHeader } = decodeNwkFromMac(frames[0]!, context.netParams.eui64);
             expect(macDecoded.header.destination16).toStrictEqual(relay16);
             expect(nwkFrameControl.sourceRoute).toStrictEqual(true);
             expect(nwkHeader.relayAddresses).toStrictEqual([relay16]);
@@ -727,7 +709,7 @@ describe("Integration and End-to-End Compliance", () => {
                 await nwkHandler.sendRouteReq(ZigbeeNWKManyToOne.WITH_SOURCE_ROUTING, ZigbeeConsts.BCAST_DEFAULT);
 
                 expect(frames).toHaveLength(1);
-                const { macDecoded, nwkFrameControl, nwkHeader, nwkPayload } = decodeNwkCommandFromMac(frames[0]!, context.netParams.eui64);
+                const { macDecoded, nwkFrameControl, nwkHeader, nwkPayload } = decodeNwkFromMac(frames[0]!, context.netParams.eui64);
                 expect(macDecoded.header.destination16).toStrictEqual(ZigbeeMACConsts.BCAST_ADDR);
                 expect(nwkFrameControl.frameType).toStrictEqual(ZigbeeNWKFrameType.CMD);
                 expect(nwkHeader.destination16).toStrictEqual(ZigbeeConsts.BCAST_DEFAULT);
@@ -789,7 +771,7 @@ describe("Integration and End-to-End Compliance", () => {
                 await apsHandler.sendTransportKeyNWK(dest16, key, seqNum, dest64);
             });
 
-            await macHandler.processAssocReq(Buffer.from([encodeMACCapabilities(deviceCapabilities)]), 0, buildAssocHeader(device64));
+            await macHandler.processAssocReq(Buffer.from([encodeMACCapabilities(deviceCapabilities)]), buildAssocHeader(device64));
             const pending = context.pendingAssociations.get(device64);
             expect(pending).not.toBeUndefined();
             const deviceEntry = context.deviceTable.get(device64);
@@ -798,8 +780,8 @@ describe("Integration and End-to-End Compliance", () => {
 
             const startCounter = context.netParams.tcKeyFrameCounter;
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader(device64, assigned16, 0x41));
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader(device64, assigned16, 0x42));
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader(device64, assigned16, 0x41));
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader(device64, assigned16, 0x42));
             expect(frames.length).toBeGreaterThan(1);
 
             let decodedTransport: ReturnType<typeof decodeApsFromMac> | undefined;
@@ -973,47 +955,8 @@ describe("Integration and End-to-End Compliance", () => {
             expect(context.netParams.networkKeyFrameCounter).toStrictEqual(nwkCounterStart + 1);
 
             const originalKey = Buffer.from(context.netParams.networkKey);
-            const inboundMacHeader: MACHeader = {
-                frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
-                sequenceNumber: 0x80,
-                destinationPANId: context.netParams.panId,
-                destination16: deviceA16,
-                sourcePANId: context.netParams.panId,
-                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source64: context.netParams.eui64,
-                commandId: undefined,
-                fcs: 0,
-            };
-            const inboundNwkHeader: ZigbeeNWKHeader = {
-                frameControl: {
-                    frameType: ZigbeeNWKFrameType.DATA,
-                    protocolVersion: ZigbeeNWKConsts.VERSION_2007,
-                    discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
-                    multicast: false,
-                    security: true,
-                    sourceRoute: false,
-                    extendedDestination: false,
-                    extendedSource: false,
-                    endDeviceInitiator: false,
-                },
-                destination16: deviceA16,
-                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                radius: 5,
-                seqNum: 0x90,
-            };
-            const inboundApsHeader: ZigbeeAPSHeader = {
-                frameControl: {
-                    frameType: ZigbeeAPSFrameType.CMD,
-                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
-                    ackFormat: false,
-                    security: false,
-                    ackRequest: true,
-                    extendedHeader: false,
-                },
-                counter: 0x99,
-            };
 
-            await apsHandler.processSwitchKey(Buffer.from([pendingSeq]), 0, inboundMacHeader, inboundNwkHeader, inboundApsHeader);
+            context.activatePendingNetworkKey(pendingSeq);
 
             expect(context.netParams.networkKey.equals(originalKey)).toStrictEqual(false);
             expect(context.netParams.networkKey).toStrictEqual(pendingKey);
@@ -1040,48 +983,7 @@ describe("Integration and End-to-End Compliance", () => {
             context.setPendingNetworkKey(Buffer.from(nwkKey), 0x33);
             await apsHandler.sendSwitchKey(device16, 0x33);
             expect(context.netParams.networkKeyFrameCounter).toStrictEqual(nwkStart + 1);
-
-            const inboundMacHeader: MACHeader = {
-                frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
-                sequenceNumber: 0x55,
-                destinationPANId: context.netParams.panId,
-                destination16: device16,
-                sourcePANId: context.netParams.panId,
-                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source64: context.netParams.eui64,
-                commandId: undefined,
-                fcs: 0,
-            };
-            const inboundNwkHeader: ZigbeeNWKHeader = {
-                frameControl: {
-                    frameType: ZigbeeNWKFrameType.DATA,
-                    protocolVersion: ZigbeeNWKConsts.VERSION_2007,
-                    discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
-                    multicast: false,
-                    security: true,
-                    sourceRoute: false,
-                    extendedDestination: false,
-                    extendedSource: false,
-                    endDeviceInitiator: false,
-                },
-                destination16: device16,
-                source16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                radius: 5,
-                seqNum: 0x56,
-            };
-            const inboundApsHeader: ZigbeeAPSHeader = {
-                frameControl: {
-                    frameType: ZigbeeAPSFrameType.CMD,
-                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
-                    ackFormat: false,
-                    security: false,
-                    ackRequest: true,
-                    extendedHeader: false,
-                },
-                counter: 0x57,
-            };
-
-            await apsHandler.processSwitchKey(Buffer.from([0x33]), 0, inboundMacHeader, inboundNwkHeader, inboundApsHeader);
+            context.activatePendingNetworkKey(0x33);
             expect(context.netParams.networkKeyFrameCounter).toStrictEqual(0);
         });
     });
@@ -1242,7 +1144,7 @@ describe("Integration and End-to-End Compliance", () => {
             await nwkHandler.processCommand(payload, macHeader, nwkHeader);
 
             expect(frames).toHaveLength(1);
-            const decoded = decodeNwkCommandFromMac(frames[0]!, context.netParams.eui64);
+            const decoded = decodeNwkFromMac(frames[0]!, context.netParams.eui64);
             const { nwkPayload } = decoded;
             expect(nwkPayload.readUInt8(0)).toStrictEqual(ZigbeeNWKCommandId.REJOIN_RESP);
             expect(nwkPayload.readUInt16LE(1)).toStrictEqual(device16);
@@ -1251,41 +1153,6 @@ describe("Integration and End-to-End Compliance", () => {
             const updated = context.deviceTable.get(device64)!;
             expect(updated.capabilities).toStrictEqual(rejoinCaps);
             expect(updated.neighbor).toStrictEqual(true);
-
-            await new Promise((resolve) => setImmediate(resolve));
-        });
-
-        it("restores unknown devices by issuing rejoin responses", async () => {
-            const device16 = 0x3466;
-            const device64 = 0x00124b00deaf1104n;
-            const rejoinCaps: MACCapabilities = {
-                alternatePANCoordinator: false,
-                deviceType: 0,
-                powerSource: 1,
-                rxOnWhenIdle: false,
-                securityCapability: true,
-                allocateAddress: true,
-            };
-            const frames: Buffer[] = [];
-            mockMACHandlerCallbacks.onSendFrame = vi.fn((payload: Buffer) => {
-                frames.push(Buffer.from(payload));
-                return Promise.resolve();
-            });
-
-            const { macHeader, nwkHeader } = buildRejoinHeaders(device16, device64, true, 0x82, 0x52);
-            const payload = Buffer.from([ZigbeeNWKCommandId.REJOIN_REQ, encodeMACCapabilities(rejoinCaps)]);
-
-            await nwkHandler.processCommand(payload, macHeader, nwkHeader);
-
-            const restored = context.deviceTable.get(device64);
-            expect(restored).not.toBeUndefined();
-            expect(restored!.address16).toStrictEqual(device16);
-            expect(restored!.authorized).toStrictEqual(false);
-            expect(context.address16ToAddress64.get(device16)).toStrictEqual(device64);
-
-            const indirectQueue = context.indirectTransmissions.get(device64);
-            expect(indirectQueue).not.toBeUndefined();
-            expect(indirectQueue!.length).toStrictEqual(1);
 
             await new Promise((resolve) => setImmediate(resolve));
         });
@@ -1309,7 +1176,7 @@ describe("Integration and End-to-End Compliance", () => {
             await nwkHandler.processCommand(payload, macHeader, nwkHeader);
 
             expect(frames).toHaveLength(1);
-            const decoded = decodeNwkCommandFromMac(frames[0]!, context.netParams.eui64);
+            const decoded = decodeNwkFromMac(frames[0]!, context.netParams.eui64);
             expect(decoded.nwkFrameControl.security).toStrictEqual(true);
             expect(decoded.nwkHeader.securityHeader).not.toBeUndefined();
             expect(decoded.nwkHeader.securityHeader!.control.keyId).toStrictEqual(ZigbeeKeyType.NWK);

@@ -1,6 +1,7 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { logger } from "../utils/logger.js";
-import { decodeMACCapabilities, encodeMACCapabilities, MACAssociationStatus, type MACCapabilities, type MACHeader } from "../zigbee/mac.js";
+import { decodeMACCapabilities, encodeMACCapabilities, type MACCapabilities, type MACHeader } from "../zigbee/mac.js";
+import { KeyNegotationProtocol, PreSharedSecret } from "../zigbee/tlvs.js";
 import {
     aes128MmoHash,
     computeInstallCodeCRC,
@@ -12,7 +13,6 @@ import {
     ZigbeeKeyType,
 } from "../zigbee/zigbee.js";
 import type { ZigbeeAPSHeader, ZigbeeAPSPayload } from "../zigbee/zigbee-aps.js";
-import { ZigbeeNWKConsts } from "../zigbee/zigbee-nwk.js";
 import type { ZigbeeNWKGPHeader } from "../zigbee/zigbee-nwkgp.js";
 import { encodeCoordinatorDescriptors } from "./descriptors.js";
 import { CONFIG_NWK_MAX_HOPS } from "./nwk-handler.js";
@@ -86,7 +86,7 @@ export enum NetworkKeyUpdateMethod {
 }
 
 /**
- * see 05-3474-23 #4.7.3
+ * see 06-3474-23 #4.7.3
  */
 export type TrustCenterPolicies = {
     /**
@@ -101,6 +101,10 @@ export type TrustCenterPolicies = {
      * A setting of FALSE means rejoins are only allowed with trust center link keys where the KeyAttributes of the apsDeviceKeyPairSet entry indicates VERIFIED_KEY.
      */
     allowRejoinsWithWellKnownKey: boolean;
+    /** R23+ */
+    keyNegotiationProtocol: KeyNegotationProtocol;
+    /** R23+ */
+    preSharedSecret: PreSharedSecret;
     /** This value controls whether devices are allowed to request a Trust Center Link Key after they have joined the network. */
     allowTCKeyRequest: TrustCenterKeyRequestPolicy;
     /** This policy indicates whether a node on the network that transmits a ZDO Mgmt_Permit_Join with a significance set to 1 is allowed to effect the local Trust Center’s policies. */
@@ -151,6 +155,8 @@ export type DeviceTableEntry = {
      * Note: this is runtime-only
      */
     recentLQAs: number[];
+    /** Note: this is runtime-only */
+    lastReceivedRssi: number | undefined;
     /** Last accepted NWK security frame counter. Runtime-only. */
     incomingNWKFrameCounter: number | undefined;
     /** End device timeout metadata. Runtime-only. */
@@ -163,7 +169,7 @@ export type DeviceTableEntry = {
           }
         | undefined;
     /** Counter for consecutive missed link status commands. Runtime-only. */
-    linkStatusMisses: number | undefined;
+    linkStatusMisses: number;
 };
 
 export type SourceRouteTableEntry = {
@@ -186,7 +192,7 @@ export type AppLinkKeyStoreEntry = {
 };
 
 /**
- * 05-3474-23 #2.5.5
+ * 06-3474-23 #2.5.5
  */
 export type ConfigurationAttributes = {
     /**
@@ -194,7 +200,7 @@ export type ConfigurationAttributes = {
      */
     address: Buffer;
     /**
-     * 05-3474-23 #2.3.2.3
+     * 06-3474-23 #2.3.2.3
      * The :Config_Node_Descriptor is either created when the application is first loaded or initialized with a commissioning tool prior to when the device begins operations in the network.
      * It is used for service discovery to describe node features to external inquiring devices.
      *
@@ -205,7 +211,7 @@ export type ConfigurationAttributes = {
      */
     nodeDescriptor: Buffer;
     /**
-     * 05-3474-23 #2.3.2.4
+     * 06-3474-23 #2.3.2.4
      * The :Config_Power_Descriptor is either created when the application is first loaded or initialized with a commissioning tool prior to when the device begins operations in the network.
      * It is used for service discovery to describe node power features to external inquiring devices.
      *
@@ -216,7 +222,7 @@ export type ConfigurationAttributes = {
      */
     powerDescriptor: Buffer;
     /**
-     * 05-3474-23 #2.3.2.5
+     * 06-3474-23 #2.3.2.5
      * The :Config_Simple_Descriptors are created when the application is first loaded and are treated as “read-only.”
      * The Simple Descriptor are used for service discovery to describe interfacing features to external inquiring devices.
      *
@@ -262,12 +268,12 @@ export type ConfigurationAttributes = {
      */
     // nwkSecureAllFrames: number; // optional
     /**
-     * 05-3474-23 Table 2-134
+     * 06-3474-23 Table 2-134
      * The value for this configuration attribute is established in the Stack Profile.
      */
     // nwkBroadcastDeliveryTime: number; // optional
     /**
-     * 05-3474-23 Table 2-134
+     * 06-3474-23 Table 2-134
      * The value for this configuration attribute is established in the Stack Profile.
      * This attribute is mandatory for the Zigbee coordinator and Zigbee routers and not used for Zigbee End Devices.
      */
@@ -280,7 +286,7 @@ export type ConfigurationAttributes = {
      */
     // maxAssoc: number; // optional
     /**
-     * 05-3474-23 #3.2.2.16
+     * 06-3474-23 #3.2.2.16
      * :Config_NWK_Join_Direct_Addrs permits the Zigbee Coordinator or Router to be pre-configured with a list of addresses to be direct joined.
      * Consists of the following fields:
      * - DeviceAddress - 64-bit IEEE address for the device to be direct joined.
@@ -337,7 +343,7 @@ export interface StackContextCallbacks {
     onDeviceLeft: StackCallbacks["onDeviceLeft"];
 }
 
-/** Table 3-54 */
+/** Table 3-58 */
 export const END_DEVICE_TIMEOUT_TABLE_MS = [
     10_000,
     2 * 60 * 1000,
@@ -388,6 +394,10 @@ export class StackContext {
         allowJoins: false,
         installCode: InstallCodePolicy.NOT_REQUIRED,
         allowRejoinsWithWellKnownKey: true,
+        // TODO: support other protocols
+        keyNegotiationProtocol: KeyNegotationProtocol.Z3,
+        // TODO: support other secrets
+        preSharedSecret: PreSharedSecret.INSTALL_CODE_KEY,
         allowTCKeyRequest: TrustCenterKeyRequestPolicy.ALLOWED,
         networkKeyUpdatePeriod: 0, // disable
         networkKeyUpdateMethod: NetworkKeyUpdateMethod.BROADCAST,
@@ -420,9 +430,9 @@ export class StackContext {
     /** Pre-computed hash of default TC link key for VERIFY_KEY */
     tcVerifyKeyHash: Buffer = Buffer.alloc(0);
     /** MAC association permit flag */
-    associationPermit = false;
+    macAssociationPermit = false;
 
-    //---- Trust Center (see 05-3474-23 #4.7.1)
+    //---- Trust Center (see 06-3474-23 #4.7.1)
 
     #allowJoinTimeout: NodeJS.Timeout | undefined;
 
@@ -454,7 +464,7 @@ export class StackContext {
     // #endregion
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center maintenance)
+     * 06-3474-23 #4.7.6 (Trust Center maintenance)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Schedules periodic state persistence while stack is running
@@ -470,7 +480,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center maintenance)
+     * 06-3474-23 #4.7.6 (Trust Center maintenance)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Cancels pending timers and ensures join window closed on shutdown
@@ -485,7 +495,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center maintenance)
+     * 06-3474-23 #4.7.6 (Trust Center maintenance)
      *
      * Remove the save file and clear tables (just in case)
      *
@@ -533,7 +543,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.4.11.2 (Network Key transport)
+     * 06-3474-23 #4.4.11.2 (Network Key transport)
      *
      * Store a pending network key that will become active once a matching SWITCH_KEY is received.
      *
@@ -563,20 +573,22 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.4.11.5 (Switch Key)
+     * 06-3474-23 #4.4.11.5 (Switch Key)
      *
      * Activate the staged network key if the sequence number matches.
      * Resets frame counters and re-registers hashed keys for cryptographic operations.
      *
+     * Expected flow is `apsHandler.sendSwitchKey` => if returned true => `activatePendingNetworkKey`
+     *
      * SPEC COMPLIANCE NOTES:
-     * - ✅ Activates staged key only when sequence matches SWITCH_KEY command
+     * - ✅ Activates staged key only when sequence matches
      * - ✅ Resets NWK frame counter as mandated after key activation
      * - ✅ Re-registers hashed keys for LINK/NWK/TRANSPORT/LOAD contexts to keep crypto in sync
      * - ✅ Clears staging buffers to prevent reuse or leakage
      * - ⚠️  Does not emit management notifications; assumes higher layer handles ANNCE broadcasts
      * DEVICE SCOPE: Trust Center
      *
-     * @param sequenceNumber Sequence number referenced by SWITCH_KEY command
+     * @param sequenceNumber
      * @returns true when activation succeeded, false when no matching pending key exists
      */
     public activatePendingNetworkKey(sequenceNumber: number): boolean {
@@ -627,7 +639,7 @@ export class StackContext {
     // }
 
     /**
-     * 05-3474-23 #3.6.1.10 (Network address allocation)
+     * 06-3474-23 #3.6.1.10 (Network address allocation)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Allocates short addresses within 0x0001-0xfff7 range, excluding coordinator and broadcast values
@@ -650,7 +662,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #3.6.1.11 / Table 3-54 (End Device Timeout)
+     * 06-3474-23 #3.6.1.11 / Table 3-54 (End Device Timeout)
      *
      * Update the stored end device timeout metadata for a device.
      *
@@ -691,7 +703,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #3.7.3 (NWK security) / IEEE 802.15.4-2015 #9.4.2
+     * 06-3474-23 #3.7.3 (NWK security) / IEEE 802.15.4-2015 #9.4.2
      *
      * Update and validate the incoming NWK security frame counter for a device.
      *
@@ -772,7 +784,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #3.3.4.3 (Link Quality Assessment)
+     * 06-3474-23 #3.3.4.3 (Link Quality Assessment)
      *
      * LQA_raw (c, r) = 255 * (c - c_min) / (c_max - c_min) * (r - r_min) / (r_max - r_min)
      * - c_min is the lowest signal quality ever reported, i.e. for a packet that can barely be received
@@ -809,7 +821,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #2.4.4.2.3 (Neighbor table reporting)
+     * 06-3474-23 #2.4.4.2.3 (Neighbor table reporting)
      *
      * Compute the median LQA for a device from `recentLQAs` or using `signalStrength` directly if device unknown.
      * If given, stores the computed LQA from given parameters in the `recentLQAs` list of the device before computing median.
@@ -849,6 +861,7 @@ export class StackContext {
             }
 
             if (signalStrength !== undefined) {
+                device.lastReceivedRssi = signalStrength;
                 const lqa = this.computeLQA(signalStrength, signalQuality);
 
                 if (device.recentLQAs.length > maxRecent) {
@@ -878,7 +891,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #3.3.1.5 (NWK radius handling)
+     * 06-3474-23 #3.3.1.5 (NWK radius handling)
      *
      * Decrement radius value for NWK frame forwarding.
      * HOT PATH: Optimized computation
@@ -912,7 +925,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.4.11 (Trust Center link/app keys)
+     * 06-3474-23 #4.4.11 (Trust Center link/app keys)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Retrieves stored application/link key using canonicalized IEEE pair
@@ -931,7 +944,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.4.11.1 (Application Link Key establishment)
+     * 06-3474-23 #4.4.11.1 (Application Link Key establishment)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Stores link/application keys using sorted IEEE tuple to match spec requirement for unordered pairs
@@ -951,7 +964,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.5.1 (Install Code processing)
+     * 06-3474-23 #4.5.1 (Install Code processing)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Validates install code length against permitted sizes (8/10/14/18/22/26 bytes)
@@ -1000,7 +1013,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.5.1 (Install Code lifecycle)
+     * 06-3474-23 #4.5.1 (Install Code lifecycle)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Removes stored install code metadata upon revocation
@@ -1013,7 +1026,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center persistent data)
+     * 06-3474-23 #4.7.6 (Trust Center persistent data)
      *
      * Save state to file system in TLV format.
      *
@@ -1094,7 +1107,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center persistent data)
+     * 06-3474-23 #4.7.6 (Trust Center persistent data)
      *
      * Read the current network state in the save file, if any present.
      *
@@ -1129,7 +1142,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center start-up procedure)
+     * 06-3474-23 #4.7.6 (Trust Center start-up procedure)
      *
      * Load state from file system if exists, else save "initial" state.
      * Afterwards, various keys are pre-hashed and descriptors pre-encoded.
@@ -1177,6 +1190,7 @@ export class StackContext {
                     neighbor,
                     lastTransportedNetworkKeySeq,
                     recentLQAs: [],
+                    lastReceivedRssi: undefined,
                     incomingNWKFrameCounter: undefined, // TODO: record this (should persist across reboots)
                     endDeviceTimeout: undefined,
                     linkStatusMisses: 0, // will stay zero for RFDs
@@ -1234,7 +1248,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #2.3.2.3 (Node Descriptor)
+     * 06-3474-23 #2.3.2.3 (Node Descriptor)
      *
      * Set the manufacturer code in the pre-encoded node descriptor
      *
@@ -1250,7 +1264,7 @@ export class StackContext {
     }
 
     /**
-     * 05-3474-23 #4.7.6 (Trust Center maintenance)
+     * 06-3474-23 #4.7.6 (Trust Center maintenance)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Persists state at configured interval while refreshing timer to maintain cadence
@@ -1269,7 +1283,7 @@ export class StackContext {
      * - ✅ Clears timer correctly
      * - ✅ Updates Trust Center allowJoins policy
      * - ✅ Maintains allowRejoinsWithWellKnownKey for rejoins
-     * - ✅ Sets associationPermit flag for MAC layer
+     * - ✅ Sets macAssociationPermit flag for MAC layer
      * DEVICE SCOPE: Trust Center
      */
     public disallowJoins(): void {
@@ -1278,7 +1292,7 @@ export class StackContext {
 
         this.trustCenterPolicies.allowJoins = false;
         this.trustCenterPolicies.allowRejoinsWithWellKnownKey = true;
-        this.associationPermit = false;
+        this.macAssociationPermit = false;
 
         logger.info("Disallowed joins", NS);
     }
@@ -1287,7 +1301,7 @@ export class StackContext {
      * SPEC COMPLIANCE:
      * - ✅ Implements timed join window per spec
      * - ✅ Updates Trust Center policies
-     * - ✅ Sets MAC associationPermit flag
+     * - ✅ Sets MAC macAssociationPermit flag
      * - ✅ Clamps 0xff to 0xfe for security
      * - ✅ Auto-disallows after timeout
      * DEVICE SCOPE: Trust Center
@@ -1303,7 +1317,7 @@ export class StackContext {
 
             this.trustCenterPolicies.allowJoins = true;
             this.trustCenterPolicies.allowRejoinsWithWellKnownKey = true;
-            this.associationPermit = macAssociationPermit;
+            this.macAssociationPermit = macAssociationPermit;
 
             this.#allowJoinTimeout = setTimeout(this.disallowJoins.bind(this), Math.min(duration, 0xfe) * 1000);
 
@@ -1314,208 +1328,65 @@ export class StackContext {
     }
 
     /**
-     * Handle device association (initial join or rejoin)
+     * Handle device association (join)
      *
      * SPEC COMPLIANCE:
-     * - ✅ Validates allowJoins policy for initial join
-     * - ✅ Assigns network addresses correctly
-     * - ✅ Detects and handles address conflicts
-     * - ✅ Creates device table entries with capabilities
-     * - ✅ Sets up indirect transmission for rxOnWhenIdle=false
-     * - ✅ Returns appropriate status codes per IEEE 802.15.4
-     * - ✅ Triggers state save after association
-     * - ⚠️ Unknown rejoins succeed if allowOverride=true (potential security risk)
-     * - ✅ Enforces install code requirement (denies initial join when missing)
-     * - ✅ Detects network key changes on rejoin and schedules transport
+     * - TODO
+     *
      * DEVICE SCOPE: Coordinator, routers (N/A)
      *
-     * @param source16
-     * @param source64 Assumed valid if assocType === 0x00
-     * @param initialJoin If false, rejoin.
-     * @param neighbor True if the device associating is a neighbor of the coordinator
-     * @param capabilities MAC capabilities
-     * @param denyOverride Treat as MACAssociationStatus.PAN_ACCESS_DENIED
-     * @param allowOverride Treat as MACAssociationStatus.SUCCESS
-     * @returns
+     * @returns true if transporting key is required (up to the caller to handle)
      */
     public async associate(
-        source16: number | undefined,
-        source64: bigint | undefined,
-        initialJoin: boolean,
+        source16: number,
+        source64: bigint,
         capabilities: MACCapabilities | undefined,
         neighbor: boolean,
-        denyOverride?: boolean,
-        allowOverride?: boolean,
-    ): Promise<[status: MACAssociationStatus | number, newAddress16: number, requiresTransportKey: boolean]> {
-        // 0xffff when not successful and should not be retried
-        let newAddress16 = source16;
-        let status: MACAssociationStatus | number = MACAssociationStatus.SUCCESS;
-        let unknownRejoin = false;
-        let requiresTransportKey = false;
+        initialJoin: boolean,
+    ): Promise<void> {
+        if (initialJoin) {
+            logger.debug(
+                () =>
+                    `DEVICE_JOINING[src=${source16}:${source64} deviceType=${capabilities?.deviceType} powerSource=${capabilities?.powerSource} rxOnWhenIdle=${capabilities?.rxOnWhenIdle}]`,
+                NS,
+            );
 
-        if (denyOverride) {
-            newAddress16 = 0xffff;
-            status = MACAssociationStatus.PAN_ACCESS_DENIED;
-        } else if (allowOverride) {
-            if ((source16 === undefined || !this.address16ToAddress64.has(source16)) && (source64 === undefined || !this.deviceTable.has(source64))) {
-                // device unknown
-                unknownRejoin = true;
-                requiresTransportKey = true;
+            this.deviceTable.set(source64, {
+                address16: source16,
+                capabilities,
+                // on initial join success, device is considered joined but unauthorized after MAC Assoc / NWK Commissioning response is sent
+                authorized: false,
+                neighbor,
+                lastTransportedNetworkKeySeq: undefined,
+                recentLQAs: [],
+                lastReceivedRssi: undefined,
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
+            });
+            this.address16ToAddress64.set(source16, source64);
+
+            // `processUpdateDevice` has no `capabilities` info, device is joined through router, so, no indirect tx for coordinator
+            if (capabilities && !capabilities.rxOnWhenIdle) {
+                this.indirectTransmissions.set(source64, []);
             }
         } else {
-            if (initialJoin) {
-                if (this.trustCenterPolicies.allowJoins) {
-                    if (source16 === undefined || source16 === ZigbeeConsts.COORDINATOR_ADDRESS || source16 >= ZigbeeConsts.BCAST_MIN) {
-                        // MAC join (no `source16`)
-                        newAddress16 = this.assignNetworkAddress();
+            logger.debug(
+                () =>
+                    `DEVICE_REJOINING[src=${source16}:${source64} deviceType=${capabilities?.deviceType} powerSource=${capabilities?.powerSource} rxOnWhenIdle=${capabilities?.rxOnWhenIdle}]`,
+                NS,
+            );
 
-                        if (newAddress16 === 0xffff) {
-                            status = MACAssociationStatus.PAN_FULL;
-                        }
-                    } else {
-                        const device = source64 !== undefined ? this.deviceTable.get(source64) : undefined;
-
-                        if (device !== undefined) {
-                            if (device.authorized) {
-                                // initial join should not conflict on 64, don't allow join if it does
-                                newAddress16 = 0xffff;
-                                status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
-                            }
-                        } else {
-                            const existingAddress64 = this.address16ToAddress64.get(source16);
-
-                            if (existingAddress64 !== undefined && source64 !== existingAddress64) {
-                                // join with already taken source16
-                                newAddress16 = this.assignNetworkAddress();
-
-                                if (newAddress16 === 0xffff) {
-                                    status = MACAssociationStatus.PAN_FULL;
-                                } else {
-                                    // tell device to use the newly generated value
-                                    status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    newAddress16 = 0xffff;
-                    status = MACAssociationStatus.PAN_ACCESS_DENIED;
-                }
-            } else {
-                // rejoin
-                if (source16 === undefined || source16 === ZigbeeConsts.COORDINATOR_ADDRESS || source16 >= ZigbeeConsts.BCAST_MIN) {
-                    // rejoin without 16, generate one (XXX: never happens?)
-                    newAddress16 = this.assignNetworkAddress();
-
-                    if (newAddress16 === 0xffff) {
-                        status = MACAssociationStatus.PAN_FULL;
-                    }
-                } else {
-                    const existingAddress64 = this.address16ToAddress64.get(source16);
-
-                    if (existingAddress64 === undefined) {
-                        // device unknown
-                        unknownRejoin = true;
-                    } else if (existingAddress64 !== source64) {
-                        // rejoin with already taken source16
-                        newAddress16 = this.assignNetworkAddress();
-
-                        if (newAddress16 === 0xffff) {
-                            status = MACAssociationStatus.PAN_FULL;
-                        } else {
-                            // tell device to use the newly generated value
-                            status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
-                        }
-                    }
-                }
-                // if rejoin, network address will be stored
-                // if (this.trustCenterPolicies.allowRejoinsWithWellKnownKey) {
-                // }
-            }
+            // update records on rejoin in case anything has changed (like neighbor for routing)
+            this.address16ToAddress64.set(source16, source64);
+            const device = this.deviceTable.get(source64)!;
+            device.address16 = source16;
+            device.capabilities = capabilities;
+            device.neighbor = neighbor;
         }
 
-        // something went wrong above
-        /* v8 ignore if -- @preserve */
-        if (newAddress16 === undefined) {
-            newAddress16 = 0xffff;
-            status = MACAssociationStatus.PAN_ACCESS_DENIED;
-        }
-
-        // const existingDevice64 = source64 ?? (source16 !== undefined ? this.address16ToAddress64.get(source16) : undefined);
-        // const existingEntry = existingDevice64 !== undefined ? this.deviceTable.get(existingDevice64) : undefined;
-
-        // if (status === MACAssociationStatus.SUCCESS && neighbor) {
-        //     const isExistingDirectChild = existingEntry?.neighbor === true;
-
-        //     if (!isExistingDirectChild && initialJoin && !unknownRejoin) {
-        //         const { childCount, routerCount } = this.countDirectChildren(existingDevice64);
-
-        //         if (childCount >= CONFIG_NWK_MAX_CHILDREN) {
-        //             newAddress16 = 0xffff;
-        //             status = MACAssociationStatus.PAN_FULL;
-        //         } else if (capabilities?.deviceType === 1 && routerCount >= CONFIG_NWK_MAX_ROUTERS) {
-        //             newAddress16 = 0xffff;
-        //             status = MACAssociationStatus.PAN_FULL;
-        //         }
-        //     }
-        // }
-
-        if (
-            status === MACAssociationStatus.SUCCESS &&
-            initialJoin &&
-            this.trustCenterPolicies.installCode === InstallCodePolicy.REQUIRED &&
-            (source64 === undefined || this.installCodeTable.get(source64) === undefined)
-        ) {
-            newAddress16 = 0xffff;
-            status = MACAssociationStatus.PAN_ACCESS_DENIED;
-        }
-
-        logger.debug(
-            () =>
-                `DEVICE_JOINING[src=${source16}:${source64} newAddr16=${newAddress16} initialJoin=${initialJoin} deviceType=${capabilities?.deviceType} powerSource=${capabilities?.powerSource} rxOnWhenIdle=${capabilities?.rxOnWhenIdle}] replying with status=${status}`,
-            NS,
-        );
-
-        if (status === MACAssociationStatus.SUCCESS) {
-            if (initialJoin || unknownRejoin) {
-                this.deviceTable.set(source64!, {
-                    address16: newAddress16,
-                    capabilities, // TODO: only valid if not triggered by `processUpdateDevice`
-                    // on initial join success, device is considered joined but unauthorized after MAC Assoc / NWK Commissioning response is sent
-                    authorized: false,
-                    neighbor,
-                    lastTransportedNetworkKeySeq: undefined,
-                    recentLQAs: [],
-                    incomingNWKFrameCounter: undefined,
-                    endDeviceTimeout: undefined,
-                    linkStatusMisses: 0, // will stay zero for RFDs
-                });
-                this.address16ToAddress64.set(newAddress16, source64!);
-
-                // `processUpdateDevice` has no `capabilities` info, device is joined through router, so, no indirect tx for coordinator
-                if (capabilities && !capabilities.rxOnWhenIdle) {
-                    this.indirectTransmissions.set(source64!, []);
-                }
-
-                requiresTransportKey = true;
-            } else {
-                // update records on rejoin in case anything has changed (like neighbor for routing)
-                this.address16ToAddress64.set(newAddress16, source64!);
-                const device = this.deviceTable.get(source64!)!;
-                device.address16 = newAddress16;
-                device.capabilities = capabilities;
-                device.neighbor = neighbor;
-
-                if (device.lastTransportedNetworkKeySeq !== this.netParams.networkKeySequenceNumber) {
-                    requiresTransportKey = true;
-                }
-            }
-
-            // force saving after device change
-            await this.savePeriodicState();
-        }
-
-        return [status, newAddress16, requiresTransportKey];
+        // force saving after device change
+        await this.savePeriodicState();
     }
 
     /**
@@ -1582,6 +1453,8 @@ export class StackContext {
             // await this.nwkHandler.sendPeriodicManyToOneRouteRequest();
             // force saving after device change
             await this.savePeriodicState();
+        } else {
+            logger.debug(() => `DEVICE_LEFT[src=${source16}:${source64}] Unknown device, tables likely corrupted`, NS);
         }
     }
 }

@@ -1,3 +1,12 @@
+import {
+    readZigbeeTlvs,
+    writeZigbeeTlvFragmentationParameters,
+    writeZigbeeTlvRouterInformation,
+    writeZigbeeTlvSupportedKeyNegotiationMethods,
+    type ZigbeeGlobalTlvs,
+} from "./tlvs";
+import { ZigbeeConsts } from "./zigbee";
+
 /**
  * const enum with sole purpose of avoiding "magic numbers" in code for well-known values
  */
@@ -374,7 +383,7 @@ export function getMICLength(securityLevel: number): number {
  * Decode MAC frame control field.
  * HOT PATH: Called for every incoming MAC frame.
  * IEEE Std 802.15.4-2020, 7.2.1 (Frame control field)
- * 05-3474-23 R23.1, Annex C.2 (Zigbee MAC frame subset)
+ * 06-3474-23 R23.1, Annex C.2 (Zigbee MAC frame subset)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Parses Zigbee-required FCF bits and reconstructs addressing/security flags
@@ -414,7 +423,7 @@ export function decodeMACFrameControl(data: Buffer, offset: number): [MACFrameCo
 
 /**
  * IEEE Std 802.15.4-2020, 7.2.1 (Frame control field)
- * 05-3474-23 R23.1, Annex C.2 (Zigbee MAC frame subset)
+ * 06-3474-23 R23.1, Annex C.2 (Zigbee MAC frame subset)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Emits only Zigbee-allowed frame versions and addressing combinations
@@ -448,7 +457,7 @@ function encodeMACFrameControl(data: Buffer, offset: number, fcf: MACFrameContro
 
 /**
  * IEEE Std 802.15.4-2020, 9.4.2 (Auxiliary security header)
- * 05-3474-23 R23.1, Annex C.4 (Zigbee MAC security profile)
+ * 06-3474-23 R23.1, Annex C.4 (Zigbee MAC security profile)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Parses key identifier modes used for Zigbee MAC security interop
@@ -501,7 +510,7 @@ function decodeMACAuxSecHeader(data: Buffer, offset: number): [MACAuxSecHeader, 
 
 /**
  * IEEE Std 802.15.4-2020, 7.3.1 (Superframe specification field)
- * 05-3474-23 R23.1, 2.2.2.5 (Beacon superframe descriptor)
+ * 06-3474-23 R23.1, 2.2.2.5 (Beacon superframe descriptor)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Decodes beacon order, CAP slot, and association permit for Trust Center policy
@@ -534,7 +543,7 @@ function decodeMACSuperframeSpec(data: Buffer, offset: number): [MACSuperframeSp
 
 /**
  * IEEE Std 802.15.4-2020, 7.3.1 (Superframe specification field)
- * 05-3474-23 R23.1, 2.2.2.5 (Beacon superframe descriptor)
+ * 06-3474-23 R23.1, 2.2.2.5 (Beacon superframe descriptor)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Encodes Zigbee beacon superframe bits with spec-defined masks and shifts
@@ -559,7 +568,7 @@ function encodeMACSuperframeSpec(data: Buffer, offset: number, header: MACHeader
 
 /**
  * IEEE Std 802.15.4-2020, 7.3.2 (GTS fields)
- * 05-3474-23 R23.1, Annex C.5 (Zigbee beacon GTS usage)
+ * 06-3474-23 R23.1, Annex C.5 (Zigbee beacon GTS usage)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Parses GTS slot descriptors and permit flag to support indirect transmissions
@@ -617,7 +626,7 @@ function decodeMACGtsInfo(data: Buffer, offset: number): [MACGtsInfo, offset: nu
 
 /**
  * IEEE Std 802.15.4-2020, 7.3.2 (GTS fields)
- * 05-3474-23 R23.1, Annex C.5 (Zigbee beacon GTS usage)
+ * 06-3474-23 R23.1, Annex C.5 (Zigbee beacon GTS usage)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Emits GTS descriptors in canonical order for Zigbee beacon compliance
@@ -651,7 +660,7 @@ function encodeMACGtsInfo(data: Buffer, offset: number, header: MACHeader): numb
 
 /**
  * IEEE Std 802.15.4-2020, 7.3.3 (Pending address specification)
- * 05-3474-23 R23.1, Annex C.6 (Indirect data poll support)
+ * 06-3474-23 R23.1, Annex C.6 (Indirect data poll support)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Extracts short and extended pending address lists for Zigbee indirect transmissions
@@ -698,7 +707,7 @@ function decodeMACPendAddr(data: Buffer, offset: number): [MACPendAddr, offset: 
 
 /**
  * IEEE Std 802.15.4-2020, 7.3.3 (Pending address specification)
- * 05-3474-23 R23.1, Annex C.6 (Indirect data poll support)
+ * 06-3474-23 R23.1, Annex C.6 (Indirect data poll support)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Serialises pending address lists using Zigbee-ordered masks
@@ -727,7 +736,7 @@ function encodeMACPendAddr(data: Buffer, offset: number, header: MACHeader): num
 }
 
 /**
- * 05-3474-23 R23.1, Table 2-36 (MAC capability information field)
+ * 06-3474-23 R23.1, Table 2-36 (MAC capability information field)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Maps capability bits used during association joins (device type, power, security)
@@ -749,7 +758,7 @@ export function decodeMACCapabilities(capabilities: number): MACCapabilities {
 }
 
 /**
- * 05-3474-23 R23.1, Table 2-36 (MAC capability information field)
+ * 06-3474-23 R23.1, Table 2-36 (MAC capability information field)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Encodes capability flags in Zigbee-defined bit order for association responses
@@ -772,7 +781,7 @@ export function encodeMACCapabilities(capabilities: MACCapabilities): number {
 
 /**
  * IEEE Std 802.15.4-2020, 7.2.2 (MAC header fields)
- * 05-3474-23 R23.1, Annex C.2 (Zigbee MAC frame subset)
+ * 06-3474-23 R23.1, Annex C.2 (Zigbee MAC frame subset)
  *
  * Decode MAC header from frame.
  * HOT PATH: Called for every incoming MAC frame.
@@ -944,7 +953,7 @@ export function decodeMACHeader(data: Buffer, offset: number, frameControl: MACF
 
 /**
  * IEEE Std 802.15.4-2020, 7.2.2 (MAC header fields)
- * 05-3474-23 R23.1, Annex C.2 (Zigbee MAC frame subset)
+ * 06-3474-23 R23.1, Annex C.2 (Zigbee MAC frame subset)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Constructs headers matching Zigbee addressing and PAN compression rules
@@ -1107,7 +1116,7 @@ function crc16CCITT(data: Buffer): number {
 
 /**
  * IEEE Std 802.15.4-2020, 7.2.2.4 (MAC payload and FCS handling)
- * 05-3474-23 R23.1, Annex C.2 (Zigbee MAC frame subset)
+ * 06-3474-23 R23.1, Annex C.2 (Zigbee MAC frame subset)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Rejects MAC-layer security frames in line with Zigbee host design (security handled at NWK/APS)
@@ -1136,7 +1145,7 @@ export function decodeMACPayload(data: Buffer, offset: number, frameControl: MAC
 
 /**
  * IEEE Std 802.15.4-2020, 7.2.2 (General MAC frame format)
- * 05-3474-23 R23.1, Annex C.2 (Zigbee MAC frame subset)
+ * 06-3474-23 R23.1, Annex C.2 (Zigbee MAC frame subset)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Emits canonical MAC frames with Zigbee-safe payload length and CRC tail
@@ -1176,7 +1185,7 @@ export type MACHeaderZigbee = {
 
 /**
  * Encode MAC frame with hotpath for Zigbee NWK/APS payload
- * 05-3474-23 R23.1, Annex C.2.1 (Zigbee data frame rules)
+ * 06-3474-23 R23.1, Annex C.2.1 (Zigbee data frame rules)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Forces frame version to 2003 as mandated for Zigbee data/command frames
@@ -1188,7 +1197,7 @@ export function encodeMACFrameZigbee(header: MACHeaderZigbee, payload: Buffer): 
     let offset = 0;
     const data = Buffer.allocUnsafe(ZigbeeMACConsts.PAYLOAD_MAX_SIZE); // TODO: optimize with max Zigbee header length
 
-    // always transmit with v2003 (0) frame version @see D.6 Frame Version Value of 05-3474-23
+    // always transmit with v2003 (0) frame version @see D.6 Frame Version Value of 06-3474-23
     header.frameControl.frameVersion = MACFrameVersion.V2003;
 
     offset = encodeMACHeader(data, offset, header, true); // zigbee hotpath
@@ -1212,15 +1221,16 @@ export type MACZigbeeBeacon = {
     /** The time difference between a device and its parent's beacon. */
     txOffset: number;
     updateId: number;
+    globalTlvs: ZigbeeGlobalTlvs;
+    localTlvs: Map<number, Buffer>;
 };
 
 /**
- * 05-3474-23 R23.1, 2.2.2 (Beacon payload format)
+ * 06-3474-23 R23.1, 2.2.2 (Beacon payload format)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Parses routing and end-device capacity bits for join admission logic
  * - ✅ Retains Update ID for network parameter synchronization
- * - ⚠️  Exposes protocolId even though Zigbee fixes it to zero for diagnostics
  * DEVICE SCOPE: Beacon receivers (all logical devices)
  */
 export function decodeMACZigbeeBeacon(data: Buffer, offset: number): MACZigbeeBeacon {
@@ -1239,8 +1249,10 @@ export function decodeMACZigbeeBeacon(data: Buffer, offset: number): MACZigbeeBe
     const extendedPANId = data.readBigUInt64LE(offset);
     offset += 8;
     const endBytes = data.readUInt32LE(offset);
+    offset += 4;
     const txOffset = endBytes & ZigbeeMACConsts.ZIGBEE_BEACON_TX_OFFSET_MASK;
     const updateId = (endBytes & ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_MASK) >> ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_SHIFT;
+    const [globalTlvs, localTlvs] = readZigbeeTlvs(data, offset);
 
     return {
         protocolId,
@@ -1252,20 +1264,21 @@ export function decodeMACZigbeeBeacon(data: Buffer, offset: number): MACZigbeeBe
         extendedPANId,
         txOffset,
         updateId,
+        globalTlvs,
+        localTlvs,
     };
 }
 
 /**
- * 05-3474-23 R23.1, 2.2.2 (Beacon payload format)
+ * 06-3474-23 R23.1, 2.2.2 (Beacon payload format)
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Serialises Zigbee beacon descriptor using mandated masks and shifts
  * - ✅ Hardcodes protocol ID to zero per Zigbee specification
- * - ⚠️  Relies on caller to enforce txOffset bounds defined by aMaxBeaconTxOffset
  * DEVICE SCOPE: Beacon transmitters (coordinator/router)
  */
-export function encodeMACZigbeeBeacon(beacon: MACZigbeeBeacon): Buffer {
-    const payload = Buffer.allocUnsafe(ZigbeeMACConsts.ZIGBEE_BEACON_LENGTH);
+export function encodeMACZigbeeBeacon(beacon: Omit<MACZigbeeBeacon, "globalTlvs" | "localTlvs">, eui64: bigint): Buffer {
+    const payload = Buffer.allocUnsafe(ZigbeeMACConsts.ZIGBEE_BEACON_LENGTH + 23 /* tlvs */);
     let offset = 0;
     offset = payload.writeUInt8(0, offset); // protocol ID always 0 on Zigbee beacons
     offset = payload.writeUInt16LE(
@@ -1284,6 +1297,23 @@ export function encodeMACZigbeeBeacon(beacon: MACZigbeeBeacon): Buffer {
             ((beacon.updateId << ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_SHIFT) & ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_MASK),
         offset,
     );
+    // R23 TLVs
+    offset = writeZigbeeTlvSupportedKeyNegotiationMethods(payload, offset, {
+        keyNegotiationProtocolsBitmask: 0b111,
+        // Install Code Key, Passcode Key
+        preSharedSecretsBitmask: 0b00000110,
+        sourceDeviceEui64: eui64,
+    });
+    offset = writeZigbeeTlvFragmentationParameters(payload, offset, {
+        nwkAddress: ZigbeeConsts.COORDINATOR_ADDRESS,
+        fragmentationOptions: 0b1,
+        maxIncomingTransferUnit: ZigbeeMACConsts.FRAME_MAX_SIZE,
+    });
+    const uptimeOver24h = performance.now() > 86_400_000;
+    // Hub Connectivity, Preferred Parent, Enhanced Beacon Request Support,
+    // MAC Data Poll Keepalive Support, End Device Keepalive Support, Power Negotiation Support
+    // TODO: add support for user-configurable "Battery Backup" bit
+    offset = writeZigbeeTlvRouterInformation(payload, offset, { bitmask: uptimeOver24h ? 0b11110111 : 0b11110101 });
 
     return payload;
 }

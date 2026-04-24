@@ -3,8 +3,8 @@
  *
  * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
- *   - Zigbee specification (05-3474-23): Revision 23.1
- *   - Base device behavior (16-02828-012): v3.0.1
+ *   - Zigbee specification (06-3474-23): Revision 23.1
+ *   - Base device behavior (16-02828-012): v3.1
  *   - ZCL specification (07-5123): Revision 8
  *   - Green Power specification (14-0563-19): Version 1.1.2
  *
@@ -15,6 +15,13 @@
 import { expect, vi } from "vitest";
 import { decodeMACFrameControl, decodeMACHeader, type MACCapabilities } from "../../src/zigbee/mac.js";
 import {
+    decodeZigbeeAPSFrameControl,
+    decodeZigbeeAPSHeader,
+    decodeZigbeeAPSPayload,
+    type ZigbeeAPSFrameControl,
+    type ZigbeeAPSHeader,
+} from "../../src/zigbee/zigbee-aps.js";
+import {
     decodeZigbeeNWKFrameControl,
     decodeZigbeeNWKHeader,
     decodeZigbeeNWKPayload,
@@ -23,6 +30,7 @@ import {
 } from "../../src/zigbee/zigbee-nwk.js";
 import type { MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
 import type { NetworkParameters, StackContext } from "../../src/zigbee-stack/stack-context.js";
+import { defaultDeviceTableEntry } from "../utils.js";
 
 export const NO_ACK_CODE = 99999;
 
@@ -47,7 +55,7 @@ export function decodeMACFramePayload(frame: Buffer): DecodedMACFrame {
     };
 }
 
-export function decodeNwkCommandFromMac(
+export function decodeNwkFromMac(
     frame: Buffer,
     macSource64Fallback: bigint,
 ): {
@@ -63,6 +71,29 @@ export function decodeNwkCommandFromMac(
     const nwkPayload = decodeZigbeeNWKPayload(macPayload, payloadOffset, undefined, macSource64Fallback, nwkFrameControl, nwkHeader);
 
     return { macDecoded, nwkFrameControl, nwkHeader, nwkPayload };
+}
+
+export function decodeApsFromMac(
+    frame: Buffer,
+    macSource64Fallback: bigint,
+): {
+    macDecoded: DecodedMACFrame;
+    nwkFrameControl: ZigbeeNWKFrameControl;
+    nwkHeader: ZigbeeNWKHeader;
+    apsFrameControl: ZigbeeAPSFrameControl;
+    apsHeader: ZigbeeAPSHeader;
+    apsPayload: Buffer;
+} {
+    const macDecoded = decodeMACFramePayload(frame);
+    const macPayload = macDecoded.buffer.subarray(macDecoded.payloadOffset, macDecoded.buffer.length - 2);
+    const [nwkFrameControl, nwkOffset] = decodeZigbeeNWKFrameControl(macPayload, 0);
+    const [nwkHeader, nwkPayloadOffset] = decodeZigbeeNWKHeader(macPayload, nwkOffset, nwkFrameControl);
+    const nwkPayload = decodeZigbeeNWKPayload(macPayload, nwkPayloadOffset, undefined, macSource64Fallback, nwkFrameControl, nwkHeader);
+    const [apsFrameControl, apsOffset] = decodeZigbeeAPSFrameControl(nwkPayload, 0);
+    const [apsHeader, apsPayloadOffset] = decodeZigbeeAPSHeader(nwkPayload, apsOffset, apsFrameControl);
+    const apsPayload = decodeZigbeeAPSPayload(nwkPayload, apsPayloadOffset, undefined, macSource64Fallback, apsFrameControl, apsHeader);
+
+    return { macDecoded, nwkFrameControl, nwkHeader, apsFrameControl, apsHeader, apsPayload };
 }
 
 export async function captureMacFrame(action: () => Promise<unknown> | unknown, callbacks: MACHandlerCallbacks): Promise<DecodedMACFrame> {
@@ -81,6 +112,7 @@ export async function captureMacFrame(action: () => Promise<unknown> | unknown, 
 
 export function registerNeighborDevice(context: StackContext, address16: number, address64: bigint): void {
     context.deviceTable.set(address64, {
+        ...defaultDeviceTableEntry(),
         address16,
         capabilities: {
             alternatePANCoordinator: false,
@@ -92,22 +124,17 @@ export function registerNeighborDevice(context: StackContext, address16: number,
         },
         authorized: true,
         neighbor: true,
-        recentLQAs: [],
-        incomingNWKFrameCounter: undefined,
-        endDeviceTimeout: undefined,
     });
     context.address16ToAddress64.set(address16, address64);
 }
 
 export function registerDevice(context: StackContext, address16: number, address64: bigint, neighbor: boolean, capabilities?: MACCapabilities): void {
     context.deviceTable.set(address64, {
+        ...defaultDeviceTableEntry(),
         address16,
         capabilities,
         authorized: true,
         neighbor,
-        recentLQAs: [],
-        incomingNWKFrameCounter: undefined,
-        endDeviceTimeout: undefined,
     });
     context.address16ToAddress64.set(address16, address64);
 }

@@ -8,8 +8,19 @@ import {
     type MACHeader,
     ZigbeeMACConsts,
 } from "../zigbee/mac.js";
+import {
+    GlobalTlv,
+    KeyNegotationProtocol,
+    KeyNegotationProtocolMask,
+    type PreSharedSecret,
+    PreSharedSecretMask,
+    readZigbeeTlvs,
+    writeZigbeeTlvFragmentationParameters,
+} from "../zigbee/tlvs.js";
 import { ZigbeeConsts, ZigbeeKeyType, type ZigbeeSecurityHeader, ZigbeeSecurityLevel } from "../zigbee/zigbee.js";
 import {
+    decodeZigbeeAPSFrameControl,
+    decodeZigbeeAPSHeader,
     encodeZigbeeAPSFrame,
     ZigbeeAPSCommandId,
     ZigbeeAPSConsts,
@@ -95,7 +106,7 @@ export interface APSHandlerCallbacks {
 
 /** apsDuplicateEntryLifetime: Duration while APS duplicate table entries remain valid (milliseconds). Spec default ≈ 8s. */
 const CONFIG_APS_DUPLICATE_TIMEOUT_MS = 8000; // TODO: verify
-/** apsAckWaitDuration: Default ack wait duration per Zigbee 3.0 spec (milliseconds). */
+/** apsAckWaitDuration: Default ack wait duration per Zigbee 4.0 spec (milliseconds). */
 export const CONFIG_APS_ACK_WAIT_DURATION_MS = 1600 + 500; // some extra for ZoH
 /** apsMaxFrameRetries: Default number of APS retransmissions when ACK is missing. */
 export const CONFIG_APS_MAX_FRAME_RETRIES = 3;
@@ -171,7 +182,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.1 (Application Link Key establishment)
+     * 06-3474-23 #4.4.11.1 (Application Link Key establishment)
      *
      * Get or generate application link key for a device pair
      *
@@ -197,7 +208,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #2.2.6.5 (APS duplicate rejection)
+     * 06-3474-23 #2.2.6.5 (APS duplicate rejection)
      *
      * Check whether an incoming APS frame is a duplicate and update the duplicate table accordingly.
      *
@@ -278,7 +289,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.1 (APS data service)
+     * 06-3474-23 #4.4.1 (APS data service)
      *
      * Send a Zigbee APS DATA frame and track pending ACK if necessary.
      *
@@ -342,7 +353,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.1 (APS data service)
+     * 06-3474-23 #4.4.1 (APS data service)
      *
      * Send a Zigbee APS DATA frame.
      * Throws if could not send.
@@ -521,7 +532,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.5 (APS fragmentation)
+     * 06-3474-23 #4.4.5 (APS fragmentation)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Splits payload into first/remaining chunks respecting fragment overhead constants
@@ -610,7 +621,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.5 (APS fragmentation)
+     * 06-3474-23 #4.4.5 (APS fragmentation)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Advances to next fragment only after prior block acknowledged
@@ -635,7 +646,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.5 (APS fragmentation reassembly)
+     * 06-3474-23 #4.4.5 (APS fragmentation reassembly)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Initializes fragment state on FIRST block and records meta fields
@@ -746,7 +757,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.2.3 (APS acknowledgement management)
+     * 06-3474-23 #4.4.2.3 (APS acknowledgement management)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Starts ack-wait timer using spec default (~1.5 s) and resets on retransmit
@@ -775,7 +786,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.2.3 (APS acknowledgement management)
+     * 06-3474-23 #4.4.2.3 (APS acknowledgement management)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Retries DATA up to CONFIG_APS_MAX_FRAME_RETRIES per spec guidance (default 3)
@@ -818,7 +829,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.2.3 (APS acknowledgement management)
+     * 06-3474-23 #4.4.2.3 (APS acknowledgement management)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Matches ACKs using source short address and APS counter per spec tuple
@@ -827,7 +838,7 @@ export class APSHandler {
      * - ⚠️  No handling for duplicate ACKs; silently ignored once entry removed
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
-    async #resolvePendingAck(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Promise<void> {
+    async resolvePendingAck(nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader): Promise<void> {
         if (apsHeader.counter === undefined) {
             return;
         }
@@ -867,7 +878,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.2.3 (APS acknowledgement)
+     * 06-3474-23 #4.4.2.3 (APS acknowledgement)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Mirrors counter and cluster metadata per spec Table 4-10
@@ -1005,10 +1016,10 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4 (APS layer processing)
+     * 06-3474-23 #4.4 (APS layer processing)
      *
      * SPEC COMPLIANCE NOTES:
-     * - ✅ Handles DATA, ACK, INTERPAN frame types per spec definitions
+     * - ✅ Handles DATA, INTERPAN, CMD frame types per spec definitions
      * - ✅ Performs duplicate rejection using APS counter + source addressing
      * - ✅ Performs fragmentation reassembly and forwards completed payloads upward
      * - ⚠️  INTERPAN frames not supported (throws) - spec optional for coordinators
@@ -1023,12 +1034,6 @@ export class APSHandler {
         lqa: number,
     ): Promise<void> {
         switch (apsHeader.frameControl.frameType) {
-            case ZigbeeAPSFrameType.ACK: {
-                // ACKs should never contain a payload
-                await this.#resolvePendingAck(nwkHeader, apsHeader);
-
-                return;
-            }
             case ZigbeeAPSFrameType.DATA:
             case ZigbeeAPSFrameType.INTERPAN: {
                 if (data.byteLength < 1) {
@@ -1056,56 +1061,77 @@ export class APSHandler {
                 );
 
                 if (apsHeader.profileId === ZigbeeConsts.ZDO_PROFILE_ID) {
-                    if (apsHeader.clusterId === ZigbeeConsts.END_DEVICE_ANNOUNCE) {
-                        let offset = 1; // skip seq num
-                        const address16 = data.readUInt16LE(offset);
-                        offset += 2;
-                        const address64 = data.readBigUInt64LE(offset);
-                        offset += 8;
-                        const capabilities = data.readUInt8(offset);
-                        offset += 1;
+                    switch (apsHeader.clusterId) {
+                        case ZigbeeConsts.END_DEVICE_ANNOUNCE: {
+                            let offset = 1; // skip seq num
+                            const address16 = data.readUInt16LE(offset);
+                            offset += 2;
+                            const address64 = data.readBigUInt64LE(offset);
+                            offset += 8;
+                            const capabilities = data.readUInt8(offset);
+                            offset += 1;
 
-                        const device = this.#context.deviceTable.get(address64);
+                            const device = this.#context.deviceTable.get(address64);
 
-                        if (device === undefined) {
-                            // unknown device, should have been added by `associate`, something's not right, ignore it
-                            return;
-                        }
-
-                        const decodedCap = decodeMACCapabilities(capabilities);
-
-                        if (device.address16 !== address16) {
-                            this.#context.address16ToAddress64.delete(device.address16);
-                            this.#context.address16ToAddress64.set(address16, address64);
-
-                            device.address16 = address16;
-                        }
-
-                        // just in case
-                        device.capabilities = decodedCap;
-
-                        await this.#context.savePeriodicState();
-
-                        // TODO: ideally, this shouldn't trigger (prevents early interview process from app) until AFTER authorized=true
-                        setImmediate(() => {
-                            // if device is authorized, it means it completed the TC link key update, so, a rejoin
-                            // TODO: could flip authorized to true before the announce and count as rejoin when it shouldn't
-                            if (device.authorized) {
-                                this.#callbacks.onDeviceRejoined(address16, address64, decodedCap);
-                            } else {
-                                this.#callbacks.onDeviceJoined(address16, address64, decodedCap);
-                            }
-                        });
-                    } else {
-                        const isRequest = (apsHeader.clusterId! & 0x8000) === 0;
-
-                        if (isRequest) {
-                            if (this.isZDORequestForCoordinator(apsHeader.clusterId!, nwkHeader.destination16, nwkHeader.destination64, data)) {
-                                await this.respondToCoordinatorZDORequest(data, apsHeader.clusterId!, nwkHeader.source16, nwkHeader.source64);
+                            if (device === undefined) {
+                                // unknown device, should have been added by `associate`, something's not right, ignore it
+                                return;
                             }
 
-                            // don't emit received ZDO requests
+                            const decodedCap = decodeMACCapabilities(capabilities);
+
+                            if (device.address16 !== address16) {
+                                // change of address
+                                this.#context.address16ToAddress64.delete(device.address16);
+                                this.#context.address16ToAddress64.set(address16, address64);
+
+                                device.address16 = address16;
+                            }
+
+                            // just in case
+                            device.capabilities = decodedCap;
+
+                            await this.#context.savePeriodicState();
+
+                            // TODO: ideally, this shouldn't trigger (prevents early interview process from app) until AFTER authorized=true
+                            setImmediate(() => {
+                                // if device is authorized, it means it completed the TC link key update, so, a rejoin
+                                // TODO: could flip authorized to true before the announce and count as rejoin when it shouldn't
+                                if (device.authorized) {
+                                    this.#callbacks.onDeviceRejoined(address16, address64, decodedCap);
+                                } else {
+                                    this.#callbacks.onDeviceJoined(address16, address64, decodedCap);
+                                }
+                            });
+
+                            break;
+                        }
+                        case ZigbeeConsts.START_KEY_UPDATE_RESPONSE: {
+                            // skip seq num
+                            const status = data.readUInt8(1);
+
+                            if (status !== ZigbeeConsts.ZDO_SUCCESS) {
+                                // failed security, cleanup
+                                await this.#context.disassociate(nwkHeader.source16, nwkHeader.source64);
+                            }
+
+                            // handled internally, don't emit
                             return;
+                        }
+                        case undefined: {
+                            return;
+                        }
+                        default: {
+                            const isRequest = (apsHeader.clusterId & 0x8000) === 0;
+
+                            if (isRequest) {
+                                if (this.isZDORequestForCoordinator(apsHeader.clusterId, nwkHeader.destination16, nwkHeader.destination64, data)) {
+                                    await this.respondToCoordinatorZDORequest(data, apsHeader.clusterId, nwkHeader.source16, nwkHeader.source64);
+                                }
+
+                                // don't emit received ZDO requests
+                                return;
+                            }
                         }
                     }
                 }
@@ -1121,6 +1147,10 @@ export class APSHandler {
                 await this.processCommand(data, macHeader, nwkHeader, apsHeader);
                 break;
             }
+            case ZigbeeAPSFrameType.ACK: {
+                // handled upstream, codepath never reached
+                return;
+            }
             default: {
                 throw new Error(`Illegal frame type ${apsHeader.frameControl.frameType}`);
             }
@@ -1130,7 +1160,7 @@ export class APSHandler {
     // #region Commands
 
     /**
-     * 05-3474-23 #4.4.11 (APS command frames)
+     * 06-3474-23 #4.4.11 (APS command frames)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Encodes APS command header with appropriate delivery mode and security bit per parameters
@@ -1289,7 +1319,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11 (APS command processing)
+     * 06-3474-23 #4.4.11 (APS command processing)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Dispatches APS command IDs to the appropriate handler per Table 4-28
@@ -1304,36 +1334,24 @@ export class APSHandler {
         offset += 1;
 
         switch (cmdId) {
-            case ZigbeeAPSCommandId.TRANSPORT_KEY: {
-                offset = this.processTransportKey(data, offset, macHeader, nwkHeader, apsHeader);
-                break;
-            }
             case ZigbeeAPSCommandId.UPDATE_DEVICE: {
-                offset = await this.processUpdateDevice(data, offset, macHeader, nwkHeader, apsHeader);
-                break;
-            }
-            case ZigbeeAPSCommandId.REMOVE_DEVICE: {
-                offset = await this.processRemoveDevice(data, offset, macHeader, nwkHeader, apsHeader);
+                await this.processUpdateDevice(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
             case ZigbeeAPSCommandId.REQUEST_KEY: {
-                offset = await this.processRequestKey(data, offset, macHeader, nwkHeader, apsHeader);
-                break;
-            }
-            case ZigbeeAPSCommandId.SWITCH_KEY: {
-                offset = this.processSwitchKey(data, offset, macHeader, nwkHeader, apsHeader);
+                await this.processRequestKey(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
             case ZigbeeAPSCommandId.TUNNEL: {
-                offset = this.processTunnel(data, offset, macHeader, nwkHeader, apsHeader);
+                this.processTunnel(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
             case ZigbeeAPSCommandId.VERIFY_KEY: {
-                offset = await this.processVerifyKey(data, offset, macHeader, nwkHeader, apsHeader);
+                await this.processVerifyKey(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
             case ZigbeeAPSCommandId.RELAY_MESSAGE_UPSTREAM: {
-                offset = this.processRelayMessageUpstream(data, offset, macHeader, nwkHeader, apsHeader);
+                await this.processRelayMessageUpstream(data, offset, macHeader, nwkHeader, apsHeader);
                 break;
             }
             default: {
@@ -1344,100 +1362,19 @@ export class APSHandler {
                 return;
             }
         }
-
-        // excess data in packet
-        // if (offset < data.byteLength) {
-        //     logger.debug(() => `<=== APS CMD contained more data: ${data.toString('hex')}`, NS);
-        // }
     }
 
-    /**
-     * 05-3474-23 #4.4.11.1
-     *
-     * SPEC COMPLIANCE NOTES:
-     * - ✅ Handles all mandated key types (NWK, Trust Center, Application) and logs metadata
-     * - ✅ Stages pending network key when addressed to coordinator or wildcard destination
-     * - ✅ Preserves raw key material for subsequent SWITCH_KEY activation
-     * - ⚠️  TLV extensions for enhanced security fields remain unparsed (TODO markers)
-     * - ⚠️  Application key handling currently limited to storage; partner attribute updates pending
-     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
-     */
-    public processTransportKey(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
-        const keyType = data.readUInt8(offset);
-        offset += 1;
-        const key = data.subarray(offset, offset + ZigbeeAPSConsts.CMD_KEY_LENGTH);
-        offset += ZigbeeAPSConsts.CMD_KEY_LENGTH;
-
-        switch (keyType) {
-            case ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK:
-            case ZigbeeAPSConsts.CMD_KEY_HIGH_SEC_NWK: {
-                const seqNum = data.readUInt8(offset);
-                offset += 1;
-                const destination = data.readBigUInt64LE(offset);
-                offset += 8;
-                const source = data.readBigUInt64LE(offset);
-                offset += 8;
-
-                logger.debug(
-                    () =>
-                        `<=== APS TRANSPORT_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType} key=${key} seqNum=${seqNum} dst64=${destination} src64=${source}]`,
-                    NS,
-                );
-
-                if (destination === this.#context.netParams.eui64 || destination === 0n) {
-                    this.#context.setPendingNetworkKey(key, seqNum);
-                }
-
-                break;
-            }
-            case ZigbeeAPSConsts.CMD_KEY_TC_MASTER:
-            case ZigbeeAPSConsts.CMD_KEY_TC_LINK: {
-                const destination = data.readBigUInt64LE(offset);
-                offset += 8;
-                const source = data.readBigUInt64LE(offset);
-                offset += 8;
-
-                // TODO
-                // const [tlvs, tlvsOutOffset] = decodeZigbeeAPSTLVs(data, offset);
-
-                logger.debug(
-                    () =>
-                        `<=== APS TRANSPORT_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType} key=${key} dst64=${destination} src64=${source}]`,
-                    NS,
-                );
-                break;
-            }
-            case ZigbeeAPSConsts.CMD_KEY_APP_MASTER:
-            case ZigbeeAPSConsts.CMD_KEY_APP_LINK: {
-                const partner = data.readBigUInt64LE(offset);
-                offset += 8;
-                const initiatorFlag = data.readUInt8(offset);
-                offset += 1;
-
-                // TODO
-                // const [tlvs, tlvsOutOffset] = decodeZigbeeAPSTLVs(data, offset);
-
-                logger.debug(
-                    () =>
-                        `<=== APS TRANSPORT_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${keyType} key=${key} partner64=${partner} initiatorFlag=${initiatorFlag}]`,
-                    NS,
-                );
-                break;
-            }
-        }
-
-        return offset;
-    }
+    // NOTE: processTransportKey DEVICE SCOPE: not Trust Center (N/A)
 
     /**
-     * 05-3474-23 #4.4.11.1
+     * 06-3474-23 #4.4.11.1
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Correctly uses CMD_KEY_TC_LINK type (0x01) per spec Table 4-17
      * - ✅ Uses UNICAST delivery mode as required by spec
      * - ✅ Applies both NWK security (true) and APS security (LOAD key) per spec #4.4.1.5
      * - ✅ Includes destination64 and source64 (TC eui64) as mandated
-     * - ⚠️  TODO: TLVs not implemented (optional but recommended for R23+ features)
+     * - ✅ Link-Key Features & Capabilities TLV
      * - ⚠️  TODO: Tunneling support not implemented (optional per spec #4.6.3.7)
      * - ❓ UNCERTAIN: Using LOAD keyId for APS encryption - spec says "link key" but LOAD is typically used for TC link key transport
      * - ✅ Frame counter uses TC key counter (nextTCKeyFrameCounter) which is correct
@@ -1455,16 +1392,21 @@ export class APSHandler {
         //       It SHALL then be sent to the device specified by the TunnelAddress parameter by issuing an NLDE-DATA.request primitive.
         logger.debug(() => `===> APS TRANSPORT_KEY_TC[key=${key.toString("hex")} dst64=${destination64}]`, NS);
 
-        const finalPayload = Buffer.allocUnsafe(18 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
+        const finalPayload = Buffer.allocUnsafe(21 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
         let offset = 0;
         offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
         offset = finalPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_TC_LINK, offset);
         offset += key.copy(finalPayload, offset);
         offset = finalPayload.writeBigUInt64LE(destination64, offset);
         offset = finalPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset);
-
-        // TODO
-        // const [tlvs, tlvsOutOffset] = encodeZigbeeAPSTLVs();
+        // local TLV: Link-Key Features & Capabilities
+        offset = finalPayload.writeUInt8(0x00, offset);
+        offset = finalPayload.writeUInt8(0x00, offset); // per spec, actual data length is `length field + 1`
+        // A set of feature flags pertaining to this security material or denoting the peer’s support for specific APS security features:
+        // Bit #0: Frame Counter Synchronization Support
+        //         When set to ‘1' the peer device supports APS frame counter synchronization; else, when set to '0’, the peer device does not support APS frame counter synchronization.
+        // Bits #1..#7 are reserved and SHALL be set to '0' by implementations of the current Revision of this specification and ignored when processing.
+        finalPayload.writeUInt8(0b00000001, offset);
 
         // encryption NWK=true, APS=true
         return await this.sendCommand(
@@ -1491,7 +1433,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.1 #4.4.11.1.3.2
+     * 06-3474-23 #4.4.11.1 #4.4.11.1.3.2
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Correctly uses CMD_KEY_STANDARD_NWK type (0x00) per spec Table 4-17
@@ -1528,9 +1470,9 @@ export class APSHandler {
         offset += key.copy(finalPayload, offset);
         offset = finalPayload.writeUInt8(seqNum, offset);
         offset = finalPayload.writeBigUInt64LE(isBroadcast ? 0n : destination64, offset);
-        offset = finalPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
+        finalPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
 
-        // see 05-3474-23 #4.4.1.5
+        // see 06-3474-23 #4.4.1.5
         // Conversely, a device receiving an APS transport key command MAY choose whether or not APS encryption is required.
         // This is most often done during initial joining.
         // For example, during joining a device that has no preconfigured link key would only accept unencrypted transport key messages,
@@ -1574,13 +1516,13 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.1 #4.4.11.1.3.3
+     * 06-3474-23 #4.4.11.1 #4.4.11.1.3.3
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Sets CMD_KEY_APP_LINK (0x03) and includes partner64 + initiator flag per Table 4-17
      * - ✅ Applies APS security with TRANSPORT keyId (shared TC link key) while suppressing NWK security (permitted)
      * - ✅ Supports mirrored delivery (initiator + partner) when invoked twice in Request Key flow
-     * - ⚠️ TODO: Add TLV support for enhanced security context (R23)
+     * - ✅ Link-Key Features & Capabilities TLV
      * - ⚠️ TODO: Consider tunneling for indirect partners per spec #4.6.3.7
      * DEVICE SCOPE: Trust Center
      */
@@ -1588,16 +1530,21 @@ export class APSHandler {
         // TODO: tunneling support `, tunnelDest?: bigint`
         logger.debug(() => `===> APS TRANSPORT_KEY_APP[key=${key.toString("hex")} partner64=${partner} initiatorFlag=${initiatorFlag}]`, NS);
 
-        const finalPayload = Buffer.allocUnsafe(11 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
+        const finalPayload = Buffer.allocUnsafe(14 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
         let offset = 0;
         offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
         offset = finalPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_APP_LINK, offset);
         offset += key.copy(finalPayload, offset);
         offset = finalPayload.writeBigUInt64LE(partner, offset);
         offset = finalPayload.writeUInt8(initiatorFlag ? 1 : 0, offset);
-
-        // TODO
-        // const [tlvs, tlvsOutOffset] = encodeZigbeeAPSTLVs();
+        // local TLV: Link-Key Features & Capabilities
+        offset = finalPayload.writeUInt8(0x00, offset);
+        offset = finalPayload.writeUInt8(0x00, offset); // per spec, actual data length is `length field + 1`
+        // A set of feature flags pertaining to this security material or denoting the peer’s support for specific APS security features:
+        // Bit #0: Frame Counter Synchronization Support
+        //         When set to ‘1' the peer device supports APS frame counter synchronization; else, when set to '0’, the peer device does not support APS frame counter synchronization.
+        // Bits #1..#7 are reserved and SHALL be set to '0' by implementations of the current Revision of this specification and ignored when processing.
+        finalPayload.writeUInt8(0b00000001, offset);
 
         return await this.sendCommand(
             ZigbeeAPSCommandId.TRANSPORT_KEY,
@@ -1623,29 +1570,25 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.2
+     * 06-3474-23 #4.4.11.2
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Correctly decodes all mandatory fields: device64, device16, status
-     * - ⚠️  TODO: TLVs not decoded (optional but recommended for R23+ features)
+     * - ✅ TLVs decoded (optional but recommended for R23+ features)
      * - ✅ Handles 4 status codes as per spec:
      *       0x00 = Standard Device Secured Rejoin (updates device state via associate)
      *       0x01 = Standard Device Unsecured Join
      *       0x02 = Device Left
      *       0x03 = Standard Device Trust Center Rejoin
-     * - ⚠️  IMPLEMENTATION: Status 0x01 (Unsecured Join) handling:
+     * - ✅ Status 0x01 (Unsecured Join) handling:
      *       - Calls context associate with initial join=true ✅
      *       - Sets neighbor=false ✅ (device joined through router)
      *       - allowOverride=true ✅ (was allowed by parent)
      *       - Creates source route through parent ✅
      *       - Sends TUNNEL(TRANSPORT_KEY) to parent for relay ✅
-     * - ⚠️  SPEC CONCERN: Tunneling TRANSPORT_KEY for nested joins:
-     *       - Uses TUNNEL command per spec #4.6.3.7 ✅
-     *       - Encrypts tunneled APS frame with TRANSPORT keyId ✅
-     *       - However, should verify parent can relay before trusting join
-     * - ✅ Status 0x03 (TC Rejoin) re-distributes NWK key when device lacks latest sequence
      * - ⚠️  Status 0x02 (Device Left) handling uses onDisassociate - spec says "informative only, should not take action"
      *       This may be non-compliant as it actively removes the device
+     * - ✅ Status 0x03 (TC Rejoin) re-distributes NWK key when device lacks latest sequence
      *
      * SECURITY CONCERN:
      * - Unsecured joins through routers rely heavily on parent router trust
@@ -1659,17 +1602,48 @@ export class APSHandler {
         macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
-    ): Promise<number> {
+    ): Promise<void> {
         const device64 = data.readBigUInt64LE(offset);
         offset += 8;
         // Zigbee 2006 and later
         const device16 = data.readUInt16LE(offset);
         offset += 2;
+        // ZigbeeAPSUpdateDeviceStatus
         const status = data.readUInt8(offset);
         offset += 1;
+        // joiner TLVs: one or more TLVs received during Network Commissioning by the parent router, not present if <R23
+        // should contain:
+        //   Joiner Encapsulation Global TLV
+        //     - Fragmentation Parameters Global TLV
+        //     - If the device is not rejoining: Supported Key Negotiation Methods Global TLV
+        const [globalTlvs] = readZigbeeTlvs(data, offset);
+        const joinerTlv = globalTlvs[GlobalTlv.JOINER_ENCAPSULATION];
 
-        // TODO
-        // const [tlvs, tlvsOutOffset] = decodeZigbeeAPSTLVs(data, offset);
+        if (joinerTlv !== undefined) {
+            // device is R23
+            const supportedKeyNegotiationMethodsTlv = joinerTlv.additionalTlvs[GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS];
+
+            if (supportedKeyNegotiationMethodsTlv === undefined) {
+                if (status === ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_UNSECURED_JOIN) {
+                    return; // invalid
+                }
+            } else {
+                // TODO: support other protocols
+                if (!(supportedKeyNegotiationMethodsTlv.keyNegotiationProtocolsBitmask & KeyNegotationProtocolMask.Z3)) {
+                    return; // per spec, must always be supported
+                }
+
+                if (!(supportedKeyNegotiationMethodsTlv.preSharedSecretsBitmask & PreSharedSecretMask.INSTALL_CODE_KEY)) {
+                    return; // others currently not supported
+                }
+            }
+
+            const fragmentationParametersTlv = joinerTlv.additionalTlvs[GlobalTlv.FRAGMENTATION_PARAMETERS];
+
+            if (fragmentationParametersTlv === undefined) {
+                return; // invalid
+            }
+        }
 
         logger.debug(
             () =>
@@ -1677,191 +1651,101 @@ export class APSHandler {
             NS,
         );
 
-        if (status === ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_SECURED_REJOIN) {
-            await this.#context.associate(
-                device16,
-                device64,
-                false, // rejoin
-                undefined, // no MAC cap through router
-                false, // not neighbor
-                false,
-                true, // was allowed by parent
-            );
+        switch (status) {
+            case ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_SECURED_REJOIN: {
+                await this.#context.associate(device16, device64, undefined, false, false);
+                this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
 
-            this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
-        } else if (status === ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_UNSECURED_JOIN) {
-            await this.#context.associate(
-                device16,
-                device64,
-                true, // initial join
-                undefined, // no MAC cap through router
-                false, // not neighbor
-                false,
-                true, // was allowed by parent
-            );
-
-            this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
-
-            const tApsCmdPayload = Buffer.allocUnsafe(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
-            let tunnelOffset = 0;
-            tunnelOffset = tApsCmdPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, tunnelOffset);
-            tunnelOffset = tApsCmdPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK, tunnelOffset);
-            tunnelOffset += this.#context.netParams.networkKey.copy(tApsCmdPayload, tunnelOffset);
-            tunnelOffset = tApsCmdPayload.writeUInt8(this.#context.netParams.networkKeySequenceNumber, tunnelOffset);
-            tunnelOffset = tApsCmdPayload.writeBigUInt64LE(device64, tunnelOffset);
-            tunnelOffset = tApsCmdPayload.writeBigUInt64LE(this.#context.netParams.eui64, tunnelOffset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
-
-            const tApsCmdFrame = encodeZigbeeAPSFrame(
-                {
-                    frameControl: {
-                        frameType: ZigbeeAPSFrameType.CMD,
-                        deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
-                        ackFormat: false,
-                        security: true,
-                        ackRequest: false,
-                        extendedHeader: false,
-                    },
-                    counter: this.nextCounter(),
-                },
-                tApsCmdPayload,
-                {
-                    control: {
-                        level: ZigbeeSecurityLevel.NONE,
-                        keyId: ZigbeeKeyType.TRANSPORT,
-                        nonce: true,
-                        reqVerifiedFc: false,
-                    },
-                    frameCounter: this.#context.nextTCKeyFrameCounter(),
-                    source64: this.#context.netParams.eui64,
-                    micLen: 4,
-                },
-                undefined, // use pre-hashed this.context.netParams.tcKey,
-            );
-
-            await this.sendTunnel(nwkHeader.source16!, device64, tApsCmdFrame);
-
-            this.#context.markNetworkKeyTransported(device64);
-        } else if (status === ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_TRUST_CENTER_REJOIN) {
-            // rejoin
-            const [, , requiresTransportKey] = await this.#context.associate(
-                device16,
-                device64,
-                false, // rejoin
-                undefined, // no MAC cap through router
-                false, // not neighbor
-                false,
-                true, // was allowed by parent, expected valid
-            );
-
-            if (requiresTransportKey) {
-                await this.sendTransportKeyNWK(
-                    device16,
-                    this.#context.netParams.networkKey,
-                    this.#context.netParams.networkKeySequenceNumber,
-                    device64,
-                );
-                this.#context.markNetworkKeyTransported(device64);
+                break;
             }
-        } else if (status === ZigbeeAPSUpdateDeviceStatus.DEVICE_LEFT) {
-            // left
-            // TODO: according to spec, this is "informative" only, should not take any action?
-            await this.#context.disassociate(device16, device64);
-        }
+            case ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_UNSECURED_JOIN: {
+                await this.#context.associate(device16, device64, undefined, false, true);
+                this.#updateSourceRouteForChild(device16, nwkHeader.source16, nwkHeader.source64);
 
-        return offset;
-    }
+                if (this.#context.trustCenterPolicies.keyNegotiationProtocol === KeyNegotationProtocol.Z3) {
+                    const tApsCmdPayload = Buffer.allocUnsafe(19 + ZigbeeAPSConsts.CMD_KEY_LENGTH);
+                    let tunnelOffset = 0;
+                    tunnelOffset = tApsCmdPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, tunnelOffset);
+                    tunnelOffset = tApsCmdPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK, tunnelOffset);
+                    tunnelOffset += this.#context.netParams.networkKey.copy(tApsCmdPayload, tunnelOffset);
+                    tunnelOffset = tApsCmdPayload.writeUInt8(this.#context.netParams.networkKeySequenceNumber, tunnelOffset);
+                    tunnelOffset = tApsCmdPayload.writeBigUInt64LE(device64, tunnelOffset);
+                    tunnelOffset = tApsCmdPayload.writeBigUInt64LE(this.#context.netParams.eui64, tunnelOffset); // 0xFFFFFFFFFFFFFFFF in distributed network (no TC)
 
-    /**
-     * 05-3474-23 #4.4.11.2
-     *
-     * @param nwkDest16 device that SHALL be sent the update information
-     * @param device64 device whose status is being updated
-     * @param device16 device whose status is being updated
-     * @param status Indicates the updated status of the device given by the device64 parameter:
-     * - 0x00 = Standard Device Secured Rejoin
-     * - 0x01 = Standard Device Unsecured Join
-     * - 0x02 = Device Left
-     * - 0x03 = Standard Device Trust Center Rejoin
-     * - 0x04 – 0x07 = Reserved
-     * @param tlvs as relayed during Network Commissioning
-     * @returns
-     * DEVICE SCOPE: Coordinator, routers (N/A)
-     */
-    public async sendUpdateDevice(
-        nwkDest16: number,
-        device64: bigint,
-        device16: number,
-        status: number,
-        // tlvs: unknown[],
-    ): Promise<boolean> {
-        logger.debug(() => `===> APS UPDATE_DEVICE[dev=${device16}:${device64} status=${status}]`, NS);
+                    const tApsCmdFrame = encodeZigbeeAPSFrame(
+                        {
+                            frameControl: {
+                                frameType: ZigbeeAPSFrameType.CMD,
+                                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                                ackFormat: false,
+                                security: true,
+                                ackRequest: false,
+                                extendedHeader: false,
+                            },
+                            counter: this.nextCounter(),
+                        },
+                        tApsCmdPayload,
+                        {
+                            control: {
+                                level: ZigbeeSecurityLevel.NONE,
+                                keyId: ZigbeeKeyType.TRANSPORT,
+                                nonce: true,
+                                reqVerifiedFc: false,
+                            },
+                            frameCounter: this.#context.nextTCKeyFrameCounter(),
+                            source64: this.#context.netParams.eui64,
+                            micLen: 4,
+                        },
+                        undefined, // use pre-hashed this.context.netParams.tcKey,
+                    );
 
-        const finalPayload = Buffer.allocUnsafe(12 /* + TLVs */);
-        let offset = 0;
-        offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.UPDATE_DEVICE, offset);
-        offset = finalPayload.writeBigUInt64LE(device64, offset);
-        offset = finalPayload.writeUInt16LE(device16, offset);
-        offset = finalPayload.writeUInt8(status, offset);
+                    await this.sendTunnel(nwkHeader.source16!, device64, tApsCmdFrame);
+                    this.#context.markNetworkKeyTransported(device64);
+                } else {
+                    await this.sendStartKeyUpdateRequest(
+                        device16,
+                        device64,
+                        this.#context.trustCenterPolicies.keyNegotiationProtocol,
+                        this.#context.trustCenterPolicies.preSharedSecret,
+                    );
+                }
 
-        // TODO TLVs
-
-        return await this.sendCommand(
-            ZigbeeAPSCommandId.UPDATE_DEVICE,
-            finalPayload,
-            ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
-            true, // nwkSecurity
-            nwkDest16, // nwkDest16
-            undefined, // nwkDest64
-            ZigbeeAPSDeliveryMode.UNICAST, // apsDeliveryMode
-            undefined, // apsSecurityHeader
-        );
-    }
-
-    /**
-     * 05-3474-23 #4.4.11.3
-     *
-     * SPEC COMPLIANCE:
-     * - ✅ Correctly decodes target IEEE address (childInfo)
-     * - ✅ Issues NWK leave to child and removes from device tables
-     * - ⚠️  Does not notify parent router beyond leave (spec expects UPDATE_DEVICE relays)
-     * - ⚠️  Parent role handling limited to direct coordinator actions
-     * DEVICE SCOPE: Coordinator, routers (N/A)
-     */
-    public async processRemoveDevice(
-        data: Buffer,
-        offset: number,
-        macHeader: MACHeader,
-        nwkHeader: ZigbeeNWKHeader,
-        _apsHeader: ZigbeeAPSHeader,
-    ): Promise<number> {
-        const target = data.readBigUInt64LE(offset);
-        offset += 8;
-
-        logger.debug(
-            () =>
-                `<=== APS REMOVE_DEVICE[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} target64=${target}]`,
-            NS,
-        );
-
-        const childEntry = this.#context.deviceTable.get(target);
-
-        if (childEntry !== undefined) {
-            const leaveSent = await this.#nwkHandler.sendLeave(childEntry.address16, false);
-
-            if (!leaveSent) {
-                logger.warning(`<=x= APS REMOVE_DEVICE[target64=${target}] Failed to send NWK leave`, NS);
+                break;
             }
+            case ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_TRUST_CENTER_REJOIN: {
+                await this.#context.associate(device16, device64, undefined, false, false);
 
-            await this.#context.disassociate(childEntry.address16, target);
-        } else {
-            logger.warning(`<=x= APS REMOVE_DEVICE[target64=${target}] Unknown device`, NS);
+                if (this.#context.trustCenterPolicies.keyNegotiationProtocol === KeyNegotationProtocol.Z3) {
+                    await this.sendTransportKeyNWK(
+                        device16,
+                        this.#context.netParams.networkKey,
+                        this.#context.netParams.networkKeySequenceNumber,
+                        device64,
+                    );
+                    this.#context.markNetworkKeyTransported(device64);
+                } else {
+                    // not supported by current spec
+                }
+
+                break;
+            }
+            case ZigbeeAPSUpdateDeviceStatus.DEVICE_LEFT: {
+                // TODO: according to spec:
+                //   A Device Left is considered informative but SHOULD NOT be considered authoritative.
+                //   Security related actions SHALL not be taken on receipt of this. No further processing SHALL be done.
+                await this.#context.disassociate(device16, device64);
+
+                break;
+            }
         }
-
-        return offset;
     }
 
+    // NOTE: sendUpdateDevice DEVICE SCOPE: not Trust Center (N/A)
+
+    // NOTE: processRemoveDevice DEVICE SCOPE: not Trust Center (N/A)
+
     /**
-     * 05-3474-23 #4.4.11.3
+     * 06-3474-23 #4.4.11.3
      *
      * SPEC COMPLIANCE:
      * - ✅ Includes target IEEE address
@@ -1881,7 +1765,7 @@ export class APSHandler {
         const finalPayload = Buffer.allocUnsafe(9);
         let offset = 0;
         offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.REMOVE_DEVICE, offset);
-        offset = finalPayload.writeBigUInt64LE(target64, offset);
+        finalPayload.writeBigUInt64LE(target64, offset);
 
         return await this.sendCommand(
             ZigbeeAPSCommandId.REMOVE_DEVICE,
@@ -1896,7 +1780,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.4 #4.4.5.2.3
+     * 06-3474-23 #4.4.11.4 #4.4.5.2.3
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Rejects unencrypted APS frames as mandated (request MUST be APS secured)
@@ -1914,14 +1798,14 @@ export class APSHandler {
         macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
         apsHeader: ZigbeeAPSHeader,
-    ): Promise<number> {
+    ): Promise<void> {
         // ZigbeeAPSConsts.CMD_KEY_APP_MASTER || ZigbeeAPSConsts.CMD_KEY_TC_LINK
         const keyType = data.readUInt8(offset);
         offset += 1;
 
         // If the APS Command Request Key message is not APS encrypted, the device SHALL drop the message and no further processing SHALL be done.
         if (!apsHeader.frameControl.security) {
-            return offset;
+            return;
         }
 
         const requester64 = nwkHeader.source64 ?? this.#context.address16ToAddress64.get(nwkHeader.source16!);
@@ -1947,7 +1831,6 @@ export class APSHandler {
                 );
             } else if (keyType === ZigbeeAPSConsts.CMD_KEY_APP_MASTER) {
                 const partner = data.readBigUInt64LE(offset);
-                offset += 8;
 
                 logger.debug(
                     () =>
@@ -1988,84 +1871,14 @@ export class APSHandler {
                 NS,
             );
         }
-
-        return offset;
     }
 
-    /**
-     * 05-3474-23 #4.4.11.4 (APS Request Key)
-     *
-     * SPEC COMPLIANCE NOTES:
-     * - ✅ Encodes keyType and optional partner64 fields per Table 4-18
-     * - ✅ Uses UNICAST delivery with NWK security as mandated
-     * - ⚠️  Application key partner validation limited to lookup in device table
-     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
-     *
-     * @param nwkDest16
-     * @param keyType SHALL be set to the key being requested
-     * - 0x02: App link key
-     * - 0x04: TC link key
-     * @param partner64 When the RequestKeyType field is 2 (that is, an application key),
-     * the partner address field SHALL contain the extended 64-bit address of the partner device that SHALL be sent the key.
-     * Both the partner device and the device originating the request-key command will be sent the key.
-     * @returns
-     */
-    public async sendRequestKey(nwkDest16: number, keyType: 0x02, partner64: bigint): Promise<boolean>;
-    public async sendRequestKey(nwkDest16: number, keyType: 0x04): Promise<boolean>;
-    public async sendRequestKey(nwkDest16: number, keyType: 0x02 | 0x04, partner64?: bigint): Promise<boolean> {
-        logger.debug(() => `===> APS REQUEST_KEY[type=${keyType} partner64=${partner64}]`, NS);
+    // NOTE: sendRequestKey DEVICE SCOPE: not Trust Center (N/A)
 
-        const hasPartner64 = keyType === ZigbeeAPSConsts.CMD_KEY_APP_MASTER;
-        const finalPayload = Buffer.allocUnsafe(2 + (hasPartner64 ? 8 : 0));
-        let offset = 0;
-        offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.REQUEST_KEY, offset);
-        offset = finalPayload.writeUInt8(keyType, offset);
-
-        if (hasPartner64) {
-            offset = finalPayload.writeBigUInt64LE(partner64!, offset);
-        }
-
-        return await this.sendCommand(
-            ZigbeeAPSCommandId.REQUEST_KEY,
-            finalPayload,
-            ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
-            true, // nwkSecurity
-            nwkDest16, // nwkDest16
-            undefined, // nwkDest64
-            ZigbeeAPSDeliveryMode.UNICAST, // apsDeliveryMode
-            undefined, // apsSecurityHeader
-        );
-    }
+    // NOTE: processSwitchKey DEVICE SCOPE: not Trust Center (N/A)
 
     /**
-     * 05-3474-23 #4.4.11.3
-     *
-     * SPEC COMPLIANCE:
-     * - ✅ Decodes sequence number identifying the pending network key
-     * - ✅ Activates staged key via StackContext.activatePendingNetworkKey
-     * - ✅ Resets NWK frame counter following activation
-     * - ⚠️ Pending key staging remains prerequisite (TRANSPORT_KEY)
-     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
-     */
-    public processSwitchKey(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
-        const seqNum = data.readUInt8(offset);
-        offset += 1;
-
-        logger.debug(
-            () =>
-                `<=== APS SWITCH_KEY[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} seqNum=${seqNum}]`,
-            NS,
-        );
-
-        if (!this.#context.activatePendingNetworkKey(seqNum)) {
-            logger.warning(`<=x= APS SWITCH_KEY[seqNum=${seqNum}] Received without pending key`, NS);
-        }
-
-        return offset;
-    }
-
-    /**
-     * 05-3474-23 #4.4.11.5
+     * 06-3474-23 #4.4.11.5
      *
      * SPEC COMPLIANCE:
      * - ✅ Includes sequence number associated with staged network key
@@ -2096,7 +1909,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.6
+     * 06-3474-23 #4.4.11.6
      *
      * SPEC COMPLIANCE:
      * - ✅ Correctly decodes destination address
@@ -2109,23 +1922,20 @@ export class APSHandler {
      * IMPACT: Not applicable for Coordinator/Trust Center
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
-    public processTunnel(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): number {
+    public processTunnel(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, _apsHeader: ZigbeeAPSHeader): void {
         const destination = data.readBigUInt64LE(offset);
         offset += 8;
         const tunneledAPSFrame = data.subarray(offset);
-        offset += tunneledAPSFrame.byteLength;
 
         logger.debug(
             () =>
                 `<=== APS TUNNEL[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} dst=${destination} tAPSFrame=${tunneledAPSFrame}]`,
             NS,
         );
-
-        return offset;
     }
 
     /**
-     * 05-3474-23 #4.4.11.6
+     * 06-3474-23 #4.4.11.6
      *
      * SPEC COMPLIANCE:
      * - ✅ Includes destination64
@@ -2147,7 +1957,7 @@ export class APSHandler {
         let offset = 0;
         offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.TUNNEL, offset);
         offset = finalPayload.writeBigUInt64LE(destination64, offset);
-        offset += tApsCmdFrame.copy(finalPayload, offset);
+        tApsCmdFrame.copy(finalPayload, offset);
 
         return await this.sendCommand(
             ZigbeeAPSCommandId.TUNNEL,
@@ -2162,7 +1972,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.7
+     * 06-3474-23 #4.4.11.7
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Decodes keyType, source64, and keyHash correctly
@@ -2191,13 +2001,12 @@ export class APSHandler {
         macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
-    ): Promise<number> {
+    ): Promise<void> {
         const keyType = data.readUInt8(offset);
         offset += 1;
         const source = data.readBigUInt64LE(offset);
         offset += 8;
         const keyHash = data.subarray(offset, offset + ZigbeeAPSConsts.CMD_KEY_LENGTH);
-        offset += ZigbeeAPSConsts.CMD_KEY_LENGTH;
 
         if (macHeader.source16 !== ZigbeeMACConsts.BCAST_ADDR) {
             logger.debug(
@@ -2219,8 +2028,6 @@ export class APSHandler {
                 // TODO: APP link key should also sync counters
             }
         }
-
-        return offset;
     }
 
     // NOTE: sendVerifyKey DEVICE SCOPE: routers (N/A), end devices (N/A)
@@ -2228,7 +2035,7 @@ export class APSHandler {
     // NOTE: processConfirmKey DEVICE SCOPE: routers (N/A), end devices (N/A)
 
     /**
-     * 05-3474-23 #4.4.11.8
+     * 06-3474-23 #4.4.11.8
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Sends CONFIRM_KEY with all required fields: status, keyType, destination64
@@ -2265,7 +2072,7 @@ export class APSHandler {
         offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.CONFIRM_KEY, offset);
         offset = finalPayload.writeUInt8(status, offset);
         offset = finalPayload.writeUInt8(keyType, offset);
-        offset = finalPayload.writeBigUInt64LE(destination64, offset);
+        finalPayload.writeBigUInt64LE(destination64, offset);
 
         const result = await this.sendCommand(
             ZigbeeAPSCommandId.CONFIRM_KEY,
@@ -2278,7 +2085,7 @@ export class APSHandler {
             {
                 control: {
                     level: ZigbeeSecurityLevel.NONE,
-                    keyId: ZigbeeKeyType.LINK, // Per 05-3474-23 #4.4.11.8 confirmation uses the link key being verified
+                    keyId: ZigbeeKeyType.LINK, // Per 06-3474-23 #4.4.11.8 confirmation uses the link key being verified
                     nonce: true,
                     reqVerifiedFc: false,
                 },
@@ -2306,21 +2113,30 @@ export class APSHandler {
     // NOTE: processRelayMessageDownstream DEVICE SCOPE: [unauthorized] routers (N/A), end devices (N/A)
 
     /**
-     * 05-3474-23 #4.4.11.9
+     * 06-3474-23 #4.4.11.9
      *
      * SPEC COMPLIANCE:
-     * - ❌ NOT IMPLEMENTED
+     * - TODO
      *
      * DEVICE SCOPE: Trust Center
      */
-    public async sendRelayMessageDownstream(nwkDest16: number): Promise<boolean> {
-        logger.debug(() => `===> APS RELAY_MESSAGE_DOWNSTREAM[${"TODO"}]`, NS);
+    public async sendRelayMessageDownstream(
+        nwkDest16: number | undefined,
+        nwkDest64: bigint | undefined,
+        destination64: bigint,
+        tApsFrame: Buffer,
+    ): Promise<boolean> {
+        logger.debug(() => `===> APS RELAY_MESSAGE_DOWNSTREAM[nwkSrc=${nwkDest16}:${nwkDest64}]`, NS);
 
-        const finalPayload = Buffer.allocUnsafe(1);
+        const tApsFrameLength = tApsFrame.byteLength;
+        const finalPayload = Buffer.allocUnsafe(11 + tApsFrameLength);
         let offset = 0;
         offset = finalPayload.writeUInt8(ZigbeeAPSCommandId.RELAY_MESSAGE_DOWNSTREAM, offset);
-
-        // TODO
+        // local TLV: Relay Message
+        offset = finalPayload.writeUInt8(0x00, offset);
+        offset = finalPayload.writeUInt8(8 + tApsFrameLength - 1, offset); // per spec, actual data length is `length field + 1`
+        offset = finalPayload.writeBigUInt64LE(destination64, offset);
+        tApsFrame.copy(finalPayload, offset, 0);
 
         const result = await this.sendCommand(
             ZigbeeAPSCommandId.RELAY_MESSAGE_DOWNSTREAM,
@@ -2328,7 +2144,7 @@ export class APSHandler {
             ZigbeeNWKRouteDiscovery.SUPPRESS, // nwkDiscoverRoute
             false, // nwkSecurity
             nwkDest16, // nwkDest16
-            undefined, // nwkDest64
+            nwkDest64, // nwkDest64
             ZigbeeAPSDeliveryMode.UNICAST, // apsDeliveryMode
             undefined, // apsSecurityHeader
             true, // disableACKRequest
@@ -2338,52 +2154,136 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #4.4.11.10
+     * 06-3474-23 #4.4.11.10
      *
      * SPEC COMPLIANCE:
-     * - ⚠️ R23 feature with minimal implementation
-     * - ✅ Structure parsing exists (source64)
-     * - ❌ NOT IMPLEMENTED: Message relaying functionality
-     * - ❌ NOT IMPLEMENTED: TLV processing
-     * - ❌ NOT IMPLEMENTED: Fragment handling
+     * - TODO
      *
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
-    public processRelayMessageUpstream(
+    public async processRelayMessageUpstream(
         data: Buffer,
         offset: number,
         macHeader: MACHeader,
         nwkHeader: ZigbeeNWKHeader,
         _apsHeader: ZigbeeAPSHeader,
-    ): number {
-        // TODO: TLVs
+    ): Promise<void> {
+        const [, localTlvs] = readZigbeeTlvs(data, offset);
+        const relayMessageTlv = localTlvs.get(0x00);
 
-        // This contains the EUI64 of the unauthorized neighbor that is the source of the relayed message.
-        const source64 = data.readBigUInt64LE(offset);
-        offset += 8;
-        // This contains the single APS message, or message fragment, to be relayed from the joining device to the Trust Center.
-        // The message SHALL start with the APS Header of the intended recipient.
-        // const message = ??;
+        if (relayMessageTlv !== undefined) {
+            const destination64 = relayMessageTlv.readBigUInt64LE(0);
 
-        logger.debug(
-            () =>
-                `<=== APS RELAY_MESSAGE_UPSTREAM[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} src64=${source64}]`,
-            NS,
-        );
+            logger.debug(
+                () =>
+                    `<=== APS RELAY_MESSAGE_UPSTREAM[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} dst64=${destination64}]`,
+                NS,
+            );
 
-        // TODO: sendRelayMessageDownstream APS ACK if required by wrapped message
+            const [apsFCF, apsFCFOutOffset] = decodeZigbeeAPSFrameControl(relayMessageTlv, 8);
+            const [apsHeader] = decodeZigbeeAPSHeader(relayMessageTlv, apsFCFOutOffset, apsFCF);
 
-        return offset;
+            if (apsHeader.frameControl.ackRequest && nwkHeader.source16 !== ZigbeeConsts.COORDINATOR_ADDRESS) {
+                const ackNeedsFragmentInfo =
+                    apsHeader.frameControl.extendedHeader &&
+                    apsHeader.fragmentation !== undefined &&
+                    apsHeader.fragmentation !== ZigbeeAPSFragmentation.NONE;
+                const ackHeader: ZigbeeAPSHeader = {
+                    frameControl: {
+                        frameType: ZigbeeAPSFrameType.ACK,
+                        deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                        ackFormat: false,
+                        security: false,
+                        ackRequest: false,
+                        extendedHeader: ackNeedsFragmentInfo,
+                    },
+                    destEndpoint: apsHeader.sourceEndpoint,
+                    clusterId: apsHeader.clusterId,
+                    profileId: apsHeader.profileId,
+                    sourceEndpoint: apsHeader.destEndpoint,
+                    counter: apsHeader.counter,
+                };
+
+                if (ackNeedsFragmentInfo) {
+                    ackHeader.fragmentation = ZigbeeAPSFragmentation.FIRST;
+                    ackHeader.fragBlockNumber = apsHeader.fragBlockNumber ?? 0;
+                    ackHeader.fragACKBitfield = 0x01;
+                }
+
+                const apsFrame = encodeZigbeeAPSFrame(
+                    ackHeader,
+                    Buffer.alloc(0), // TODO optimize
+                    // undefined,
+                    // undefined,
+                );
+
+                await this.sendRelayMessageDownstream(nwkHeader.source16, nwkHeader.source64, destination64, apsFrame);
+            }
+        }
     }
 
     // NOTE: sendRelayMessageUpstream DEVICE SCOPE: [unauthorized] routers (N/A), end devices (N/A)
+
+    /**
+     * 06-3474-23 #4.4.9.1 APSME-KEY-NEGOTIATION.request
+     *
+     * SPEC COMPLIANCE:
+     * - TODO
+     *
+     * DEVICE SCOPE: Trust Center
+     */
+    public async sendStartKeyUpdateRequest(
+        nwkDest16: number,
+        nwkDest64: bigint,
+        keyNegotiationProtocol: KeyNegotationProtocol,
+        preSharedSecret: PreSharedSecret,
+    ): Promise<boolean> {
+        const ackHeader: ZigbeeAPSHeader = {
+            frameControl: {
+                frameType: ZigbeeAPSFrameType.DATA,
+                deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                ackFormat: false,
+                security: false,
+                ackRequest: true,
+                extendedHeader: false,
+            },
+            destEndpoint: ZigbeeConsts.ZDO_ENDPOINT,
+            clusterId: ZigbeeConsts.START_KEY_UPDATE_REQUEST,
+            profileId: ZigbeeConsts.ZDO_PROFILE_ID,
+            sourceEndpoint: ZigbeeConsts.ZDO_ENDPOINT,
+            counter: this.nextCounter(),
+        };
+        const apsPayload = Buffer.allocUnsafe(20);
+        let offset = 0;
+        offset = apsPayload.writeUInt8(this.nextZDOSeqNum(), offset);
+        // local TLV: Selected Key Negotiation Method
+        offset = apsPayload.writeUInt8(0x00, offset);
+        offset = apsPayload.writeUInt8(9, offset); // per spec, actual data length is `length field + 1`
+        offset = apsPayload.writeUInt8(keyNegotiationProtocol, offset);
+        offset = apsPayload.writeUInt8(preSharedSecret, offset);
+        offset = apsPayload.writeBigUInt64LE(this.#context.netParams.eui64, offset);
+        writeZigbeeTlvFragmentationParameters(apsPayload, offset, {
+            nwkAddress: ZigbeeConsts.COORDINATOR_ADDRESS,
+            fragmentationOptions: 0b1,
+            maxIncomingTransferUnit: ZigbeeMACConsts.FRAME_MAX_SIZE,
+        });
+
+        const apsFrame = encodeZigbeeAPSFrame(
+            ackHeader,
+            apsPayload,
+            // undefined,
+            // undefined,
+        );
+
+        return await this.sendRelayMessageDownstream(nwkDest16, nwkDest64, nwkDest64, apsFrame);
+    }
 
     // #endregion
 
     // #region ZDO Helpers
 
     /**
-     * 05-3474-23 #2.4.4.2.3
+     * 06-3474-23 #2.4.4.2.3
      *
      * Generate LQI (Link Quality Indicator) table response for coordinator.
      * ZDO response to LQI_TABLE_REQUEST.
@@ -2489,7 +2389,7 @@ export class APSHandler {
     }
 
     /**
-     * 05-3474-23 #2.4.4.3.3
+     * 06-3474-23 #2.4.4.3.3
      *
      * Generate routing table response for coordinator.
      * ZDO response to ROUTING_TABLE_REQUEST.

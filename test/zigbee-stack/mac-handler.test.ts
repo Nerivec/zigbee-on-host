@@ -21,14 +21,14 @@ import {
     MACSecurityKeyIdMode,
     MACSecurityLevel,
     type MACSuperframeSpec,
-    type MACZigbeeBeacon,
     ZigbeeMACConsts,
 } from "../../src/zigbee/mac.js";
+import { GlobalTlv } from "../../src/zigbee/tlvs.js";
 import { ZigbeeConsts } from "../../src/zigbee/zigbee.js";
 import { ZigbeeNWKConsts } from "../../src/zigbee/zigbee-nwk.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
 import { type NetworkParameters, StackContext, type StackContextCallbacks } from "../../src/zigbee-stack/stack-context.js";
-import { createMACFrameControl } from "../utils.js";
+import { createMACFrameControl, defaultDeviceTableEntry } from "../utils.js";
 
 const NO_ACK_CODE = 99999;
 
@@ -64,19 +64,7 @@ describe("MACHandler", () => {
 
         mockContext = new StackContext(mockStackContextCallbacks, join(saveDir, "zoh.save"), netParams);
 
-        vi.spyOn(mockContext, "associate").mockImplementation(
-            (_source16, _source64, _initialJoin, _capabilities, _neighbor, denyOverride, allowOverride) => {
-                if (denyOverride) {
-                    return Promise.resolve([MACAssociationStatus.PAN_ACCESS_DENIED, 0xffff, false]);
-                }
-
-                if (allowOverride) {
-                    return Promise.resolve([MACAssociationStatus.SUCCESS, 0x1234, true]);
-                }
-
-                return Promise.resolve([MACAssociationStatus.SUCCESS, 0x1234, true]);
-            },
-        );
+        vi.spyOn(mockContext, "associate").mockResolvedValue();
         vi.spyOn(mockContext, "disassociate").mockResolvedValue(undefined);
 
         mockCallbacks = {
@@ -143,15 +131,8 @@ describe("MACHandler", () => {
             const dest16 = 0x5678;
 
             mockContext.deviceTable.set(dest64, {
+                ...defaultDeviceTableEntry(),
                 address16: dest16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -333,12 +314,13 @@ describe("MACHandler", () => {
 
     describe("processCommand", () => {
         it("should dispatch ASSOC_REQ to handler", async () => {
+            mockContext.allowJoins(0xfe, true);
+
             const macHeader: MACHeader = {
-                frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
+                frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.EXT),
                 sequenceNumber: 1,
                 destinationPANId: 0x1a62,
                 destination16: 0x0000,
-                source16: 0xffff,
                 source64: 0x00124b0098765432n,
                 commandId: MACCommandId.ASSOC_REQ,
                 fcs: 0,
@@ -399,6 +381,7 @@ describe("MACHandler", () => {
     describe("processAssocReq", () => {
         it("should process association request from new device", async () => {
             mockContext.allowJoins(0xfe, true);
+            const assignSpy = vi.spyOn(mockContext, "assignNetworkAddress").mockReturnValueOnce(0x1234);
 
             const macHeader: MACHeader = {
                 frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
@@ -411,28 +394,26 @@ describe("MACHandler", () => {
             };
 
             const data = Buffer.from([0x8e]); // capabilities: rxOnWhenIdle=true, deviceType=FFD, powerSource=mains, securityCapability=true, allocateAddress=true
-            await macHandler.processAssocReq(data, 0, macHeader);
+            await macHandler.processAssocReq(data, macHeader);
 
-            expect(mockContext.associate).toHaveBeenCalledWith(undefined, 0x00124b0098765432n, true, expect.any(Object), true, false);
+            expect(mockContext.associate).toHaveBeenCalledWith(0x1234, 0x00124b0098765432n, expect.any(Object), true, true);
             expect(mockContext.pendingAssociations.has(0x00124b0098765432n)).toStrictEqual(true);
+
+            assignSpy.mockRestore();
         });
 
-        it("should process association request from known device (rejoin)", async () => {
+        it("should process association request from known device", async () => {
             mockContext.allowJoins(0xfe, true);
 
             const dest64 = 0x00124b0098765432n;
             const dest16 = 0x5678;
 
             mockContext.deviceTable.set(dest64, {
+                ...defaultDeviceTableEntry(),
                 address16: dest16,
                 capabilities: undefined,
                 authorized: true,
                 neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
 
             const macHeader: MACHeader = {
@@ -446,9 +427,10 @@ describe("MACHandler", () => {
             };
 
             const data = Buffer.from([0x8e]);
-            await macHandler.processAssocReq(data, 0, macHeader);
+            await macHandler.processAssocReq(data, macHeader);
 
-            expect(mockContext.associate).toHaveBeenCalledWith(dest16, dest64, false, expect.any(Object), true, false);
+            // ignored
+            expect(mockContext.associate).not.toHaveBeenCalled();
         });
 
         it("should handle association request without source64", async () => {
@@ -463,7 +445,7 @@ describe("MACHandler", () => {
             };
 
             const data = Buffer.from([0x8e]);
-            await macHandler.processAssocReq(data, 0, macHeader);
+            await macHandler.processAssocReq(data, macHeader);
 
             expect(mockContext.associate).not.toHaveBeenCalled();
         });
@@ -496,7 +478,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processBeaconReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processBeaconReq(Buffer.alloc(0), macHeader);
 
             expect(mockCallbacks.onSendFrame).toHaveBeenCalledOnce();
 
@@ -521,7 +503,7 @@ describe("MACHandler", () => {
         });
 
         it("should include association permit in beacon", async () => {
-            mockContext.associationPermit = true;
+            mockContext.macAssociationPermit = true;
             getOnSendFrameMock().mockClear();
 
             const macHeader: MACHeader = {
@@ -533,7 +515,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processBeaconReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processBeaconReq(Buffer.alloc(0), macHeader);
 
             expect(mockCallbacks.onSendFrame).toHaveBeenCalledOnce();
 
@@ -569,7 +551,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processDataReq(Buffer.alloc(0), macHeader);
 
             expect(sendResp).toHaveBeenCalledOnce();
             expect(mockContext.pendingAssociations.has(dest64)).toStrictEqual(false);
@@ -594,7 +576,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processDataReq(Buffer.alloc(0), macHeader);
 
             expect(sendResp).not.toHaveBeenCalled();
             expect(mockContext.pendingAssociations.has(dest64)).toStrictEqual(false);
@@ -621,7 +603,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processDataReq(Buffer.alloc(0), macHeader);
 
             expect(sendFrame).toHaveBeenCalledOnce();
             expect(mockContext.indirectTransmissions.get(dest64)?.length).toStrictEqual(0);
@@ -653,7 +635,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processDataReq(Buffer.alloc(0), macHeader);
 
             expect(expiredSendFrame).not.toHaveBeenCalled();
             expect(validSendFrame).toHaveBeenCalledOnce();
@@ -684,7 +666,7 @@ describe("MACHandler", () => {
                 fcs: 0,
             };
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
+            await macHandler.processDataReq(Buffer.alloc(0), macHeader);
 
             expect(sendFrame).toHaveBeenCalledOnce();
         });
@@ -732,7 +714,7 @@ describe("MACHandler", () => {
         it("encodes beacon responses with Zigbee beacon payload", async () => {
             getOnSendFrameMock().mockClear();
 
-            await macHandler.processBeaconReq(Buffer.alloc(0), 0, {
+            await macHandler.processBeaconReq(Buffer.alloc(0), {
                 frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
                 sequenceNumber: 0,
                 destinationPANId: 0xffff,
@@ -1073,24 +1055,41 @@ describe("MACHandler", () => {
         });
 
         it("encodes Zigbee beacon capacity flags", () => {
-            const beacon: MACZigbeeBeacon = {
-                protocolId: ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_ID,
-                profile: 0x02,
-                version: ZigbeeNWKConsts.VERSION_2007,
-                routerCapacity: false,
-                deviceDepth: 0x03,
-                endDeviceCapacity: false,
-                extendedPANId: 0x00124b0000000011n,
-                txOffset: 0x000123,
-                updateId: 0x09,
-            };
-
-            const encoded = encodeMACZigbeeBeacon(beacon);
+            const encoded = encodeMACZigbeeBeacon(
+                {
+                    protocolId: ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_ID,
+                    profile: 0x02,
+                    version: ZigbeeNWKConsts.VERSION_2007,
+                    routerCapacity: false,
+                    deviceDepth: 0x03,
+                    endDeviceCapacity: false,
+                    extendedPANId: 0x00124b0000000011n,
+                    txOffset: 0x000123,
+                    updateId: 0x09,
+                },
+                mockContext.netParams.eui64,
+            );
             const decoded = decodeMACZigbeeBeacon(encoded, 0);
 
             expect(decoded.routerCapacity).toBe(false);
             expect(decoded.endDeviceCapacity).toBe(false);
-            expect(decoded.deviceDepth).toStrictEqual(beacon.deviceDepth);
+            expect(decoded.deviceDepth).toStrictEqual(0x03);
+            expect(decoded.globalTlvs).toStrictEqual({
+                [GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS]: {
+                    keyNegotiationProtocolsBitmask: 0b111,
+                    preSharedSecretsBitmask: 0b110,
+                    sourceDeviceEui64: 0x00124b0012345678n,
+                },
+                [GlobalTlv.FRAGMENTATION_PARAMETERS]: {
+                    nwkAddress: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    fragmentationOptions: 0b1,
+                    maxIncomingTransferUnit: ZigbeeMACConsts.FRAME_MAX_SIZE,
+                },
+                [GlobalTlv.ROUTER_INFORMATION]: {
+                    bitmask: 0b11110101,
+                },
+            });
+            expect(decoded.localTlvs.size).toStrictEqual(0);
         });
 
         it("computes MIC length per security level", () => {

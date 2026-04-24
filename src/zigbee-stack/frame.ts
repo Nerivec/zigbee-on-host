@@ -19,7 +19,7 @@ import type { StackContext } from "./stack-context.js";
 const NS = "frame-handler";
 
 /**
- * 05-3474-23 (Zigbee PRO) multi-layer processing pipeline
+ * 06-3474-23 (Zigbee PRO) multi-layer processing pipeline
  *
  * SPEC COMPLIANCE NOTES:
  * - ✅ Decodes MAC CMD/DATA frames and dispatches according to IEEE 802.15.4 frame type
@@ -171,24 +171,28 @@ export async function processFrame(
                     await apsHandler.sendACK(macHeader, nwkHeader, apsHeader);
                 }
 
-                // Delegate APS duplicate check to APS handler
-                if (apsHeader.frameControl.frameType !== ZigbeeAPSFrameType.ACK && apsHandler.isDuplicateFrame(nwkHeader, apsHeader)) {
-                    logger.debug(() => `<=~= APS Ignoring duplicate frame nwkSeqNum=${nwkHeader.seqNum} counter=${apsHeader.counter}`, NS);
-                    return;
+                if (apsHeader.frameControl.frameType === ZigbeeAPSFrameType.ACK) {
+                    await apsHandler.resolvePendingAck(nwkHeader, apsHeader);
+                } else {
+                    // Delegate APS duplicate check to APS handler
+                    if (apsHandler.isDuplicateFrame(nwkHeader, apsHeader)) {
+                        logger.debug(() => `<=~= APS Ignoring duplicate frame nwkSeqNum=${nwkHeader.seqNum} counter=${apsHeader.counter}`, NS);
+                        return;
+                    }
+
+                    const apsPayload = decodeZigbeeAPSPayload(
+                        nwkPayload,
+                        apsHOutOffset,
+                        undefined, // use pre-hashed this.context.netParams.tcKey,
+                        /* nwkHeader.frameControl.extendedSource ? nwkHeader.source64 : this.context.address16ToAddress64.get(nwkHeader.source16!) */
+                        nwkHeader.source64 ?? context.address16ToAddress64.get(nwkHeader.source16!),
+                        apsFCF,
+                        apsHeader,
+                    );
+
+                    // Delegate APS frame processing to APS handler
+                    await apsHandler.processFrame(apsPayload, macHeader, nwkHeader, apsHeader, sourceLQA);
                 }
-
-                const apsPayload = decodeZigbeeAPSPayload(
-                    nwkPayload,
-                    apsHOutOffset,
-                    undefined, // use pre-hashed this.context.netParams.tcKey,
-                    /* nwkHeader.frameControl.extendedSource ? nwkHeader.source64 : this.context.address16ToAddress64.get(nwkHeader.source16!) */
-                    nwkHeader.source64 ?? context.address16ToAddress64.get(nwkHeader.source16!),
-                    apsFCF,
-                    apsHeader,
-                );
-
-                // Delegate APS frame processing to APS handler
-                await apsHandler.processFrame(apsPayload, macHeader, nwkHeader, apsHeader, sourceLQA);
             } else if (nwkFCF.frameType === ZigbeeNWKFrameType.CMD) {
                 // Delegate NWK command processing to NWK handler
                 await nwkHandler.processCommand(nwkPayload, macHeader, nwkHeader);

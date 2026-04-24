@@ -2,7 +2,8 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { logger } from "../../src/utils/logger.js";
-import { MACAssociationStatus, type MACHeader } from "../../src/zigbee/mac.js";
+import type { MACHeader } from "../../src/zigbee/mac.js";
+import { GlobalTlv } from "../../src/zigbee/tlvs.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import {
     ZigbeeAPSCommandId,
@@ -11,6 +12,7 @@ import {
     ZigbeeAPSFragmentation,
     ZigbeeAPSFrameType,
     type ZigbeeAPSHeader,
+    ZigbeeAPSUpdateDeviceStatus,
 } from "../../src/zigbee/zigbee-aps.js";
 import { type ZigbeeNWKHeader, ZigbeeNWKRouteDiscovery } from "../../src/zigbee/zigbee-nwk.js";
 import { APSHandler, type APSHandlerCallbacks, CONFIG_APS_ACK_WAIT_DURATION_MS } from "../../src/zigbee-stack/aps-handler.js";
@@ -22,7 +24,7 @@ import {
     StackContext,
     type StackContextCallbacks,
 } from "../../src/zigbee-stack/stack-context.js";
-import { createMACHeader } from "../utils.js";
+import { createMACHeader, defaultDeviceTableEntry } from "../utils.js";
 
 describe("APS Handler", () => {
     let saveDir: string;
@@ -74,13 +76,7 @@ describe("APS Handler", () => {
         vi.spyOn(mockContext, "nextNWKKeyFrameCounter");
         vi.spyOn(mockContext, "nextTCKeyFrameCounter");
         vi.spyOn(mockContext, "computeDeviceLQA").mockReturnValue(150);
-        vi.spyOn(mockContext, "associate").mockImplementation(
-            (source16, _source64, _initialJoin, _capabilities, _neighbor, _denyOverride, _allowOverride) => {
-                const assigned16 = source16 ?? 0x1234;
-
-                return Promise.resolve([MACAssociationStatus.SUCCESS, assigned16, true]);
-            },
-        );
+        vi.spyOn(mockContext, "associate").mockResolvedValue();
         vi.spyOn(mockContext, "disassociate").mockResolvedValue(undefined);
 
         mockMACCallbacks = {
@@ -98,7 +94,8 @@ describe("APS Handler", () => {
         vi.spyOn(mockMACHandler, "sendFrameDirect");
 
         mockNWKCallbacks = {
-            onAPSSendTransportKeyNWK: vi.fn(async () => {}),
+            onAPSSendTransportKeyNWK: vi.fn(),
+            onAPSSendStartKeyUpdateRequest: vi.fn(),
         };
 
         mockNWKHandler = new NWKHandler(mockContext, mockMACHandler, mockNWKCallbacks);
@@ -180,15 +177,11 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
                 capabilities: undefined,
                 authorized: false,
                 neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -242,15 +235,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -269,15 +255,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -296,15 +275,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -316,33 +288,6 @@ describe("APS Handler", () => {
     });
 
     describe("APS Command Sending - Device Management", () => {
-        it("should send Update Device command", async () => {
-            const destination16 = 0x1234;
-            const destination64 = 0x00124b0087654321n;
-            const device64 = 0x00124b0011223344n;
-            const device16 = 0x5678;
-            const status = 0x00; // secured rejoin
-
-            // Add device to device table
-            mockContext.deviceTable.set(destination64, {
-                address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
-            });
-            mockContext.address16ToAddress64.set(destination16, destination64);
-
-            const result = await apsHandler.sendUpdateDevice(destination16, device64, device16, status);
-
-            expect(result).toStrictEqual(true);
-            expect(mockMACHandler.sendFrame).toHaveBeenCalled();
-        });
-
         it("should send Remove Device command", async () => {
             const destination16 = 0x1234;
             const destination64 = 0x00124b0087654321n;
@@ -350,15 +295,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -370,55 +308,6 @@ describe("APS Handler", () => {
     });
 
     describe("APS Command Sending - Key Management", () => {
-        it("should send Request Key command for TC key", async () => {
-            const destination16 = ZigbeeConsts.COORDINATOR_ADDRESS;
-            const destination64 = netParams.eui64;
-
-            // Add coordinator to device table
-            mockContext.deviceTable.set(destination64, {
-                address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
-            });
-            mockContext.address16ToAddress64.set(destination16, destination64);
-
-            const result = await apsHandler.sendRequestKey(destination16, 0x04);
-
-            expect(result).toStrictEqual(true);
-            expect(mockMACHandler.sendFrame).toHaveBeenCalled();
-        });
-
-        it("should send Request Key command for APP key", async () => {
-            const destination16 = ZigbeeConsts.COORDINATOR_ADDRESS;
-            const destination64 = netParams.eui64;
-            const partner64 = 0x00124b0011223344n;
-
-            // Add coordinator to device table
-            mockContext.deviceTable.set(destination64, {
-                address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
-            });
-            mockContext.address16ToAddress64.set(destination16, destination64);
-
-            const result = await apsHandler.sendRequestKey(destination16, 0x02, partner64);
-
-            expect(result).toStrictEqual(true);
-            expect(mockMACHandler.sendFrame).toHaveBeenCalled();
-        });
-
         it("should send Switch Key command", async () => {
             const destination16 = 0x1234;
             const destination64 = 0x00124b0087654321n;
@@ -426,15 +315,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -452,15 +334,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -479,15 +354,8 @@ describe("APS Handler", () => {
 
             // Add device to device table
             mockContext.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             mockContext.address16ToAddress64.set(destination16, destination64);
 
@@ -499,80 +367,6 @@ describe("APS Handler", () => {
     });
 
     describe("APS Command Processing", () => {
-        it("should process Transport Key command", () => {
-            const data = Buffer.alloc(50);
-            let offset = 0;
-
-            // Command ID
-            data.writeUInt8(0x05, offset++); // TRANSPORT_KEY
-
-            // Key type (Network Key)
-            data.writeUInt8(0x01, offset++);
-
-            // Key
-            Buffer.from("0102030405060708090a0b0c0d0e0f10", "hex").copy(data, offset);
-            offset += 16;
-
-            // Sequence number
-            data.writeUInt8(0, offset++);
-
-            // Destination address
-            data.writeBigUInt64LE(0x00124b0012345678n, offset);
-
-            // Source address
-            data.writeBigUInt64LE(0x00224b0012345678n, offset);
-
-            const macHeader = createMACHeader();
-            const nwkHeader = { frameControl: {} } as ZigbeeNWKHeader;
-            const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
-
-            // Should not throw
-            // TODO: more complete tests
-            expect(() => {
-                apsHandler.processTransportKey(data, 0, macHeader, nwkHeader, apsHeader);
-            }).not.toThrow();
-        });
-
-        it("should process Switch Key command", () => {
-            const data = Buffer.alloc(10);
-            let offset = 0;
-
-            // Command ID
-            data.writeUInt8(0x06, offset++); // SWITCH_KEY
-
-            // Sequence number
-            data.writeUInt8(1, offset++);
-
-            const macHeader = createMACHeader();
-            const nwkHeader = { frameControl: {} } as ZigbeeNWKHeader;
-            const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
-
-            // Should not throw
-            // TODO: more complete tests
-            expect(() => {
-                apsHandler.processSwitchKey(data, 0, macHeader, nwkHeader, apsHeader);
-            }).not.toThrow();
-        });
-
-        it("should process Remove Device command", async () => {
-            const data = Buffer.alloc(20);
-            let offset = 0;
-
-            // Command ID
-            data.writeUInt8(0x0b, offset++); // REMOVE_DEVICE
-
-            // Target IEEE address
-            data.writeBigUInt64LE(0x00124b0011223344n, offset);
-
-            const macHeader = createMACHeader();
-            const nwkHeader = { frameControl: {} } as ZigbeeNWKHeader;
-            const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
-
-            // Should not throw
-            // TODO: more complete tests
-            await expect(apsHandler.processRemoveDevice(data, 0, macHeader, nwkHeader, apsHeader)).resolves.not.toThrow();
-        });
-
         it("should process Tunnel command", () => {
             const data = Buffer.alloc(30);
             let offset = 0;
@@ -756,15 +550,11 @@ describe("APS Handler", () => {
             const device64 = 0x00124b0000004422n;
 
             mockContext.deviceTable.set(device64, {
+                ...defaultDeviceTableEntry(),
                 address16: device16,
                 capabilities: undefined,
                 authorized: true,
                 neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
 
             const payload = Buffer.alloc(12);
@@ -814,15 +604,8 @@ describe("APS Handler", () => {
             const device64 = 0x00124b0000005522n;
 
             mockContext.deviceTable.set(device64, {
+                ...defaultDeviceTableEntry(),
                 address16: device16,
-                capabilities: undefined,
-                authorized: false,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
 
             const payload = Buffer.alloc(12);
@@ -888,6 +671,7 @@ describe("APS Handler", () => {
         it("should generate LQI table response", () => {
             // Add some neighbor devices to device table
             mockContext.deviceTable.set(0x00124b0011111111n, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x1234,
                 capabilities: {
                     alternatePANCoordinator: false,
@@ -899,14 +683,11 @@ describe("APS Handler", () => {
                 },
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [150, 155, 152],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
 
             mockContext.deviceTable.set(0x00124b0022222222n, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x5678,
                 capabilities: {
                     alternatePANCoordinator: false,
@@ -918,23 +699,15 @@ describe("APS Handler", () => {
                 },
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [100],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
 
             mockContext.deviceTable.set(0x00124b0033333333n, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x9abc,
                 capabilities: undefined,
                 authorized: false,
                 neighbor: false, // Not a neighbor, should be skipped
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
 
             const lqiTable = apsHandler.getLQITableResponse(0);
@@ -971,6 +744,7 @@ describe("APS Handler", () => {
             // Add multiple neighbor devices
             for (let i = 0; i < 10; i++) {
                 mockContext.deviceTable.set(BigInt(0x00124b0000000000 + i), {
+                    ...defaultDeviceTableEntry(),
                     address16: 0x1000 + i,
                     capabilities: {
                         alternatePANCoordinator: false,
@@ -982,11 +756,6 @@ describe("APS Handler", () => {
                     },
                     authorized: true,
                     neighbor: true,
-                    lastTransportedNetworkKeySeq: undefined,
-                    recentLQAs: [],
-                    incomingNWKFrameCounter: undefined,
-                    endDeviceTimeout: undefined,
-                    linkStatusMisses: 0,
                 });
             }
 
@@ -1256,9 +1025,8 @@ describe("APS Handler", () => {
 
             const sendSpy = vi.spyOn(apsHandler, "sendTransportKeyAPP");
 
-            const offset = await apsHandler.processRequestKey(data, 0, macHeader, nwkHeader, apsHeader);
+            await apsHandler.processRequestKey(data, 0, macHeader, nwkHeader, apsHeader);
 
-            expect(offset).toBe(1); // Should just consume the key type byte
             expect(sendSpy).not.toHaveBeenCalled();
             sendSpy.mockRestore();
         });
@@ -1399,26 +1167,50 @@ describe("APS Handler", () => {
     });
 
     describe("Update Device Processing", () => {
-        it("should process update device command", async () => {
+        it("should process update device command without TLV", async () => {
             const device16 = 0x1234;
             const device64 = 0x00124b0012345678n;
 
-            const data = Buffer.alloc(12);
+            const data = Buffer.alloc(11);
             let offset = 0;
-
-            data.writeBigUInt64LE(device64, offset);
-            offset += 8;
-            data.writeUInt16LE(device16, offset);
-            offset += 2;
-            data.writeUInt8(0x00, offset); // status = SECURED_REJOIN
+            offset = data.writeBigUInt64LE(device64, offset);
+            offset = data.writeUInt16LE(device16, offset);
+            offset = data.writeUInt8(ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_SECURED_REJOIN, offset);
 
             const macHeader = { frameControl: {}, source16: device16 } as MACHeader;
             const nwkHeader = { frameControl: {}, source16: device16 } as ZigbeeNWKHeader;
             const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
 
-            const result = await apsHandler.processUpdateDevice(data, 0, macHeader, nwkHeader, apsHeader);
+            await apsHandler.processUpdateDevice(data, 0, macHeader, nwkHeader, apsHeader);
+        });
 
-            expect(result).toBe(11);
+        it("should process update device command with TLV", async () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0012345678n;
+
+            const data = Buffer.alloc(32);
+            let offset = 0;
+            offset = data.writeBigUInt64LE(device64, offset);
+            offset = data.writeUInt16LE(device16, offset);
+            offset = data.writeUInt8(ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_UNSECURED_JOIN, offset);
+            offset = data.writeUInt8(GlobalTlv.JOINER_ENCAPSULATION, offset);
+            offset = data.writeUInt8(18, offset);
+            offset = data.writeUInt8(GlobalTlv.FRAGMENTATION_PARAMETERS, offset);
+            offset = data.writeUInt8(4, offset);
+            offset = data.writeUInt16LE(device16, offset); // nwkAddress
+            offset = data.writeUInt8(0x01, offset); // fragmentationOptions
+            offset = data.writeUInt16LE(0x0052, offset); // maxIncomingTransferUnit
+            offset = data.writeUInt8(GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS, offset);
+            offset = data.writeUInt8(9, offset);
+            offset = data.writeUInt8(0x07, offset); // keyNegotiationProtocolsBitmask
+            offset = data.writeUInt8(0x06, offset); // preSharedSecretsBitmask
+            offset = data.writeBigUInt64LE(device64, offset); // sourceDeviceEui64
+
+            const macHeader = { frameControl: {}, source16: device16 } as MACHeader;
+            const nwkHeader = { frameControl: {}, source16: device16 } as ZigbeeNWKHeader;
+            const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
+
+            await apsHandler.processUpdateDevice(data, 0, macHeader, nwkHeader, apsHeader);
         });
     });
 
@@ -1616,15 +1408,8 @@ describe("APS Handler", () => {
     it("resolves IEEE destination when sending data", async () => {
         const destination64 = 0x00124b0099999999n;
         mockContext.deviceTable.set(destination64, {
+            ...defaultDeviceTableEntry(),
             address16: 0x7788,
-            capabilities: undefined,
-            authorized: false,
-            neighbor: false,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(0x7788, destination64);
 
@@ -1732,15 +1517,11 @@ describe("APS Handler", () => {
         const responder64 = 0x00124b0044332211n;
         mockContext.address16ToAddress64.set(0x3344, responder64);
         mockContext.deviceTable.set(responder64, {
+            ...defaultDeviceTableEntry(),
             address16: 0x3344,
             capabilities: undefined,
             authorized: true,
             neighbor: true,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         const apsHeader = {
             frameControl: {
@@ -1777,15 +1558,11 @@ describe("APS Handler", () => {
         mockContext.address16ToAddress64.set(requester16, requester64);
         mockContext.address16ToAddress64.set(partner16, partner64);
         mockContext.deviceTable.set(partner64, {
+            ...defaultDeviceTableEntry(),
             address16: partner16,
             capabilities: undefined,
             authorized: true,
             neighbor: false,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         mockContext.setAppLinkKey(requester64, partner64, cachedKey);
 
@@ -1939,15 +1716,11 @@ describe("APS Handler", () => {
         const dest64 = 0x00124b0000007001n;
 
         mockContext.deviceTable.set(dest64, {
+            ...defaultDeviceTableEntry(),
             address16: dest16,
             capabilities: undefined,
             authorized: true,
             neighbor: true,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -1966,7 +1739,6 @@ describe("APS Handler", () => {
 
         const clearSpy = vi.spyOn(global, "clearTimeout");
 
-        const ackMacHeader = { frameControl: {}, source16: dest16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
         const ackNwkHeader = { frameControl: {}, source16: dest16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS, seqNum: 0x33 } as ZigbeeNWKHeader;
         const ackHeader = {
             frameControl: {
@@ -1980,7 +1752,7 @@ describe("APS Handler", () => {
             counter: apsCounter,
         } as ZigbeeAPSHeader;
 
-        await apsHandler.processFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackHeader, 180);
+        await apsHandler.resolvePendingAck(ackNwkHeader, ackHeader);
 
         expect(clearSpy).toHaveBeenCalled();
 
@@ -1996,15 +1768,11 @@ describe("APS Handler", () => {
         const dest64 = 0x00124b0000007002n;
 
         mockContext.deviceTable.set(dest64, {
+            ...defaultDeviceTableEntry(),
             address16: dest16,
             capabilities: undefined,
             authorized: true,
             neighbor: true,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -2023,7 +1791,6 @@ describe("APS Handler", () => {
 
         expect(sendFrameMock).toHaveBeenCalledTimes(1);
 
-        const ackMacHeader = { frameControl: {}, source16: dest16, destination16: ZigbeeConsts.COORDINATOR_ADDRESS } as MACHeader;
         const ackNwkHeader = {
             frameControl: {},
             destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
@@ -2042,7 +1809,7 @@ describe("APS Handler", () => {
             counter: apsCounter,
         } as ZigbeeAPSHeader;
 
-        await apsHandler.processFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackHeader, 175);
+        await apsHandler.resolvePendingAck(ackNwkHeader, ackHeader);
 
         await vi.advanceTimersByTimeAsync(CONFIG_APS_ACK_WAIT_DURATION_MS - 1);
         await vi.runOnlyPendingTimersAsync();
@@ -2068,6 +1835,7 @@ describe("APS Handler", () => {
             neighbor: true,
             lastTransportedNetworkKeySeq: undefined,
             recentLQAs: [],
+            lastReceivedRssi: undefined,
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
             linkStatusMisses: 0,
@@ -2165,15 +1933,11 @@ describe("APS Handler", () => {
         const dest64 = 0x00124b0000007004n;
 
         mockContext.deviceTable.set(dest64, {
+            ...defaultDeviceTableEntry(),
             address16: dest16,
             capabilities: undefined,
             authorized: true,
             neighbor: true,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -2233,15 +1997,11 @@ describe("APS Handler", () => {
         const clearTimeoutSpy = vi.spyOn(global, "clearTimeout").mockImplementation(() => {});
 
         mockContext.deviceTable.set(dest64, {
+            ...defaultDeviceTableEntry(),
             address16: dest16,
             capabilities: undefined,
             authorized: true,
             neighbor: true,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         mockContext.address16ToAddress64.set(dest16, dest64);
 
@@ -2342,15 +2102,11 @@ describe("APS Handler", () => {
         for (let index = 0; index < 260; index += 1) {
             const address64 = 0x00124b0000100000n + BigInt(index);
             mockContext.deviceTable.set(address64, {
+                ...defaultDeviceTableEntry(),
                 address16: 0x1000 + index,
                 capabilities: undefined,
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
         }
 
@@ -2400,84 +2156,5 @@ describe("APS Handler", () => {
 
         await apsHandler.processCommand(Buffer.from([0xff]), macHeader, nwkHeader, apsHeader);
         expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("<=x= APS CMD[cmdId=255"), "aps-handler");
-    });
-
-    it("parses transport key payload variants", () => {
-        const macHeader = { frameControl: {}, source16: 0x3001, source64: 0x00124b0033334444n } as MACHeader;
-        const nwkHeader = { frameControl: {}, source16: 0x3001, source64: 0x00124b0033334444n } as ZigbeeNWKHeader;
-        const apsHeader = { frameControl: {} } as ZigbeeAPSHeader;
-
-        const tcPayload = Buffer.alloc(1 + 16 + 8 + 8);
-        tcPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_TC_LINK, 0);
-        Buffer.alloc(16, 0xaa).copy(tcPayload, 1);
-        tcPayload.writeBigUInt64LE(0x00124b00aaaa0001n, 17);
-        tcPayload.writeBigUInt64LE(0x00124b00bbbb0002n, 25);
-        const tcOffset = apsHandler.processTransportKey(tcPayload, 0, macHeader, nwkHeader, apsHeader);
-        expect(tcOffset).toStrictEqual(tcPayload.length);
-
-        const appPayload = Buffer.alloc(1 + 16 + 8 + 1);
-        appPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_APP_MASTER, 0);
-        Buffer.alloc(16, 0xbb).copy(appPayload, 1);
-        appPayload.writeBigUInt64LE(0x00124b00cccc0003n, 17);
-        appPayload.writeUInt8(0x01, 25);
-        const appOffset = apsHandler.processTransportKey(appPayload, 0, macHeader, nwkHeader, apsHeader);
-        expect(appOffset).toStrictEqual(appPayload.length);
-    });
-
-    it("handles remove device outcomes", async () => {
-        const target64 = 0x00124b0044445555n;
-        mockContext.deviceTable.set(target64, {
-            address16: 0x5566,
-            capabilities: undefined,
-            authorized: true,
-            neighbor: false,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
-        });
-
-        const leaveSpy = vi.spyOn(mockNWKHandler, "sendLeave").mockResolvedValueOnce(false);
-        const warnSpy = vi.spyOn(logger, "warning");
-
-        const payload = Buffer.alloc(1 + 8);
-        payload.writeUInt8(ZigbeeAPSCommandId.REMOVE_DEVICE, 0);
-        payload.writeBigUInt64LE(target64, 1);
-
-        await apsHandler.processRemoveDevice(
-            payload,
-            1,
-            { frameControl: {}, source16: 0x5566 } as MACHeader,
-            {
-                frameControl: {},
-                source16: 0x5566,
-            } as ZigbeeNWKHeader,
-            {} as ZigbeeAPSHeader,
-        );
-
-        expect(leaveSpy).toHaveBeenCalledWith(0x5566, false);
-        expect(mockContext.disassociate).toHaveBeenCalledWith(0x5566, target64);
-
-        // Unknown device branch
-        const unknownPayload = Buffer.alloc(1 + 8);
-        unknownPayload.writeUInt8(ZigbeeAPSCommandId.REMOVE_DEVICE, 0);
-        unknownPayload.writeBigUInt64LE(0x00124b0055556666n, 1);
-
-        await apsHandler.processRemoveDevice(
-            unknownPayload,
-            1,
-            { frameControl: {}, source16: 0x1111 } as MACHeader,
-            {
-                frameControl: {},
-                source16: 0x1111,
-            } as ZigbeeNWKHeader,
-            {} as ZigbeeAPSHeader,
-        );
-
-        expect(warnSpy).toHaveBeenCalled();
-
-        leaveSpy.mockRestore();
-        warnSpy.mockRestore();
     });
 });

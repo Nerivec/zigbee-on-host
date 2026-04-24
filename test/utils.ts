@@ -1,5 +1,21 @@
 import { MACFrameAddressMode, type MACFrameControl, MACFrameType, MACFrameVersion, type MACHeader } from "../src/zigbee/mac.js";
 import type { ZigbeeNWKGPHeader } from "../src/zigbee/zigbee-nwkgp.js";
+import type { DeviceTableEntry } from "../src/zigbee-stack/stack-context.js";
+
+export function defaultDeviceTableEntry(): DeviceTableEntry {
+    return {
+        address16: 0x0001,
+        capabilities: undefined,
+        authorized: false,
+        neighbor: false,
+        lastTransportedNetworkKeySeq: undefined,
+        recentLQAs: [],
+        lastReceivedRssi: undefined,
+        incomingNWKFrameCounter: undefined,
+        endDeviceTimeout: undefined,
+        linkStatusMisses: 0,
+    };
+}
 
 /** Helper to create minimal MAC frame control */
 export function createMACFrameControl(

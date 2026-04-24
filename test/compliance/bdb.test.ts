@@ -3,8 +3,8 @@
  *
  * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
- *   - Zigbee specification (05-3474-23): Revision 23.1
- *   - Base device behavior (16-02828-012): v3.0.1
+ *   - Zigbee specification (06-3474-23): Revision 23.1
+ *   - Base device behavior (16-02828-012): v3.1
  *   - ZCL specification (07-5123): Revision 8
  *   - Green Power specification (14-0563-19): Version 1.1.2
  *
@@ -25,6 +25,7 @@ import {
     MACFrameType,
     type MACHeader,
 } from "../../src/zigbee/mac.js";
+import { GlobalTlv, writeZigbeeTlvFragmentationParameters, writeZigbeeTlvSupportedKeyNegotiationMethods } from "../../src/zigbee/tlvs.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import { ZigbeeAPSConsts, ZigbeeAPSDeliveryMode, ZigbeeAPSFrameType, type ZigbeeAPSHeader } from "../../src/zigbee/zigbee-aps.js";
 import {
@@ -45,10 +46,10 @@ import { NWKGPHandler, type NWKGPHandlerCallbacks } from "../../src/zigbee-stack
 import { NWKHandler, type NWKHandlerCallbacks } from "../../src/zigbee-stack/nwk-handler.js";
 import { type NetworkParameters, StackContext, type StackContextCallbacks } from "../../src/zigbee-stack/stack-context.js";
 import { NETDEF_EXTENDED_PAN_ID, NETDEF_NETWORK_KEY, NETDEF_PAN_ID, NETDEF_TC_KEY } from "../data.js";
-import { createMACFrameControl } from "../utils.js";
+import { createMACFrameControl, defaultDeviceTableEntry } from "../utils.js";
 import { captureMacFrame, cloneNetworkParameters, decodeMACFramePayload, NO_ACK_CODE, TEST_DEVICE_EUI64 } from "./utils.js";
 
-describe("Zigbee 3.0 Device Behavior Compliance", () => {
+describe("Zigbee 4.0 Device Behavior Compliance", () => {
     let netParams: NetworkParameters;
     let saveDir: string;
 
@@ -94,6 +95,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),
+            onAPSSendStartKeyUpdateRequest: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
             onGPFrame: vi.fn(),
@@ -166,10 +168,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 allocateAddress: true,
             };
 
-            const [status, assignedAddress] = await context.associate(undefined, device64, true, capabilities, true);
-
-            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
-            expect(assignedAddress).not.toStrictEqual(ZigbeeConsts.COORDINATOR_ADDRESS);
+            await context.associate(0x1234, device64, capabilities, true, true);
 
             const mutatedPanId = 0x7a7b;
             const mutatedChannel = 21;
@@ -193,7 +192,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
             expect(restored.netParams.channel).toStrictEqual(mutatedChannel);
             expect(restored.netParams.nwkUpdateId).toStrictEqual(mutatedUpdateId);
             expect(restored.deviceTable.has(device64)).toStrictEqual(true);
-            expect(restored.address16ToAddress64.get(assignedAddress)).toStrictEqual(device64);
+            expect(restored.address16ToAddress64.get(0x1234)).toStrictEqual(device64);
 
             restored.disallowJoins();
         });
@@ -223,7 +222,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 fcs: 0,
             };
 
-            const decoded = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), 0, beaconReqHeader), mockMACHandlerCallbacks);
+            const decoded = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), beaconReqHeader), mockMACHandlerCallbacks);
 
             expect(decoded.frameControl.frameType).toStrictEqual(MACFrameType.BEACON);
             expect(decoded.header.superframeSpec?.panCoordinator).toStrictEqual(true);
@@ -244,37 +243,10 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 fcs: 0,
             };
 
-            const decoded = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), 0, beaconReqHeader), mockMACHandlerCallbacks);
+            const decoded = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), beaconReqHeader), mockMACHandlerCallbacks);
 
             expect(context.trustCenterPolicies.allowJoins).toStrictEqual(true);
             expect(decoded.header.superframeSpec?.associationPermit).toStrictEqual(true);
-        });
-
-        it("assigns unique short addresses to joining devices", async () => {
-            context.allowJoins(60, true);
-
-            const capabilities: MACCapabilities = {
-                alternatePANCoordinator: false,
-                deviceType: 1,
-                powerSource: 1,
-                rxOnWhenIdle: true,
-                securityCapability: true,
-                allocateAddress: true,
-            };
-
-            const deviceA = 0x00124b0000aaaaf1n;
-            const deviceB = 0x00124b0000bbb0f2n;
-
-            const [statusA, addressA] = await context.associate(undefined, deviceA, true, capabilities, true);
-            const [statusB, addressB] = await context.associate(undefined, deviceB, true, capabilities, true);
-
-            expect(statusA).toStrictEqual(MACAssociationStatus.SUCCESS);
-            expect(statusB).toStrictEqual(MACAssociationStatus.SUCCESS);
-            expect(addressA).not.toStrictEqual(ZigbeeConsts.COORDINATOR_ADDRESS);
-            expect(addressB).not.toStrictEqual(ZigbeeConsts.COORDINATOR_ADDRESS);
-            expect(addressA).not.toStrictEqual(addressB);
-            expect(context.deviceTable.get(deviceA)?.address16).toStrictEqual(addressA);
-            expect(context.deviceTable.get(deviceB)?.address16).toStrictEqual(addressB);
         });
     });
 
@@ -296,10 +268,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 allocateAddress: true,
             };
 
-            const [status, address16] = await context.associate(undefined, router64, true, capabilities, true);
-
-            expect(status).toStrictEqual(MACAssociationStatus.SUCCESS);
-            expect(address16).not.toStrictEqual(ZigbeeConsts.COORDINATOR_ADDRESS);
+            await context.associate(0x1234, router64, capabilities, true, true);
 
             const entry = context.deviceTable.get(router64);
 
@@ -318,6 +287,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
             const sendCommandSpy = vi.spyOn(nwkHandler, "sendCommand");
 
             context.deviceTable.set(router64, {
+                ...defaultDeviceTableEntry(),
                 address16: router16,
                 capabilities: {
                     alternatePANCoordinator: false,
@@ -328,12 +298,6 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                     allocateAddress: true,
                 },
                 authorized: true,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(router16, router64);
 
@@ -382,6 +346,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
             const destination64 = 0x00124b0000f5f6n;
 
             context.deviceTable.set(relay64, {
+                ...defaultDeviceTableEntry(),
                 address16: relay16,
                 capabilities: {
                     alternatePANCoordinator: false,
@@ -393,15 +358,11 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 },
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(relay16, relay64);
 
             context.deviceTable.set(destination64, {
+                ...defaultDeviceTableEntry(),
                 address16: destination16,
                 capabilities: {
                     alternatePANCoordinator: false,
@@ -412,12 +373,6 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                     allocateAddress: true,
                 },
                 authorized: true,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(destination16, destination64);
 
@@ -458,6 +413,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
             const router64 = 0x00124b0000f7f8n;
 
             context.deviceTable.set(router64, {
+                ...defaultDeviceTableEntry(),
                 address16: router16,
                 capabilities: {
                     alternatePANCoordinator: false,
@@ -468,12 +424,6 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                     allocateAddress: true,
                 },
                 authorized: true,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(router16, router64);
 
@@ -538,6 +488,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
             const sendCommandSpy = vi.spyOn(nwkHandler, "sendCommand");
 
             context.deviceTable.set(neighbor64, {
+                ...defaultDeviceTableEntry(),
                 address16: neighbor16,
                 capabilities: {
                     alternatePANCoordinator: false,
@@ -549,11 +500,8 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 },
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [250, 245, 240],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
+                lastReceivedRssi: -45,
             });
             context.address16ToAddress64.set(neighbor16, neighbor64);
 
@@ -623,7 +571,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
             const capabilitiesByte = encodeMACCapabilities(capabilities);
             const assocHeader = buildAssocHeader(device64, source16);
 
-            await macHandler.processAssocReq(Buffer.from([capabilitiesByte]), 0, assocHeader);
+            await macHandler.processAssocReq(Buffer.from([capabilitiesByte]), assocHeader);
 
             const entry = context.deviceTable.get(device64);
             expect(entry).not.toBeUndefined();
@@ -717,7 +665,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
             const sendCommandSpy = vi.spyOn(macHandler, "sendCommand").mockResolvedValue(true);
             mockMACHandlerCallbacks.onAPSSendTransportKeyNWK = vi.fn().mockResolvedValue(undefined);
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader(device64, assigned16));
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader(device64, assigned16));
 
             expect(sendCommandSpy).toHaveBeenCalledTimes(1);
             const [, , , , assocPayload] = sendCommandSpy.mock.calls[0]!;
@@ -759,7 +707,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
             expect(queue).not.toBeUndefined();
             expect(queue?.length).toStrictEqual(1);
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader(device64, assigned16));
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader(device64, assigned16));
 
             expect(frames).toHaveLength(1);
             const nwkDecoded = decodeQueuedNWKCommand(frames[0]!);
@@ -845,7 +793,23 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 allocateAddress: true,
             };
             const { mac, nwk } = buildCommissioningHeaders(device64, device16);
-            const payload = Buffer.from([ZigbeeNWKCommandId.COMMISSIONING_REQUEST, 0x00, encodeMACCapabilities(capabilities)]);
+            const payload = Buffer.allocUnsafe(3 + 21);
+            let offset = 0;
+            offset = payload.writeUInt8(ZigbeeNWKCommandId.COMMISSIONING_REQUEST, offset);
+            offset = payload.writeUInt8(0x00, offset);
+            offset = payload.writeUInt8(encodeMACCapabilities(capabilities), offset);
+            offset = payload.writeUInt8(GlobalTlv.JOINER_ENCAPSULATION, offset);
+            offset = payload.writeUInt8(18, offset);
+            offset = writeZigbeeTlvSupportedKeyNegotiationMethods(payload, offset, {
+                keyNegotiationProtocolsBitmask: 0x07,
+                preSharedSecretsBitmask: 0x06,
+                sourceDeviceEui64: device64,
+            });
+            offset = writeZigbeeTlvFragmentationParameters(payload, offset, {
+                nwkAddress: device16,
+                fragmentationOptions: 0x1,
+                maxIncomingTransferUnit: 0x52,
+            });
             const frames: Buffer[] = [];
             mockMACHandlerCallbacks.onSendFrame = vi.fn((frame) => {
                 frames.push(Buffer.from(frame));
@@ -864,7 +828,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
 
             const assigned16FromEntry = entry!.address16!;
             const dataReqHeader = buildDataRequestHeader(device64, assigned16FromEntry);
-            await macHandler.processDataReq(Buffer.alloc(0), 0, dataReqHeader);
+            await macHandler.processDataReq(Buffer.alloc(0), dataReqHeader);
 
             expect(context.indirectTransmissions.get(device64)).toStrictEqual([]);
 
@@ -900,7 +864,23 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 allocateAddress: true,
             };
             const { mac, nwk } = buildCommissioningHeaders(device64, device16);
-            const payload = Buffer.from([ZigbeeNWKCommandId.COMMISSIONING_REQUEST, 0x00, encodeMACCapabilities(capabilities)]);
+            const payload = Buffer.allocUnsafe(3 + 21);
+            let offset = 0;
+            offset = payload.writeUInt8(ZigbeeNWKCommandId.COMMISSIONING_REQUEST, offset);
+            offset = payload.writeUInt8(0x00, offset);
+            offset = payload.writeUInt8(encodeMACCapabilities(capabilities), offset);
+            offset = payload.writeUInt8(GlobalTlv.JOINER_ENCAPSULATION, offset);
+            offset = payload.writeUInt8(18, offset);
+            offset = writeZigbeeTlvSupportedKeyNegotiationMethods(payload, offset, {
+                keyNegotiationProtocolsBitmask: 0x07,
+                preSharedSecretsBitmask: 0x06,
+                sourceDeviceEui64: device64,
+            });
+            offset = writeZigbeeTlvFragmentationParameters(payload, offset, {
+                nwkAddress: device16,
+                fragmentationOptions: 0x1,
+                maxIncomingTransferUnit: 0x52,
+            });
 
             const transportSpy = vi
                 .spyOn(mockNWKHandlerCallbacks, "onAPSSendTransportKeyNWK")
@@ -950,16 +930,13 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                     fcs: 0,
                 };
 
-                const permitted = await captureMacFrame(
-                    () => macHandler.processBeaconReq(Buffer.alloc(0), 0, beaconReqHeader),
-                    mockMACHandlerCallbacks,
-                );
+                const permitted = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), beaconReqHeader), mockMACHandlerCallbacks);
 
                 expect(permitted.header.superframeSpec?.associationPermit).toStrictEqual(true);
 
                 vi.advanceTimersByTime(2000);
 
-                const denied = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), 0, beaconReqHeader), mockMACHandlerCallbacks);
+                const denied = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), beaconReqHeader), mockMACHandlerCallbacks);
 
                 expect(context.trustCenterPolicies.allowJoins).toStrictEqual(false);
                 expect(denied.header.superframeSpec?.associationPermit).toStrictEqual(false);
@@ -983,15 +960,11 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 });
 
                 context.deviceTable.set(device64, {
+                    ...defaultDeviceTableEntry(),
                     address16: device16,
                     capabilities: undefined,
                     authorized: false,
                     neighbor: true,
-                    lastTransportedNetworkKeySeq: undefined,
-                    recentLQAs: [],
-                    incomingNWKFrameCounter: undefined,
-                    endDeviceTimeout: undefined,
-                    linkStatusMisses: 0,
                 });
                 context.address16ToAddress64.set(device16, device64);
 
@@ -1074,6 +1047,7 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                 const device16 = 0x7aa4;
 
                 context.deviceTable.set(device64, {
+                    ...defaultDeviceTableEntry(),
                     address16: device16,
                     capabilities: {
                         alternatePANCoordinator: false,
@@ -1085,11 +1059,6 @@ describe("Zigbee 3.0 Device Behavior Compliance", () => {
                     },
                     authorized: false,
                     neighbor: true,
-                    lastTransportedNetworkKeySeq: undefined,
-                    recentLQAs: [],
-                    incomingNWKFrameCounter: undefined,
-                    endDeviceTimeout: undefined,
-                    linkStatusMisses: 0,
                 });
                 context.address16ToAddress64.set(device16, device64);
 

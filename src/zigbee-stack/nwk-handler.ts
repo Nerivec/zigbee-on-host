@@ -9,10 +9,19 @@ import {
     type MACHeader,
     ZigbeeMACConsts,
 } from "../zigbee/mac.js";
+import {
+    GlobalTlv,
+    KeyNegotationProtocol,
+    KeyNegotationProtocolMask,
+    type PreSharedSecret,
+    PreSharedSecretMask,
+    readZigbeeTlvs,
+} from "../zigbee/tlvs.js";
 import { ZigbeeConsts, ZigbeeKeyType, type ZigbeeSecurityHeader, ZigbeeSecurityLevel } from "../zigbee/zigbee.js";
 import {
     encodeZigbeeNWKFrame,
     ZigbeeNWKCommandId,
+    ZigbeeNWKCommissioningType,
     ZigbeeNWKConsts,
     ZigbeeNWKFrameType,
     type ZigbeeNWKHeader,
@@ -32,6 +41,13 @@ const NS = "nwk-handler";
 export interface NWKHandlerCallbacks {
     /** Send APS TRANSPORT_KEY for network key */
     onAPSSendTransportKeyNWK: (destination16: number, networkKey: Buffer, keySequenceNumber: number, destination64: bigint) => Promise<void>;
+    /** Send APS ZDO START_KEY_UPDATE_REQUEST */
+    onAPSSendStartKeyUpdateRequest: (
+        nwkDest16: number,
+        nwkDest64: bigint,
+        keyNegotiationProtocol: KeyNegotationProtocol,
+        preSharedSecret: PreSharedSecret,
+    ) => Promise<void>;
 }
 
 /** The number of OctetDurations until a route discovery expires. */
@@ -43,8 +59,8 @@ export const CONFIG_NWK_MAX_HOPS = CONFIG_NWK_MAX_DEPTH * 2;
 // const CONFIG_NWK_UNICAST_RETRIES = 3;
 /** The delay between network layer retries. (ms) */
 // const CONFIG_NWK_UNICAST_RETRY_DELAY = 50;
-/** The total delivery time for a broadcast transmission to be delivered to all RxOnWhenIdle=TRUE devices in the network. (sec) */
-// const CONFIG_NWK_BCAST_DELIVERY_TIME = 9;
+/** The total delivery time for a broadcast transmission to be delivered to all RxOnWhenIdle=TRUE devices in the network. (msec) */
+// const CONFIG_NWK_BCAST_DELIVERY_TIME = 9000;
 /** The time between link status command frames (msec) */
 const CONFIG_NWK_LINK_STATUS_PERIOD = 15000;
 /** Avoid synchronization with other nodes by randomizing `CONFIG_NWK_LINK_STATUS_PERIOD` with this (msec) */
@@ -157,7 +173,7 @@ export class NWKHandler {
     // #region Route Management
 
     /**
-     * 05-3474-23 #3.4.8 (Link Status command)
+     * 06-3474-23 #3.4.8 (Link Status command)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Sends periodic LINK_STATUS commands at 15s interval with jitter per spec guidance for link cost maintenance
@@ -221,7 +237,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-23 #3.6.3.5.2 (Many-to-One Route Discovery)
+     * 06-3474-23 #3.6.3.5.2 (Many-to-One Route Discovery)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Issues ROUTE_REQUEST with Many-to-One flag when concentrator timer elapses
@@ -246,7 +262,7 @@ export class NWKHandler {
      * Throws if both 16/64 are undefined or if destination is unknown (not in device table).
      * Throws if no route and device is not neighbor.
      *
-     * SPEC COMPLIANCE NOTES (05-3474-23 #3.6.3):
+     * SPEC COMPLIANCE NOTES (06-3474-23 #3.6.3):
      * - ✅ Returns early for broadcast addresses (no routing needed)
      * - ✅ Validates destination is known in device table
      * - ✅ Returns undefined arrays for direct communication (neighbor devices)
@@ -435,7 +451,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-23 #3.6.3.3
+     * 06-3474-23 #3.6.3.3
      *
      * Mark a route as successfully used
      *
@@ -458,7 +474,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-23 #3.6.3.3
+     * 06-3474-23 #3.6.3.3
      *
      * Mark a route as failed and handle route repair if needed.
      * Consolidates failure tracking and MTORR triggering per Zigbee spec.
@@ -517,7 +533,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-23 #3.6.3.3 (Source routing tables)
+     * 06-3474-23 #3.6.3.3 (Source routing tables)
      *
      * Create a new source route table entry
      *
@@ -540,7 +556,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-23 #3.6.3.3
+     * 06-3474-23 #3.6.3.3
      *
      * Check if a source route already exists in the table
      *
@@ -584,7 +600,7 @@ export class NWKHandler {
     // #region Commands
 
     /**
-     * 05-3474-23 #3.4 (NWK command frames)
+     * 06-3474-23 #3.4 (NWK command frames)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Prepends Zigbee NWK header and optional security per caller (spec Table 3-5)
@@ -710,7 +726,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-23 #3.4 (NWK command processing)
+     * 06-3474-23 #3.4 (NWK command processing)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Dispatches all mandatory NWK commands for coordinator role (ROUTE_REQ/REPLY, NWK_STATUS, LEAVE, LINK_STATUS, etc.)
@@ -726,47 +742,47 @@ export class NWKHandler {
 
         switch (cmdId) {
             case ZigbeeNWKCommandId.ROUTE_REQ: {
-                offset = await this.processRouteReq(data, offset, macHeader, nwkHeader);
+                await this.processRouteReq(data, offset, macHeader, nwkHeader);
                 break;
             }
             case ZigbeeNWKCommandId.ROUTE_REPLY: {
-                offset = this.processRouteReply(data, offset, macHeader, nwkHeader);
+                this.processRouteReply(data, offset, macHeader, nwkHeader);
                 break;
             }
             case ZigbeeNWKCommandId.NWK_STATUS: {
-                offset = await this.processStatus(data, offset, macHeader, nwkHeader);
+                await this.processStatus(data, offset, macHeader, nwkHeader);
                 break;
             }
             case ZigbeeNWKCommandId.LEAVE: {
-                offset = await this.processLeave(data, offset, macHeader, nwkHeader);
+                await this.processLeave(data, offset, macHeader, nwkHeader);
                 break;
             }
             case ZigbeeNWKCommandId.ROUTE_RECORD: {
-                offset = this.processRouteRecord(data, offset, macHeader, nwkHeader);
+                this.processRouteRecord(data, offset, macHeader, nwkHeader);
                 break;
             }
             case ZigbeeNWKCommandId.REJOIN_REQ: {
-                offset = await this.processRejoinReq(data, offset, macHeader, nwkHeader);
+                await this.processRejoinReq(data, offset, macHeader, nwkHeader);
                 break;
             }
             case ZigbeeNWKCommandId.LINK_STATUS: {
-                offset = this.processLinkStatus(data, offset, macHeader, nwkHeader);
+                this.processLinkStatus(data, offset, macHeader, nwkHeader);
                 break;
             }
             case ZigbeeNWKCommandId.NWK_REPORT: {
-                offset = this.processReport(data, offset, macHeader, nwkHeader);
+                this.processReport(data, offset, macHeader, nwkHeader);
                 break;
             }
             case ZigbeeNWKCommandId.ED_TIMEOUT_REQUEST: {
-                offset = await this.processEdTimeoutRequest(data, offset, macHeader, nwkHeader);
+                await this.processEdTimeoutRequest(data, offset, macHeader, nwkHeader);
                 break;
             }
             case ZigbeeNWKCommandId.LINK_PWR_DELTA: {
-                offset = this.processLinkPwrDelta(data, offset, macHeader, nwkHeader);
+                await this.processLinkPwrDelta(data, offset, macHeader, nwkHeader);
                 break;
             }
             case ZigbeeNWKCommandId.COMMISSIONING_REQUEST: {
-                offset = await this.processCommissioningRequest(data, offset, macHeader, nwkHeader);
+                await this.processCommissioningRequest(data, offset, macHeader, nwkHeader);
                 break;
             }
             default: {
@@ -777,22 +793,15 @@ export class NWKHandler {
                 return;
             }
         }
-
-        // excess data in packet
-        // if (offset < data.byteLength) {
-        //     logger.debug(() => `<=== NWK CMD contained more data: ${data.toString('hex')}`, NS);
-        // }
     }
 
     /**
-     * 05-3474-23 #3.4.1 (Route Request)
+     * 06-3474-23 #3.4.1 (Route Request)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Decodes options, destination, and many-to-one fields per Table 3-12
      * - ✅ Sends ROUTE_REPLY when coordinator is destination (spec #3.6.3.5.2 requirement for concentrators)
      * - ✅ Preserves destination64 when provided to maintain IEEE correlation
-     * - ⚠️  Path cost not incremented (acceptable for terminal node)
-     * - ⚠️  Route discovery table not implemented (coordinator does not forward requests)
      * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param data Command data
@@ -801,7 +810,7 @@ export class NWKHandler {
      * @param nwkHeader NWK header
      * @returns New offset after processing
      */
-    public async processRouteReq(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
+    public async processRouteReq(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<void> {
         const options = data.readUInt8(offset);
         offset += 1;
         const manyToOne = (options & ZigbeeNWKConsts.CMD_ROUTE_OPTION_MANY_MASK) >> 3; // ZigbeeNWKManyToOne
@@ -815,8 +824,9 @@ export class NWKHandler {
 
         if (options & ZigbeeNWKConsts.CMD_ROUTE_OPTION_DEST_EXT) {
             destination64 = data.readBigUInt64LE(offset);
-            offset += 8;
         }
+
+        // NOTE: skipping TLVs, no current use
 
         logger.debug(
             () =>
@@ -835,18 +845,15 @@ export class NWKHandler {
                 destination64,
             );
         }
-
-        return offset;
     }
 
     /**
-     * 05-3474-23 #3.4.1 (Route Request)
+     * 06-3474-23 #3.4.1 (Route Request)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Encodes options bits for many-to-one and DEST_EXT addressing
      * - ✅ Uses modulo-256 route request identifier (nextRouteRequestId)
      * - ✅ Broadcasts discovery (dest=BCAST_DEFAULT) when acting as concentrator
-     * - ⚠️  TLV payload not supported (optional R23 extension)
      * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param manyToOne
@@ -872,6 +879,8 @@ export class NWKHandler {
             offset = finalPayload.writeBigUInt64LE(destination64!, offset);
         }
 
+        // NOTE: skipping TLVs, no current use
+
         return await this.sendCommand(
             ZigbeeNWKCommandId.ROUTE_REQ,
             finalPayload,
@@ -884,16 +893,15 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-23 #3.4.2 (Route Reply)
+     * 06-3474-23 #3.4.2 (Route Reply)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Decodes originator/responder addresses (short and extended) per options mask
      * - ✅ Reconstructs relay path including MAC next hop when coordinator originates discovery
      * - ✅ Normalizes zero path cost to hop-derived value to satisfy spec requirement (>0)
-     * - ⚠️  TLVs and status-field failure indicators remain TODO
      * DEVICE SCOPE: Coordinator, routers (N/A)
      */
-    public processRouteReply(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
+    public processRouteReply(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): void {
         const options = data.readUInt8(offset);
         offset += 1;
         const id = data.readUInt8(offset);
@@ -914,11 +922,9 @@ export class NWKHandler {
 
         if (options & ZigbeeNWKConsts.CMD_ROUTE_OPTION_RESP_EXT) {
             responder64 = data.readBigUInt64LE(offset);
-            offset += 8;
         }
 
-        // TODO
-        // const [tlvs, tlvsOutOffset] = decodeZigbeeNWKTLVs(data, offset);
+        // NOTE: skipping TLVs, no current use
 
         logger.debug(
             () =>
@@ -963,18 +969,15 @@ export class NWKHandler {
 
             this.markRouteSuccess(responder16);
         }
-
-        return offset;
     }
 
     /**
-     * 05-3474-23 #3.4.2 / #3.6.4.5.2 (Route Reply)
+     * 06-3474-23 #3.4.2 / #3.6.4.5.2 (Route Reply)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Encodes IEEE address presence bits and includes optional fields
      * - ✅ Sets path cost to 1 hop when coordinator responds directly
      * - ✅ Unicasts reply via first hop recorded in request MAC header
-     * - ⚠️  TLV payload not encoded (optional R23 extension)
      * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param requestDest1stHop16 SHALL be set to the network address of the first hop in the path back to the originator of the corresponding route request command frame
@@ -1024,8 +1027,7 @@ export class NWKHandler {
             offset = finalPayload.writeBigUInt64LE(responder64!, offset);
         }
 
-        // TODO
-        // const [tlvs, tlvsOutOffset] = encodeZigbeeNWKTLVs();
+        // NOTE: skipping TLVs, no current use
 
         return await this.sendCommand(
             ZigbeeNWKCommandId.ROUTE_REPLY,
@@ -1039,20 +1041,19 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-23 #3.4.3
+     * 06-3474-23 #3.4.3
      *
      * SPEC COMPLIANCE:
      * - ✅ Correctly decodes status code
      * - ✅ Handles destination16 parameter for routing failures
      * - ✅ Marks route as failed and schedules MTORR recovery
      * - ✅ Logs network status issues for diagnostics
-     * - ❌ NOT IMPLEMENTED: TLV processing (R23)
      * - ✅ Issues REJOIN_RESP with address-conflict status to prompt device reassignment
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * IMPACT: Receives status but minimal action beyond route marking
      */
-    public async processStatus(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
+    public async processStatus(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<void> {
         const status = data.readUInt8(offset);
         offset += 1;
         // target SHALL be present if, and only if, frame is being sent in response to a routing failure or a network address conflict
@@ -1067,14 +1068,12 @@ export class NWKHandler {
         ) {
             // In case of a routing failure, it SHALL contain the destination address from the data frame that encountered the failure
             target16 = data.readUInt16LE(offset);
-            offset += 2;
 
             // mark route as failed with repair - this will purge routes using target as relay and trigger MTORR once
             this.markRouteFailure(target16, true);
         } else if (status === ZigbeeNWKStatus.ADDRESS_CONFLICT) {
             // In case of an address conflict, it SHALL contain the offending network address.
             target16 = data.readUInt16LE(offset);
-            offset += 2;
 
             if (target16 !== ZigbeeConsts.COORDINATOR_ADDRESS) {
                 const device64 = this.#context.address16ToAddress64.get(target16);
@@ -1090,20 +1089,17 @@ export class NWKHandler {
             }
         }
 
-        // TODO
-        // const [tlvs, tlvsOutOffset] = decodeZigbeeNWKTLVs(data, offset);
+        // NOTE: skipping TLVs, no current use
 
         logger.debug(
             () =>
                 `<=== NWK NWK_STATUS[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} status=${ZigbeeNWKStatus[status]} dst16=${target16}]`,
             NS,
         );
-
-        return offset;
     }
 
     /**
-     * 05-3474-23 #3.4.3
+     * 06-3474-23 #3.4.3
      *
      * SPEC COMPLIANCE:
      * - ✅ Sends to appropriate destination (broadcast or unicast)
@@ -1129,8 +1125,7 @@ export class NWKHandler {
             finalPayload = Buffer.from([ZigbeeNWKCommandId.NWK_STATUS, status]);
         }
 
-        // TODO
-        // const [tlvs, tlvsOutOffset] = encodeZigbeeNWKTLVs();
+        // NOTE: skipping TLVs, no current use
 
         return await this.sendCommand(
             ZigbeeNWKCommandId.NWK_STATUS,
@@ -1144,7 +1139,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-23 #3.4.4 (Leave command)
+     * 06-3474-23 #3.4.4 (Leave command)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Parses removeChildren/request/rejoin flags from options byte (Table 3-16)
@@ -1152,9 +1147,8 @@ export class NWKHandler {
      * - ⚠️ removeChildren flag purposely ignored (deprecated)
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      */
-    public async processLeave(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
+    public async processLeave(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<void> {
         const options = data.readUInt8(offset);
-        offset += 1;
         const removeChildren = !!(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REMOVE_CHILDREN);
         const request = !!(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REQUEST);
         const rejoin = !!(options & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REJOIN);
@@ -1168,12 +1162,10 @@ export class NWKHandler {
         if (!rejoin && !request) {
             await this.#context.disassociate(nwkHeader.source16, nwkHeader.source64);
         }
-
-        return offset;
     }
 
     /**
-     * 05-3474-23 #3.4.4 (Leave command)
+     * 06-3474-23 #3.4.4 (Leave command)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Sets request bit (bit6) and optional rejoin bit based on caller input
@@ -1206,7 +1198,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-23 #3.4.5
+     * 06-3474-23 #3.4.5
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Correctly decodes relayCount and relay addresses
@@ -1230,7 +1222,7 @@ export class NWKHandler {
      * @param nwkHeader NWK header
      * @returns New offset after processing
      */
-    public processRouteRecord(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
+    public processRouteRecord(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): void {
         const relayCount = data.readUInt8(offset);
         offset += 1;
         const relays: number[] = [];
@@ -1265,41 +1257,17 @@ export class NWKHandler {
                 entries.push(entry);
             }
         }
-
-        return offset;
     }
 
     // NOTE: sendRouteRecord DEVICE SCOPE: routers (N/A), end devices (N/A)
 
     /**
-     * 05-3474-23 #3.4.6
-     * Optional
+     * 06-3474-23 #3.4.6
+     * Optional: Child Rejoining the Network to a Legacy Parent (Pre-R23)
      *
-     * SPEC COMPLIANCE NOTES:
-     * - ✅ Correctly decodes capabilities byte
-     * - ✅ Determines rejoin type based on frameControl.security:
-     *       - security=false: Trust Center Rejoin (unsecured)
-     *       - security=true: NWK rejoin (secured with NWK key)
-     * - ⚠️  TRUST CENTER REJOIN HANDLING:
-     *       - Checks if device is known and authorized ✅
-     *       - Denies rejoin if device unknown or unauthorized ✅
-     *       - SPEC WARNING in comment about unsecured packets from neighbors
-     *         "Unsecured Packets at the network layer claiming to be from existing neighbors...
-     *          must not rewrite legitimate data in nwkNeighborTable"
-     *         This is a critical security requirement ✅
-     * - ✅ Centralized Trust Center enforces coordinator EUI64; distributed/uninitialized modes not supported here (N/A)
-     * - ✅ Calls context associate with correct parameters:
-     *       - initialJoin=false (this is a rejoin) ✅
-     *       - neighbor determined by comparing MAC and NWK source ✅
-     *       - denyOverride based on security analysis ✅
-     * - ✅ Sends REJOIN_RESP with assigned address and status
-     * - ✅ Re-distributes current NWK key when rejoin requires key update
-     * - ✅ Does not require VERIFY_KEY after rejoin per spec note
+     * SPEC COMPLIANCE:
+     * - TODO
      *
-     * SECURITY CONCERNS:
-     * - Unsecured rejoin handling is critical for security
-     * - Must validate device authorization before accepting
-     * - Missing apsTrustCenterAddress validation is a security gap
      * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param data Command data
@@ -1308,73 +1276,71 @@ export class NWKHandler {
      * @param nwkHeader NWK header
      * @returns New offset after processing
      */
-    public async processRejoinReq(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
-        const capabilities = data.readUInt8(offset);
-        offset += 1;
+    public async processRejoinReq(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<void> {
+        if (nwkHeader.source64 === undefined || nwkHeader.source16 === undefined) {
+            return; // invalid
+        }
 
+        const secured = nwkHeader.frameControl.security;
+        const capabilities = data.readUInt8(offset);
         const decodedCap = decodeMACCapabilities(capabilities);
 
         logger.debug(
             () =>
-                `<=== NWK REJOIN_REQ[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} cap=${capabilities}]`,
+                `<=== NWK REJOIN_REQ[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} sec=${secured} cap=${capabilities}]`,
             NS,
         );
 
-        let deny = false;
-        let source64 = nwkHeader.source64;
+        let newAddress16 = 0xffff;
+        let status: MACAssociationStatus | number = MACAssociationStatus.PAN_ACCESS_DENIED;
+        let requiresTransportKey = false;
+        const device = this.#context.deviceTable.get(nwkHeader.source64);
 
-        if (!nwkHeader.frameControl.security) {
-            // Trust Center Rejoin
+        // TODO:
+        // The relationship field of the new neighbor table entry SHALL be set to the value 0x01 only if the mechanism was NWK Rejoin and had NWK Layer security.
+        // Otherwise, the relationship field SHALL be set to 0x05 indicating an unauthenticated child.
 
-            if (source64 === undefined) {
-                if (nwkHeader.source16 === undefined) {
-                    // invalid, drop completely, should never happen
-                    return offset;
+        // NOTE: a device does not have to verify its trust center link key with the APSME-VERIFY-KEY services after a rejoin.
+
+        // Trust Center Rejoin OR Secured Rejoin (same logic, only key transport changes)
+        // XXX: Unsecured Packets at the network layer claiming to be from existing neighbors (coordinators, routers or end devices) must not rewrite legitimate data in the nwkNeighborTable.
+        //      if apsTrustCenterAddress is all FF (distributed) / all 00 (pre-TRANSPORT_KEY), reject with PAN_ACCESS_DENIED
+        if (device?.authorized) {
+            // device changed its address and it's conflicting, assign new one
+            if (device.address16 !== nwkHeader.source16 && this.#context.address16ToAddress64.has(nwkHeader.source16)) {
+                newAddress16 = this.#context.assignNetworkAddress();
+
+                if (newAddress16 === 0xffff) {
+                    status = MACAssociationStatus.PAN_FULL;
+                } else {
+                    status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                    requiresTransportKey = !secured; // only if Trust Center Rejoin
+                    const neighbor = macHeader.source16 === nwkHeader.source16;
+
+                    await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, false);
                 }
-
-                source64 = this.#context.address16ToAddress64.get(nwkHeader.source16);
-            }
-
-            if (source64 === undefined) {
-                // can't identify device
-                deny = true;
             } else {
-                const device = this.#context.deviceTable.get(source64);
+                newAddress16 = nwkHeader.source16;
+                status = MACAssociationStatus.SUCCESS;
+                requiresTransportKey = !secured; // only if Trust Center Rejoin
+                const neighbor = macHeader.source16 === nwkHeader.source16;
 
-                // XXX: Unsecured Packets at the network layer claiming to be from existing neighbors (coordinators, routers or end devices) must not rewrite legitimate data in the nwkNeighborTable.
-                //      if apsTrustCenterAddress is all FF (distributed) / all 00 (pre-TRANSPORT_KEY), reject with PAN_ACCESS_DENIED
-                if (!device?.authorized) {
-                    // device unknown or unauthorized
-                    deny = true;
-                }
+                await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, false);
             }
         }
 
-        const [status, newAddress16, requiresTransportKey] = await this.#context.associate(
-            nwkHeader.source16!,
-            source64,
-            false /* rejoin */,
-            decodedCap,
-            macHeader.source16 === nwkHeader.source16,
-            deny,
-        );
+        await this.sendRejoinResp(nwkHeader.source16, newAddress16, status);
 
-        await this.sendRejoinResp(nwkHeader.source16!, newAddress16, status);
-
-        // XXX: is this spec?
-        if (status === MACAssociationStatus.SUCCESS && requiresTransportKey && source64 !== undefined) {
+        if (requiresTransportKey) {
+            // XXX: use tunnel even if direct Coordinator<>rejoiner?
             await this.#callbacks.onAPSSendTransportKeyNWK(
                 newAddress16,
                 this.#context.netParams.networkKey,
                 this.#context.netParams.networkKeySequenceNumber,
-                source64,
+                nwkHeader.source64,
             );
-            this.#context.markNetworkKeyTransported(source64);
+            this.#context.markNetworkKeyTransported(nwkHeader.source64);
         }
-
-        // NOTE: a device does not have to verify its trust center link key with the APSME-VERIFY-KEY services after a rejoin.
-
-        return offset;
     }
 
     // NOTE: sendRejoinReq DEVICE SCOPE: routers (N/A), end devices (N/A)
@@ -1382,7 +1348,7 @@ export class NWKHandler {
     // NOTE: processRejoinResp DEVICE SCOPE: routers (N/A), end devices (N/A)
 
     /**
-     * 05-3474-23 #3.4.7 (Rejoin Response)
+     * 06-3474-23 #3.4.7 (Rejoin Response)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Returns new short address and status per Table 3-19
@@ -1412,7 +1378,7 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-23 #3.4.8
+     * 06-3474-23 #3.4.8
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Correctly decodes options byte, link count, and link entries
@@ -1431,9 +1397,6 @@ export class NWKHandler {
      *       - Spec #3.4.8 describes link status for neighbor table maintenance
      *       - Using it to build source routes is an implementation optimization
      *       - This may not be fully spec-compliant but is pragmatic
-     * - ⚠️ Neighbor table maintenance is purposely not implemented due to "unlimited" table size on host
-     *       - No neighbor table present, only a flag in device table
-     *       - This is a significant spec deviation
      * - ⚠️ COST CALCULATION: Uses incoming cost directly as path cost
      *       - This may underestimate total path cost for multi-hop routes
      *       - Should consider accumulated path cost through intermediaries
@@ -1445,7 +1408,7 @@ export class NWKHandler {
      * @param nwkHeader NWK header
      * @returns New offset after processing
      */
-    public processLinkStatus(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
+    public processLinkStatus(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): void {
         // Bit: 0 – 4        5            6           7
         //      Entry count  First frame  Last frame  Reserved
         const options = data.readUInt8(offset);
@@ -1528,12 +1491,10 @@ export class NWKHandler {
 
             return `<=== NWK LINK_STATUS[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} first=${firstFrame} last=${lastFrame} links=${linksStr}]`;
         }, NS);
-
-        return offset;
     }
 
     /**
-     * 05-3474-23 #3.4.8 (Link Status command)
+     * 06-3474-23 #3.4.8 (Link Status command)
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Fragments link list across multiple frames respecting MAX_PAYLOAD (27 entries per frame)
@@ -1548,51 +1509,43 @@ export class NWKHandler {
         logger.debug(() => {
             let linksStr = "";
 
-            for (const link of links) {
-                linksStr += `{${link.address}|in:${link.incomingCost}|out:${link.outgoingCost}}`;
+            for (const { address, incomingCost, outgoingCost } of links) {
+                linksStr += `{${address}|in:${incomingCost}|out:${outgoingCost}}`;
             }
 
             return `===> NWK LINK_STATUS[links=${linksStr}]`;
         }, NS);
 
-        // TODO: check repeat logic
-        const linkSize = links.length * 3;
-        const maxLinksPayloadSize = ZigbeeNWKConsts.PAYLOAD_MIN_SIZE - 2; // 84 (- cmdId[1] - options[1])
-        const maxLinksPerFrame = (maxLinksPayloadSize / 3) | 0; // 27
-        const frameCount = Math.ceil((linkSize + 3) / maxLinksPayloadSize); // (+ repeated link[3])
+        const linksLen = links.length;
+        const maxLinksPayloadSize = ZigbeeNWKConsts.PAYLOAD_MIN_SIZE - 2; // cmdId[1] + options[1]
+        const maxLinksPerFrame = (maxLinksPayloadSize / 3) | 0;
         let linksOffset = 0;
+        let isFirstFrame = true;
+        let isLastFrame = false;
 
-        for (let i = 0; i < frameCount; i++) {
-            const linkCount = links.length - i * maxLinksPerFrame;
-            const frameSize = 2 + Math.min(linkCount * 3, maxLinksPayloadSize);
+        do {
+            const linkCount = Math.min(maxLinksPerFrame, linksLen - linksOffset);
+            isLastFrame = linksOffset + linkCount >= linksLen;
             const options =
-                (((i === 0 ? 1 : 0) << 5) & ZigbeeNWKConsts.CMD_LINK_OPTION_FIRST_FRAME) |
-                (((i === frameCount - 1 ? 1 : 0) << 6) & ZigbeeNWKConsts.CMD_LINK_OPTION_LAST_FRAME) |
+                (isFirstFrame ? ZigbeeNWKConsts.CMD_LINK_OPTION_FIRST_FRAME : 0) |
+                (isLastFrame ? ZigbeeNWKConsts.CMD_LINK_OPTION_LAST_FRAME : 0) |
                 (linkCount & ZigbeeNWKConsts.CMD_LINK_OPTION_COUNT_MASK);
-            const finalPayload = Buffer.allocUnsafe(frameSize);
-            let finalPayloadOffset = 0;
-            finalPayload.writeUInt8(ZigbeeNWKCommandId.LINK_STATUS, finalPayloadOffset);
-            finalPayloadOffset += 1;
-            finalPayload.writeUInt8(options, finalPayloadOffset);
-            finalPayloadOffset += 1;
+            const finalPayload = Buffer.allocUnsafe(2 + linkCount * 3);
+            let fpOffset = 0;
+            fpOffset = finalPayload.writeUInt8(ZigbeeNWKCommandId.LINK_STATUS, fpOffset);
+            fpOffset = finalPayload.writeUInt8(options, fpOffset);
 
-            for (let j = 0; j < linkCount; j++) {
-                const link = links[linksOffset];
-                finalPayload.writeUInt16LE(link.address, finalPayloadOffset);
-                finalPayloadOffset += 2;
-                finalPayload.writeUInt8(
-                    (link.incomingCost & ZigbeeNWKConsts.CMD_LINK_INCOMING_COST_MASK) |
-                        ((link.outgoingCost << 4) & ZigbeeNWKConsts.CMD_LINK_OUTGOING_COST_MASK),
-                    finalPayloadOffset,
+            for (let i = 0; i < linkCount; i++) {
+                const { address, incomingCost, outgoingCost } = links[linksOffset + i];
+                fpOffset = finalPayload.writeUInt16LE(address, fpOffset);
+                fpOffset = finalPayload.writeUInt8(
+                    (incomingCost & ZigbeeNWKConsts.CMD_LINK_INCOMING_COST_MASK) |
+                        ((outgoingCost << 4) & ZigbeeNWKConsts.CMD_LINK_OUTGOING_COST_MASK),
+                    fpOffset,
                 );
-                finalPayloadOffset += 1;
-
-                // last in previous frame is repeated first in next frame
-                if (j < linkCount - 1) {
-                    linksOffset++;
-                }
             }
 
+            // TODO: jitter / delay?
             await this.sendCommand(
                 ZigbeeNWKCommandId.LINK_STATUS,
                 finalPayload,
@@ -1602,26 +1555,26 @@ export class NWKHandler {
                 undefined, // nwkDest64
                 1, // nwkRadius
             );
-        }
+
+            // last in previous frame is repeated first in next frame
+            linksOffset += linkCount - 1;
+            isFirstFrame = false;
+        } while (!isLastFrame);
     }
 
     /**
-     * 05-3474-23 #3.4.9 (deprecated in R23)
+     * 06-3474-23 #3.4.9
      *
      * SPEC COMPLIANCE:
-     * - ✅ Correctly decodes options, EPID, updateID, panID
      * - ✅ Handles PAN ID conflict reports
      * - ✅ Logs report information
-     * - ❌ NOT IMPLEMENTED: Channel update action
-     * - ❌ NOT IMPLEMENTED: Network update propagation
      * - ❌ NOT IMPLEMENTED: PAN ID conflict resolution
-     * - ❌ NOT IMPLEMENTED: TLV support (R23)
+     *
      * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * NOTE: Deprecated in R23, should no longer be sent by R23 devices
-     * IMPACT: Coordinator doesn't act on network reports
      */
-    public processReport(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
+    public processReport(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): void {
         const options = data.readUInt8(offset);
         offset += 1;
         const reportCount = options & ZigbeeNWKConsts.CMD_NWK_REPORT_COUNT_MASK;
@@ -1646,35 +1599,57 @@ export class NWKHandler {
                 `<=== NWK NWK_REPORT[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} extPANId=${extendedPANId} repType=${reportType} conflictPANIds=${conflictPANIds}]`,
             NS,
         );
-
-        return offset;
     }
 
     // NOTE: sendReport deprecated in R23
 
     // NOTE: processUpdate DEVICE SCOPE: routers (N/A), end devices (N/A)
 
-    // TODO: sendUpdate
+    /**
+     * 06-3474-23 #3.4.10 (Network Update Command)
+     *
+     * Must be sent before the internal change, so the MAC PAN ID is still the old one to properly reach devices.
+     * Per spec, after sending this, should start a timer of `CONFIG_NWK_BCAST_DELIVERY_TIME` then apply the changes internally.
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - TODO
+     *
+     * DEVICE SCOPE: Coordinator, routers (N/A)
+     */
+    public async sendUpdatePanId(extendedPanId: bigint, nwkUpdateId: number, newPanId: number): Promise<boolean> {
+        const finalPayload = Buffer.allocUnsafe(12);
+        let offset = 0;
+        offset = finalPayload.writeUInt8(0b00000001, offset);
+        offset = finalPayload.writeBigUInt64LE(extendedPanId, offset);
+        offset = finalPayload.writeUInt8(nwkUpdateId, offset);
+        finalPayload.writeUInt16LE(newPanId);
+
+        return await this.sendCommand(
+            ZigbeeNWKCommandId.NWK_UPDATE,
+            finalPayload,
+            true, // nwkSecurity
+            ZigbeeConsts.COORDINATOR_ADDRESS,
+            ZigbeeConsts.BCAST_SLEEPY, // nwkDest16
+            undefined, // nwkDest64
+            CONFIG_NWK_MAX_HOPS, // nwkRadius
+        );
+    }
 
     /**
-     * 05-3474-23 #3.4.11
+     * 06-3474-23 #3.4.11
      *
      * SPEC COMPLIANCE:
      * - ✅ Decodes requested timeout index and configuration octet per spec Table 3-54
      * - ✅ Validates timeout against END_DEVICE_TIMEOUT_TABLE and device presence before accepting
      * - ✅ Updates StackContext end-device timeout metadata and responds with status codes (SUCCESS/INCORRECT_VALUE/UNSUPPORTED_FEATURE)
-     * - ⚠️ Still lacks parent policy enforcement (e.g., max timeout per device class)
-     * - ❌ NOT IMPLEMENTED: Keep-alive scheduling or timeout expiration handling
-     * - ❌ NOT IMPLEMENTED: TLV processing for R23 extensions
      * DEVICE SCOPE: Coordinator, routers (N/A)
      */
-    public async processEdTimeoutRequest(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
+    public async processEdTimeoutRequest(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<void> {
         // index into END_DEVICE_TIMEOUT_TABLE_MS
         const requestedTimeout = data.readUInt8(offset);
         offset += 1;
         // not currently used (all reserved)
         const configuration = data.readUInt8(offset);
-        offset += 1;
 
         logger.debug(
             () =>
@@ -1685,25 +1660,26 @@ export class NWKHandler {
         // sanity check
         if (nwkHeader.source16 !== undefined) {
             const timeoutResolved = END_DEVICE_TIMEOUT_TABLE_MS[requestedTimeout];
-            const source64 = nwkHeader.source64 ?? this.#context.address16ToAddress64.get(nwkHeader.source16);
             let status = 0x00;
 
             if (timeoutResolved === undefined) {
                 status = 0x01;
-            } else if (source64 === undefined) {
-                status = 0x02;
             } else {
+                const source64 = nwkHeader.source64 ?? this.#context.address16ToAddress64.get(nwkHeader.source16);
+
+                if (source64 === undefined) {
+                    return;
+                }
+
                 const metadata = this.#context.updateEndDeviceTimeout(source64, requestedTimeout);
 
                 if (metadata === undefined) {
-                    status = 0x02;
+                    return;
                 }
             }
 
             await this.sendEdTimeoutResponse(nwkHeader.source16, requestedTimeout, status);
         }
-
-        return offset;
     }
 
     // NOTE: sendEdTimeoutRequest DEVICE SCOPE: routers (N/A), end devices (N/A)
@@ -1711,13 +1687,12 @@ export class NWKHandler {
     // NOTE: processEdTimeoutResponse DEVICE SCOPE: routers (N/A), end devices (N/A)
 
     /**
-     * 05-3474-23 #3.4.12
+     * 06-3474-23 #3.4.12
      *
      * SPEC COMPLIANCE:
      * - ✅ Populates status field with SUCCESS/INCORRECT_VALUE/UNSUPPORTED_FEATURE based on request validation
      * - ✅ Sends parent information bitmap indicating keep-alive support (defaults to DATA_POLL + REQUEST + POWER_NEGOTIATION)
      * - ✅ Applies NWK security and unicasts to requester as required
-     * - ❌ NOT IMPLEMENTED: TLV extensions (R23)
      * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     public async sendEdTimeoutResponse(
@@ -1748,25 +1723,35 @@ export class NWKHandler {
     }
 
     /**
-     * 05-3474-23 #3.4.13
+     * 06-3474-23 #3.4.13
      *
      * SPEC COMPLIANCE:
      * - ✅ Decodes transmit power delta
      * - ✅ Logs power delta information
-     * - ✅ Extracts nested TLVs (if present)
      * - ❌ NOT IMPLEMENTED: Power adjustment action
      * - ❌ NOT IMPLEMENTED: Feedback mechanism
-     * - ❌ NOT IMPLEMENTED: R23 TLV processing
-     * DEVICE SCOPE: Coordinator, routers (N/A)
      *
-     * IMPACT: Receives command but doesn't adjust transmit power
+     * DEVICE SCOPE: Coordinator, routers (N/A)
      */
-    public processLinkPwrDelta(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): number {
+    public processLinkPwrDelta(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): void {
         const options = data.readUInt8(offset);
         offset += 1;
-        // 0 Notification An unsolicited notification. These frames are typically sent periodically from an RxOn device. If the device is a FFD, it is broadcast to all RxOn devices (0xfffd), and includes power information for all neighboring RxOn devices. If the device is an RFD with RxOn, it is sent unicast to its Parent, and includes only power information for the Parent device.
-        // 1 Request Typically used by sleepy RFD devices that do not receive the periodic Notifications from their Parent. The sleepy RFD will wake up periodically to send this frame to its Parent, including only the Parent’s power information in its payload. Upon receipt, the Parent sends a Response (Type = 2) as an indirect transmission, with only the RFD’s power information in its payload. After macResponseWaitTime, the RFD polls its Parent for the Response, before going back to sleep. Request commands are sent as unicast. Note: any device MAY send a Request to solicit a Response from another device. These commands SHALL be sent as unicast and contain only the power information for the destination device. If this command is received as a broadcast, it SHALL be discarded with no action.
-        // 2 Response This command is sent in response to a Request. Response commands are sent as unicast to the sender of the Request. The response includes only the power information for the requesting device.
+        // 0 Notification
+        //   - An unsolicited notification. These frames are typically sent periodically from an RxOn device.
+        //     If the device is a FFD, it is broadcast to all RxOn devices (0xfffd), and includes power information for all neighboring RxOn devices.
+        //     If the device is an RFD with RxOn, it is sent unicast to its Parent, and includes only power information for the Parent device.
+        // 1 Request
+        //   - Typically used by sleepy RFD devices that do not receive the periodic Notifications from their Parent.
+        //     The sleepy RFD will wake up periodically to send this frame to its Parent, including only the Parent’s power information in its payload.
+        //     Upon receipt, the Parent sends a Response (Type = 2) as an indirect transmission, with only the RFD’s power information in its payload.
+        //     After macResponseWaitTime, the RFD polls its Parent for the Response, before going back to sleep. Request commands are sent as unicast.
+        //     Note: any device MAY send a Request to solicit a Response from another device.
+        //     These commands SHALL be sent as unicast and contain only the power information for the destination device.
+        //     If this command is received as a broadcast, it SHALL be discarded with no action.
+        // 2 Response
+        //   - This command is sent in response to a Request.
+        //     Response commands are sent as unicast to the sender of the Request.
+        //     The response includes only the power information for the requesting device.
         // 3 Reserved
         const type = options & ZigbeeNWKConsts.CMD_NWK_LINK_PWR_DELTA_TYPE_MASK;
         const count = data.readUInt8(offset);
@@ -1776,7 +1761,7 @@ export class NWKHandler {
         for (let i = 0; i < count; i++) {
             const device = data.readUInt16LE(offset);
             offset += 2;
-            const delta = data.readUInt8(offset);
+            const delta = data.readInt8(offset);
             offset += 1;
 
             deltas.push({ device, delta });
@@ -1787,38 +1772,109 @@ export class NWKHandler {
                 `<=== NWK LINK_PWR_DELTA[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} type=${type} deltas=${deltas}]`,
             NS,
         );
-        // TODO
 
-        return offset;
+        // TODO: adjust power
+        // TODO
+        // if (type === ZigbeeNWKConsts.CMD_NWK_LINK_PWR_DELTA_TYPE_REQUEST) {
+        //     if (nwkHeader.source16 === undefined || nwkHeader.source16 >= ZigbeeConsts.BCAST_MIN) {
+        //         return; // per spec, discard
+        //     }
+
+        //     const source64 = this.#context.address16ToAddress64.get(nwkHeader.source16);
+
+        //     if (source64 === undefined) {
+        //         return; // per spec, drop
+        //     }
+
+        //     const device = this.#context.deviceTable.get(source64);
+
+        //     if (device === undefined) {
+        //         return; // per spec, drop
+        //     }
+
+        //     // The Power Delta to be included for each device in the Power List SHALL be
+        //     // the difference in dBm between the optimal level (, see Annex D.9.2.4.2) and the last available RSSI for that device.
+        //     const lastReceivedRssi = device.lastReceivedRssi;
+
+        //     if (lastReceivedRssi === undefined) {
+        //         return;
+        //     }
+
+        //     // per spec, defined as 20 dB above the sensitivity requirement
+        //     const optimalLevel = ?? + 20;
+
+        //     await this.sendLinkPwrDelta(nwkHeader.source16, ZigbeeNWKConsts.CMD_NWK_LINK_PWR_DELTA_TYPE_RESPONSE, [
+        //         { device: nwkHeader.source16, delta: optimalLevel - lastReceivedRssi },
+        //     ]);
+        // }
     }
 
-    // TODO: sendLinkPwrDelta
+    /**
+     * 06-3474-23 #3.4.13
+     *
+     * Per spec, `nwkDest16` shall be `BCAST_RX_ON_WHEN_IDLE` when type is `CMD_NWK_LINK_PWR_DELTA_TYPE_NOTIFICATION`
+     * and only unicast when type is `CMD_NWK_LINK_PWR_DELTA_TYPE_RESPONSE`.
+     *
+     * SPEC COMPLIANCE:
+     * - TODO
+     *
+     * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
+     */
+    public async sendLinkPwrDelta(
+        nwkDest16: number,
+        type: ZigbeeNWKConsts.CMD_NWK_LINK_PWR_DELTA_TYPE_NOTIFICATION | ZigbeeNWKConsts.CMD_NWK_LINK_PWR_DELTA_TYPE_RESPONSE,
+        deltas: { device: number; delta: number }[],
+    ): Promise<void> {
+        logger.debug(() => {
+            let deltasStr = "";
+
+            for (const { device, delta } of deltas) {
+                deltasStr += `{${device}|delta:${delta}}`;
+            }
+
+            return `===> NWK LINK_PWR_DELTA[deltas=${deltasStr}]`;
+        }, NS);
+        const deltasLen = deltas.length;
+        const maxDeltasPayloadSize = ZigbeeNWKConsts.PAYLOAD_MIN_SIZE - 3; // cmdId[1] + type[1] + deltasLen[1]
+        const maxDeltasPerFrame = (maxDeltasPayloadSize / 3) | 0;
+        let deltasOffset = 0;
+
+        do {
+            const deltaCount = Math.min(maxDeltasPerFrame, deltasLen - deltasOffset);
+            const finalPayload = Buffer.allocUnsafe(3 + deltaCount * 3);
+            let fpOffset = 0;
+            fpOffset = finalPayload.writeUInt8(ZigbeeNWKCommandId.LINK_PWR_DELTA, fpOffset);
+            fpOffset = finalPayload.writeUInt8(type, fpOffset);
+            fpOffset = finalPayload.writeUInt8(deltaCount, fpOffset);
+
+            for (let i = 0; i < deltaCount; i++) {
+                const { device, delta } = deltas[deltasOffset + i];
+                fpOffset = finalPayload.writeUInt16LE(device, fpOffset);
+                fpOffset = finalPayload.writeInt8(delta, fpOffset);
+            }
+
+            // TODO: jitter
+            await this.sendCommand(
+                ZigbeeNWKCommandId.LINK_PWR_DELTA,
+                finalPayload,
+                false, // nwkSecurity
+                ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
+                nwkDest16, // nwkDest16
+                nwkDest16 >= ZigbeeConsts.BCAST_MIN ? undefined : this.#context.address16ToAddress64.get(nwkDest16), // nwkDest64
+                1, // nwkRadius
+            );
+
+            deltasOffset += deltaCount;
+        } while (deltasOffset < deltasLen);
+    }
 
     /**
-     * 05-3474-23 #3.4.14
-     * Optional
+     * 06-3474-23 #3.4.14
+     * Optional: R23+
      *
-     * SPEC COMPLIANCE NOTES:
-     * - ✅ Correctly decodes assocType and capabilities
-     * - ⚠️  TODO: TLVs not decoded (may contain critical R23+ commissioning info)
-     * - ✅ Determines initial join vs rejoin from assocType:
-     *       - 0x00 = Initial Join ✅
-     *       - 0x01 = Rejoin ✅
-     * - ✅ Determines neighbor by comparing MAC and NWK source addresses
-     * - ✅ Calls context associate with appropriate parameters
-     * - ✅ Sends COMMISSIONING_RESPONSE with status and address
-     * - ✅ Sends TRANSPORT_KEY_NWK on SUCCESS when required
-     * - ⚠️  MISSING: No validation of commissioning TLVs
-     *       - TLVs may contain security parameters
-     *       - Should validate and process these
-     * - ⚠️  SPEC NOTE: Comment about sending Remove Device CMD to deny join
-     *       - Alternative to normal rejection mechanism
-     *       - Not implemented here
+     * SPEC COMPLIANCE:
+     * - TODO
      *
-     * COMMISSIONING vs NORMAL JOIN:
-     * - Commissioning is R23+ feature for network commissioning
-     * - May have different security requirements than legacy join
-     * - TLV support is critical for full R23 compliance
      * DEVICE SCOPE: Coordinator
      *
      * @param data Command data
@@ -1827,53 +1883,152 @@ export class NWKHandler {
      * @param nwkHeader NWK header
      * @returns New offset after processing
      */
-    public async processCommissioningRequest(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<number> {
-        // 0x00 Initial Join
-        // 0x01 Rejoin
-        const assocType = data.readUInt8(offset);
+    public async processCommissioningRequest(data: Buffer, offset: number, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader): Promise<void> {
+        if (nwkHeader.source64 === undefined || nwkHeader.source16 === undefined) {
+            return; // invalid
+        }
+
+        // ZigbeeNWKCommissioningType
+        const commissioningType = data.readUInt8(offset);
         offset += 1;
+        const secured = nwkHeader.frameControl.security;
+        const initialJoin = commissioningType === ZigbeeNWKCommissioningType.INITIAL_JOIN;
+
+        if (secured && initialJoin) {
+            return; // per spec, drop
+        }
+
         const capabilities = data.readUInt8(offset);
         offset += 1;
-
         const decodedCap = decodeMACCapabilities(capabilities);
+        const [globalTlvs] = readZigbeeTlvs(data, offset);
+        const joinerTlv = globalTlvs[GlobalTlv.JOINER_ENCAPSULATION];
 
-        // TODO
-        // const [tlvs, tlvsOutOffset] = decodeZigbeeNWKTLVs(data, offset);
+        if (joinerTlv === undefined) {
+            return; // invalid
+        }
+
+        const supportedKeyNegotiationMethodsTlv = joinerTlv.additionalTlvs[GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS];
+        const rejoin = commissioningType === ZigbeeNWKCommissioningType.REJOIN;
+
+        if (supportedKeyNegotiationMethodsTlv === undefined) {
+            if (!rejoin) {
+                return; // invalid
+            }
+        } else {
+            // TODO: support other protocols
+            if (!(supportedKeyNegotiationMethodsTlv.keyNegotiationProtocolsBitmask & KeyNegotationProtocolMask.Z3)) {
+                return; // per spec, must always be supported
+            }
+
+            if (!(supportedKeyNegotiationMethodsTlv.preSharedSecretsBitmask & PreSharedSecretMask.INSTALL_CODE_KEY)) {
+                // XXX: spec?
+                await this.sendCommissioningResponse(nwkHeader.source16, 0xffff, MACAssociationStatus.PAN_ACCESS_DENIED);
+
+                return; // others currently not supported
+            }
+        }
+
+        // TODO: store in state?
+        const fragmentationParametersTlv = joinerTlv.additionalTlvs[GlobalTlv.FRAGMENTATION_PARAMETERS];
+
+        if (fragmentationParametersTlv === undefined) {
+            return; // invalid
+        }
 
         logger.debug(
             () =>
-                `<=== NWK COMMISSIONING_REQUEST[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} assocType=${assocType} cap=${capabilities}]`,
+                `<=== NWK COMMISSIONING_REQUEST[macSrc=${macHeader.source16}:${macHeader.source64} nwkSrc=${nwkHeader.source16}:${nwkHeader.source64} sec=${secured} type=${commissioningType} cap=${capabilities}]`,
             NS,
         );
 
         // NOTE: send Remove Device CMD to TC deny the join (or let timeout): `sendRemoveDevice`
 
-        const [status, newAddress16, requiresTransportKey] = await this.#context.associate(
-            nwkHeader.source16!,
-            nwkHeader.source64,
-            assocType === 0x00 /* initial join */,
-            decodedCap,
-            macHeader.source16 === nwkHeader.source16,
-            nwkHeader.frameControl.security /* deny if true */,
-        );
+        let newAddress16 = 0xffff;
+        let status: MACAssociationStatus | number = MACAssociationStatus.PAN_ACCESS_DENIED;
+        let requiresTransportKey = false;
 
-        await this.sendCommissioningResponse(nwkHeader.source16!, newAddress16, status);
+        if (initialJoin) {
+            if (this.#context.macAssociationPermit && this.#context.trustCenterPolicies.allowJoins) {
+                if (this.#context.address16ToAddress64.has(nwkHeader.source16)) {
+                    // device address is conflicting, assign new one
+                    newAddress16 = this.#context.assignNetworkAddress();
 
-        if (status === MACAssociationStatus.SUCCESS) {
-            const dest64 = this.#context.address16ToAddress64.get(newAddress16);
+                    if (newAddress16 === 0xffff) {
+                        status = MACAssociationStatus.PAN_FULL;
+                    } else {
+                        status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                        requiresTransportKey = true;
+                        const neighbor = macHeader.source16 === nwkHeader.source16;
 
-            if (dest64 !== undefined && requiresTransportKey) {
+                        await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, true);
+                    }
+                } else {
+                    newAddress16 = nwkHeader.source16;
+                    status = MACAssociationStatus.SUCCESS;
+                    requiresTransportKey = true;
+                    const neighbor = macHeader.source16 === nwkHeader.source16;
+
+                    await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, true);
+                }
+            }
+        } else if (rejoin) {
+            const device = this.#context.deviceTable.get(nwkHeader.source64);
+
+            if (device?.authorized) {
+                // Secured Rejoin OR Trust Center Rejoin (same logic, only key transport changes)
+                if (device.address16 !== nwkHeader.source16 && this.#context.address16ToAddress64.has(nwkHeader.source16)) {
+                    // device changed its address and it's conflicting, assign new one
+                    newAddress16 = this.#context.assignNetworkAddress();
+
+                    if (newAddress16 === 0xffff) {
+                        status = MACAssociationStatus.PAN_FULL;
+                    } else {
+                        status = ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT;
+                        requiresTransportKey = !secured; // only if Trust Center Rejoin
+                        const neighbor = macHeader.source16 === nwkHeader.source16;
+
+                        await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, false);
+                    }
+                } else {
+                    newAddress16 = nwkHeader.source16;
+                    status = MACAssociationStatus.SUCCESS;
+                    requiresTransportKey = !secured; // only if Trust Center Rejoin
+                    const neighbor = macHeader.source16 === nwkHeader.source16;
+
+                    await this.#context.associate(newAddress16, nwkHeader.source64, decodedCap, neighbor, false);
+                }
+            }
+        }
+
+        await this.sendCommissioningResponse(nwkHeader.source16, newAddress16, status);
+
+        if (requiresTransportKey) {
+            if (this.#context.trustCenterPolicies.keyNegotiationProtocol === KeyNegotationProtocol.Z3) {
                 await this.#callbacks.onAPSSendTransportKeyNWK(
                     newAddress16,
                     this.#context.netParams.networkKey,
                     this.#context.netParams.networkKeySequenceNumber,
-                    dest64,
+                    nwkHeader.source64,
                 );
-                this.#context.markNetworkKeyTransported(dest64);
+                this.#context.markNetworkKeyTransported(nwkHeader.source64);
+            } else {
+                if (rejoin) {
+                    // At this time this Revision of the specification does not support negotiating a new link key during rejoin.
+                    // Therefore, devices certified to this Revision SHALL not include the Supported Key Negotiation Methods Global TLV
+                    // inside the Joiner Encapsulation TLV so it is clear to the Trust Center that the device does not support this behavior.
+                    // Future revisions of this specification that support this would include this TLV as a clear sign the rejoining device supports this new functionality.
+                    return;
+                }
+
+                await this.#callbacks.onAPSSendStartKeyUpdateRequest(
+                    newAddress16,
+                    nwkHeader.source64,
+                    this.#context.trustCenterPolicies.keyNegotiationProtocol,
+                    this.#context.trustCenterPolicies.preSharedSecret,
+                );
             }
         }
-
-        return offset;
     }
 
     // NOTE: sendCommissioningRequest DEVICE SCOPE: routers (N/A), end devices (N/A)
@@ -1881,7 +2036,7 @@ export class NWKHandler {
     // NOTE: processCommissioningResponse DEVICE SCOPE: routers (N/A), end devices (N/A)
 
     /**
-     * 05-3474-23 #3.4.15 (Commissioning Response) — Optional in R23
+     * 06-3474-23 #3.4.15 (Commissioning Response) — Optional in R23
      *
      * SPEC COMPLIANCE NOTES:
      * - ✅ Sends commissioning response with STATUS + new address fields as defined in Table 3-22
@@ -1906,7 +2061,7 @@ export class NWKHandler {
             false, // nwkSecurity
             ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
             requestSource16, // nwkDest16
-            this.#context.address16ToAddress64.get(requestSource16), // nwkDest64
+            this.#context.address16ToAddress64.get(newAddress16), // nwkDest64
             CONFIG_NWK_MAX_HOPS, // nwkRadius
         );
     }

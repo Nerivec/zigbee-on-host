@@ -3,8 +3,8 @@
  *
  * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
- *   - Zigbee specification (05-3474-23): Revision 23.1
- *   - Base device behavior (16-02828-012): v3.0.1
+ *   - Zigbee specification (06-3474-23): Revision 23.1
+ *   - Base device behavior (16-02828-012): v3.1
  *   - ZCL specification (07-5123): Revision 8
  *   - Green Power specification (14-0563-19): Version 1.1.2
  *
@@ -31,6 +31,7 @@ import {
     MACSecurityLevel,
     ZigbeeMACConsts,
 } from "../../src/zigbee/mac.js";
+import { GlobalTlv } from "../../src/zigbee/tlvs.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import { decodeZigbeeAPSFrameControl, decodeZigbeeAPSHeader, ZigbeeAPSDeliveryMode, ZigbeeAPSFrameType } from "../../src/zigbee/zigbee-aps.js";
 import {
@@ -97,6 +98,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),
+            onAPSSendStartKeyUpdateRequest: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
             onGPFrame: vi.fn(),
@@ -162,10 +164,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
                 mockMACHandlerCallbacks,
             );
 
-            const beaconFrame = await captureMacFrame(
-                () => macHandler.processBeaconReq(Buffer.alloc(0), 0, {} as MACHeader),
-                mockMACHandlerCallbacks,
-            );
+            const beaconFrame = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), {} as MACHeader), mockMACHandlerCallbacks);
 
             const dest16 = 0x3344;
             const dest64 = TEST_DEVICE_EUI64;
@@ -274,7 +273,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
                 mockMACHandlerCallbacks,
             );
 
-            const beacon = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), 0, {} as MACHeader), mockMACHandlerCallbacks);
+            const beacon = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), {} as MACHeader), mockMACHandlerCallbacks);
 
             expect(command.frameControl.panIdCompression).toStrictEqual(true);
             expect(beacon.frameControl.panIdCompression).toStrictEqual(false);
@@ -293,7 +292,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
                 mockMACHandlerCallbacks,
             );
 
-            const beacon = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), 0, {} as MACHeader), mockMACHandlerCallbacks);
+            const beacon = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), {} as MACHeader), mockMACHandlerCallbacks);
 
             expect(shortDest.frameControl.destAddrMode).toStrictEqual(MACFrameAddressMode.SHORT);
             expect(shortDest.header.destination16).toStrictEqual(0x4abc);
@@ -308,7 +307,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
                 mockMACHandlerCallbacks,
             );
 
-            const beacon = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), 0, {} as MACHeader), mockMACHandlerCallbacks);
+            const beacon = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), {} as MACHeader), mockMACHandlerCallbacks);
 
             registerNeighborDevice(context, 0x2222, TEST_DEVICE_EUI64);
             const data = await captureMacFrame(
@@ -463,7 +462,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
         });
 
         it("omits the destination PAN identifier when the addressing mode is none", async () => {
-            const decoded = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), 0, {} as MACHeader), mockMACHandlerCallbacks);
+            const decoded = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), {} as MACHeader), mockMACHandlerCallbacks);
 
             expect(decoded.frameControl.destAddrMode).toStrictEqual(MACFrameAddressMode.NONE);
             expect(decoded.header.destinationPANId).toBeUndefined();
@@ -556,7 +555,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
         });
 
         it("omits destination addressing when the addressing mode is none", async () => {
-            const decoded = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), 0, {} as MACHeader), mockMACHandlerCallbacks);
+            const decoded = await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), {} as MACHeader), mockMACHandlerCallbacks);
 
             expect(decoded.frameControl.destAddrMode).toStrictEqual(MACFrameAddressMode.NONE);
             expect(decoded.header.destination16).toBeUndefined();
@@ -639,7 +638,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
      */
     describe("MAC Beacon Frame (IEEE 802.15.4-2020 §6.3.1)", () => {
         async function generateBeacon(): Promise<DecodedMACFrame> {
-            return await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), 0, {} as MACHeader), mockMACHandlerCallbacks);
+            return await captureMacFrame(() => macHandler.processBeaconReq(Buffer.alloc(0), {} as MACHeader), mockMACHandlerCallbacks);
         }
 
         it("reports superframe defaults for non-beacon networks", async () => {
@@ -660,10 +659,10 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             expect(baseFrame.panCoordinator).toStrictEqual(true);
             expect(baseFrame.associationPermit).toStrictEqual(false);
 
-            context.associationPermit = true;
+            context.macAssociationPermit = true;
             const permissive = await generateBeacon();
             expect(permissive.header.superframeSpec!.associationPermit).toStrictEqual(true);
-            context.associationPermit = false;
+            context.macAssociationPermit = false;
         });
 
         it("disables GTS and leaves pending address lists empty", async () => {
@@ -677,7 +676,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
 
         it("encodes Zigbee beacon payload with coordinator capabilities", async () => {
             const beacon = await generateBeacon();
-            const payload = decodeMACZigbeeBeacon(beacon.buffer, beacon.payloadOffset);
+            const payload = decodeMACZigbeeBeacon(beacon.buffer.subarray(0, -2), beacon.payloadOffset);
 
             expect(payload.protocolId).toStrictEqual(ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_ID);
             expect(payload.profile).toStrictEqual(0x02);
@@ -688,6 +687,55 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             expect(payload.extendedPANId).toStrictEqual(netParams.extendedPanId);
             expect(payload.txOffset).toStrictEqual(0x00ffffff);
             expect(payload.updateId).toStrictEqual(netParams.nwkUpdateId);
+            expect(payload.globalTlvs).toStrictEqual({
+                [GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS]: {
+                    keyNegotiationProtocolsBitmask: 0b111,
+                    preSharedSecretsBitmask: 0b110,
+                    sourceDeviceEui64: 0x00124b0012345678n,
+                },
+                [GlobalTlv.FRAGMENTATION_PARAMETERS]: {
+                    nwkAddress: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    fragmentationOptions: 0b1,
+                    maxIncomingTransferUnit: ZigbeeMACConsts.FRAME_MAX_SIZE,
+                },
+                [GlobalTlv.ROUTER_INFORMATION]: {
+                    bitmask: 0b11110101,
+                },
+            });
+            expect(payload.localTlvs.size).toStrictEqual(0);
+        });
+
+        it("encodes Zigbee beacon payload with uptime in TLV", async () => {
+            const nowSpy = vi.spyOn(performance, "now").mockReturnValueOnce(86_400_001);
+            const beacon = await generateBeacon();
+            const payload = decodeMACZigbeeBeacon(beacon.buffer.subarray(0, -2), beacon.payloadOffset);
+
+            expect(payload.protocolId).toStrictEqual(ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_ID);
+            expect(payload.profile).toStrictEqual(0x02);
+            expect(payload.version).toStrictEqual(ZigbeeNWKConsts.VERSION_2007);
+            expect(payload.routerCapacity).toStrictEqual(true);
+            expect(payload.deviceDepth).toStrictEqual(0);
+            expect(payload.endDeviceCapacity).toStrictEqual(true);
+            expect(payload.extendedPANId).toStrictEqual(netParams.extendedPanId);
+            expect(payload.txOffset).toStrictEqual(0x00ffffff);
+            expect(payload.globalTlvs).toStrictEqual({
+                [GlobalTlv.SUPPORTED_KEY_NEGOTIATION_METHODS]: {
+                    keyNegotiationProtocolsBitmask: 0b111,
+                    preSharedSecretsBitmask: 0b110,
+                    sourceDeviceEui64: 0x00124b0012345678n,
+                },
+                [GlobalTlv.FRAGMENTATION_PARAMETERS]: {
+                    nwkAddress: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    fragmentationOptions: 0b1,
+                    maxIncomingTransferUnit: ZigbeeMACConsts.FRAME_MAX_SIZE,
+                },
+                [GlobalTlv.ROUTER_INFORMATION]: {
+                    bitmask: 0b11110111,
+                },
+            });
+            expect(payload.localTlvs.size).toStrictEqual(0);
+
+            nowSpy.mockRestore();
         });
     });
 
@@ -892,7 +940,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             await macHandler.processCommand(Buffer.from([defaultCapabilities]), buildAssocHeader());
 
             expect(associateSpy).toHaveBeenCalledTimes(1);
-            const capabilitiesArg = associateSpy.mock.calls[0][3] as MACCapabilities;
+            const capabilitiesArg = associateSpy.mock.calls[0][2] as MACCapabilities;
             expect(capabilitiesArg).toStrictEqual({
                 alternatePANCoordinator: true,
                 deviceType: 1,
@@ -944,27 +992,6 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             randomSpy.mockRestore();
         });
 
-        it("propagates PAN_FULL status to association responses", async () => {
-            const associateSpy = vi.spyOn(context, "associate").mockResolvedValue([MACAssociationStatus.PAN_FULL, 0xffff, false]);
-            const sendCommandSpy = vi.spyOn(macHandler, "sendCommand").mockResolvedValue(true);
-
-            await macHandler.processCommand(Buffer.from([defaultCapabilities]), buildAssocHeader());
-
-            const pending = context.pendingAssociations.get(device64);
-            expect(pending).not.toBeUndefined();
-
-            await pending!.sendResp();
-
-            expect(sendCommandSpy).toHaveBeenCalledTimes(1);
-            const payload = sendCommandSpy.mock.calls[0][4];
-            expect(payload.readUInt16LE(0)).toStrictEqual(0xffff);
-            expect(payload.readUInt8(2)).toStrictEqual(MACAssociationStatus.PAN_FULL);
-            expect(mockMACHandlerCallbacks.onAPSSendTransportKeyNWK).not.toHaveBeenCalled();
-            expect(context.deviceTable.has(device64)).toStrictEqual(false);
-
-            associateSpy.mockRestore();
-        });
-
         it("denies association when joins are not permitted", async () => {
             const sendCommandSpy = vi.spyOn(macHandler, "sendCommand").mockResolvedValue(true);
 
@@ -993,7 +1020,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             const sendCommandSpy = vi.spyOn(macHandler, "sendCommand").mockResolvedValue(true);
             currentTime += ZigbeeConsts.MAC_INDIRECT_TRANSMISSION_TIMEOUT - 10;
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader());
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader());
 
             expect(sendCommandSpy).toHaveBeenCalledTimes(1);
             expect(context.pendingAssociations.has(device64)).toStrictEqual(false);
@@ -1014,7 +1041,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             const sendCommandSpy = vi.spyOn(macHandler, "sendCommand");
             currentTime += ZigbeeConsts.MAC_INDIRECT_TRANSMISSION_TIMEOUT + 50;
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader());
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader());
 
             expect(sendCommandSpy).not.toHaveBeenCalled();
             expect(context.pendingAssociations.has(device64)).toStrictEqual(false);
@@ -1184,7 +1211,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
                 return Promise.resolve();
             });
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader());
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader());
 
             expect(frames).toHaveLength(1);
             const decoded = decodeMACFramePayload(frames[0]!);
@@ -1206,7 +1233,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             const onSendFrame = vi.fn().mockResolvedValue(undefined);
             mockMACHandlerCallbacks.onSendFrame = onSendFrame;
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader());
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader());
 
             expect(onSendFrame).not.toHaveBeenCalled();
         });
@@ -1239,7 +1266,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
                 return Promise.resolve();
             });
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader());
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader());
 
             expect(frames).toHaveLength(1);
             const decoded = decodeMACFramePayload(frames[0]!);
@@ -1284,7 +1311,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
                 return Promise.resolve();
             });
 
-            await macHandler.processDataReq(Buffer.alloc(0), 0, buildDataRequestHeader(false));
+            await macHandler.processDataReq(Buffer.alloc(0), buildDataRequestHeader(false));
 
             expect(expiredTx.sendFrame).not.toHaveBeenCalled();
             expect(validTx.sendFrame).toHaveBeenCalledTimes(1);
@@ -1409,7 +1436,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
 
                 const macHeader = { source64: TEST_DEVICE_EUI64 } as MACHeader;
 
-                await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
+                await macHandler.processDataReq(Buffer.alloc(0), macHeader);
 
                 expect(sendResp).toHaveBeenCalledTimes(1);
                 expect(context.pendingAssociations.has(TEST_DEVICE_EUI64)).toStrictEqual(false);
@@ -1433,7 +1460,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
 
                 const macHeader = { source64: TEST_DEVICE_EUI64 } as MACHeader;
 
-                await macHandler.processDataReq(Buffer.alloc(0), 0, macHeader);
+                await macHandler.processDataReq(Buffer.alloc(0), macHeader);
 
                 expect(sendResp).not.toHaveBeenCalled();
                 expect(context.pendingAssociations.has(TEST_DEVICE_EUI64)).toStrictEqual(false);

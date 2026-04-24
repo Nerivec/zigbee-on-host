@@ -133,6 +133,9 @@ export class OTRCPDriver {
             onAPSSendTransportKeyNWK: async (address16, key, keySeqNum, destination64) => {
                 await this.apsHandler.sendTransportKeyNWK(address16, key, keySeqNum, destination64);
             },
+            onAPSSendStartKeyUpdateRequest: async (nwkDest16, nwkDest64, keyNegotiationProtocol, preSharedSecret) => {
+                await this.apsHandler.sendStartKeyUpdateRequest(nwkDest16, nwkDest64, keyNegotiationProtocol, preSharedSecret);
+            },
         };
 
         this.nwkHandler = new NWKHandler(this.context, this.macHandler, nwkCallbacks);
@@ -531,7 +534,7 @@ export class OTRCPDriver {
 
     // #region Network Management
 
-    //---- 05-3474-23 #2.5.4.6
+    //---- 06-3474-23 #2.5.4.6
     // Network Discovery, Get, and Set attributes (both requests and confirms) are mandatory
     // Zigbee Coordinator:
     //   - The NWK Formation request and confirm, the NWK Leave request, NWK Leave indication, NWK Leave confirm, NWK Join indication,

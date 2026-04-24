@@ -219,8 +219,9 @@ async function convert(dataPath: string): Promise<void> {
             authorized: device.interviewState === InterviewState.SUCCESSFUL,
             // add support for not knowing this in driver (re-evaluation)
             neighbor: backupDevice?.is_child !== true,
-            lastTransportedNetworkKeySeq: undefined,
+            lastTransportedNetworkKeySeq: networkKeySequenceNumber,
             recentLQAs: [],
+            lastReceivedRssi: undefined,
             incomingNWKFrameCounter: undefined,
             endDeviceTimeout: undefined,
             linkStatusMisses: 0,

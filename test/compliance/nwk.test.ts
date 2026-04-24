@@ -3,8 +3,8 @@
  *
  * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
- *   - Zigbee specification (05-3474-23): Revision 23.1
- *   - Base device behavior (16-02828-012): v3.0.1
+ *   - Zigbee specification (06-3474-23): Revision 23.1
+ *   - Base device behavior (16-02828-012): v3.1
  *   - ZCL specification (07-5123): Revision 8
  *   - Green Power specification (14-0563-19): Version 1.1.2
  *
@@ -53,10 +53,10 @@ import {
     type StackContextCallbacks,
 } from "../../src/zigbee-stack/stack-context.js";
 import { NETDEF_EXTENDED_PAN_ID, NETDEF_NETWORK_KEY, NETDEF_PAN_ID, NETDEF_TC_KEY } from "../data.js";
-import { createMACFrameControl } from "../utils.js";
+import { createMACFrameControl, defaultDeviceTableEntry } from "../utils.js";
 import { captureMacFrame, type DecodedMACFrame, decodeMACFramePayload, NO_ACK_CODE, registerNeighborDevice } from "./utils.js";
 
-describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
+describe("Zigbee 4.0 Network Layer (NWK) Compliance", () => {
     let netParams: NetworkParameters;
     let saveDir: string;
 
@@ -102,6 +102,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),
+            onAPSSendStartKeyUpdateRequest: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
             onGPFrame: vi.fn(),
@@ -153,7 +154,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     }
 
     /**
-     * Zigbee Spec 05-3474-23 §3.3.1: NWK Frame Format
+     * Zigbee Spec 06-3474-23 §3.3.1: NWK Frame Format
      * The NWK frame SHALL consist of a frame control field, addressing fields,
      * sequence number, radius, and frame payload.
      */
@@ -220,7 +221,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.3.1.8: NWK Sequence Number
+     * Zigbee Spec 06-3474-23 §3.3.1.8: NWK Sequence Number
      * The NWK sequence number SHALL be an 8-bit value incremented for each
      * new transmission and wrapping to 0 after 255.
      */
@@ -305,7 +306,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.5: Network Security
+     * Zigbee Spec 06-3474-23 §3.5: Network Security
      * Network layer security SHALL protect NWK frames using network key.
      */
     describe("NWK Security (Zigbee §3.5)", () => {
@@ -489,7 +490,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.3.1.9: NWK Radius
+     * Zigbee Spec 06-3474-23 §3.3.1.9: NWK Radius
      * The radius field SHALL indicate the maximum number of hops a frame will be
      * relayed. It SHALL be decremented by each relaying device.
      */
@@ -587,7 +588,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.4.1: Route Discovery
+     * Zigbee Spec 06-3474-23 §3.4.1: Route Discovery
      * Route discovery SHALL use route request and route reply commands.
      */
     describe("NWK Route Discovery (Zigbee §3.4.1)", () => {
@@ -635,7 +636,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.4.1.3: Route Maintenance
+     * Zigbee Spec 06-3474-23 §3.4.1.3: Route Maintenance
      * Routes SHALL be maintained through route error and route repair mechanisms.
      */
     describe("NWK Route Maintenance (Zigbee §3.4.1.3)", () => {
@@ -644,6 +645,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
 
         beforeEach(() => {
             context.deviceTable.set(failingChild64, {
+                ...defaultDeviceTableEntry(),
                 address16: failingChild16,
                 capabilities: {
                     alternatePANCoordinator: false,
@@ -655,11 +657,6 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                 },
                 authorized: true,
                 neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(failingChild16, failingChild64);
         });
@@ -767,6 +764,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             const distant16 = 0x99aa;
             const distant64 = 0x00124b00aabbccddn;
             context.deviceTable.set(distant64, {
+                ...defaultDeviceTableEntry(),
                 address16: distant16,
                 capabilities: {
                     alternatePANCoordinator: false,
@@ -777,12 +775,6 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                     allocateAddress: true,
                 },
                 authorized: true,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(distant16, distant64);
 
@@ -804,7 +796,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.4.1.6: Many-to-One Routing
+     * Zigbee Spec 06-3474-23 §3.4.1.6: Many-to-One Routing
      * Concentrator devices SHALL use many-to-one route requests to establish
      * routes from all devices back to the concentrator.
      */
@@ -813,6 +805,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
 
     function registerRouter(neighbor: boolean): void {
         context.deviceTable.set(routerIeeeAddress, {
+            ...defaultDeviceTableEntry(),
             address16: routerShortAddress,
             capabilities: {
                 alternatePANCoordinator: false,
@@ -824,11 +817,6 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             },
             authorized: true,
             neighbor,
-            lastTransportedNetworkKeySeq: undefined,
-            recentLQAs: [],
-            incomingNWKFrameCounter: undefined,
-            endDeviceTimeout: undefined,
-            linkStatusMisses: 0,
         });
         context.address16ToAddress64.set(routerShortAddress, routerIeeeAddress);
     }
@@ -1072,7 +1060,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.4.2: Source Routing
+     * Zigbee Spec 06-3474-23 §3.4.2: Source Routing
      * Source routing SHALL allow the originator to specify the relay path.
      */
     describe("NWK Source Routing (Zigbee §3.4.2)", () => {
@@ -1246,7 +1234,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.6.1: Network Command Frames
+     * Zigbee Spec 06-3474-23 §3.6.1: Network Command Frames
      * Network command frames SHALL be used for network management operations.
      */
     describe("NWK Command Frames (Zigbee §3.6.1)", () => {
@@ -1552,7 +1540,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.6.3: Network Status Command
+     * Zigbee Spec 06-3474-23 §3.6.3: Network Status Command
      * Network status command SHALL report errors and conditions using defined codes.
      */
     describe("NWK Network Status Command (Zigbee §3.6.3)", () => {
@@ -1739,7 +1727,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.6.4: Leave Command
+     * Zigbee Spec 06-3474-23 §3.6.4: Leave Command
      * Leave command SHALL allow devices to leave the network gracefully.
      */
     describe("NWK Leave Command (Zigbee §3.6.4)", () => {
@@ -1869,7 +1857,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.6.5: Rejoin
+     * Zigbee Spec 06-3474-23 §3.6.5: Rejoin
      * Rejoin procedures SHALL allow devices to rejoin the network.
      */
     describe("NWK Rejoin Procedure (Zigbee §3.6.5)", () => {
@@ -1964,15 +1952,10 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
 
         beforeEach(() => {
             context.deviceTable.set(rejoiner64, {
+                ...defaultDeviceTableEntry(),
                 address16: rejoiner16,
                 capabilities: { ...baseCapabilities },
                 authorized: true,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(rejoiner16, rejoiner64);
         });
@@ -2002,41 +1985,6 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             expect(updatedDevice.capabilities).toStrictEqual(decodedCapabilities);
         });
 
-        it("assigns a new network address and signals conflict when a rejoin collides", async () => {
-            const conflicting64 = 0x00124b00ccddee22n;
-            context.deviceTable.set(conflicting64, {
-                address16: rejoiner16,
-                capabilities: { ...baseCapabilities },
-                authorized: true,
-                neighbor: true,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
-            });
-            context.address16ToAddress64.set(rejoiner16, conflicting64);
-            const currentDevice = context.deviceTable.get(rejoiner64)!;
-            currentDevice.address16 = 0x5522;
-            context.address16ToAddress64.set(0x5522, rejoiner64);
-
-            const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.25);
-
-            const { nwkPayload } = await captureRejoinResponse(encodeMACCapabilities(currentDevice.capabilities!));
-
-            randomSpy.mockRestore();
-
-            const commandId = nwkPayload.readUInt8(0);
-            const assignedAddress = nwkPayload.readUInt16LE(1);
-            const status = nwkPayload.readUInt8(3);
-
-            expect(commandId).toStrictEqual(ZigbeeNWKCommandId.REJOIN_RESP);
-            expect(status).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
-            expect(assignedAddress).not.toStrictEqual(rejoiner16);
-            expect(assignedAddress).toBeLessThan(ZigbeeConsts.BCAST_MIN);
-            expect(context.deviceTable.get(rejoiner64)?.address16).toStrictEqual(0x5522);
-        });
-
         it("denies unsecured rejoins from unauthorized devices", async () => {
             const device = context.deviceTable.get(rejoiner64)!;
             device.authorized = false;
@@ -2061,7 +2009,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.6.6: Link Status
+     * Zigbee Spec 06-3474-23 §3.6.6: Link Status
      * Link status command SHALL be used to maintain link cost information.
      */
     describe("NWK Link Status Command (Zigbee §3.6.6)", () => {
@@ -2289,7 +2237,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.6.8: End Device Timeout
+     * Zigbee Spec 06-3474-23 §3.6.8: End Device Timeout
      * End device timeout request/response SHALL manage end device aging.
      */
     describe("NWK End Device Timeout (Zigbee §3.6.8)", () => {
@@ -2368,6 +2316,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
 
         beforeEach(() => {
             context.deviceTable.set(child64, {
+                ...defaultDeviceTableEntry(),
                 address16: child16,
                 capabilities: {
                     alternatePANCoordinator: false,
@@ -2378,12 +2327,6 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
                     allocateAddress: true,
                 },
                 authorized: true,
-                neighbor: false,
-                lastTransportedNetworkKeySeq: undefined,
-                recentLQAs: [],
-                incomingNWKFrameCounter: undefined,
-                endDeviceTimeout: undefined,
-                linkStatusMisses: 0,
             });
             context.address16ToAddress64.set(child16, child64);
         });
@@ -2424,17 +2367,14 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             expect(context.deviceTable.get(child64)?.endDeviceTimeout).toBeUndefined();
         });
 
-        it("signals unsupported feature when the device is unknown", async () => {
+        it("ignores when the device is unknown", async () => {
             context.deviceTable.delete(child64);
 
             const sendSpy = vi.spyOn(nwkHandler, "sendEdTimeoutResponse");
 
-            const payload = await handleTimeoutRequest(1, { source64: undefined });
-            expect(payload).not.toBeUndefined();
-            expect(payload!.readUInt8(1)).toStrictEqual(0x02);
-            expect(sendSpy).toHaveBeenCalled();
-            const lastCall = sendSpy.mock.calls.at(-1);
-            expect(lastCall?.[2]).toStrictEqual(0x02);
+            const payload = await handleTimeoutRequest(1, { source64: undefined }, false);
+            expect(payload).toBeUndefined();
+            expect(sendSpy).not.toHaveBeenCalled();
         });
 
         it("allows overriding status and parent info in outgoing responses", async () => {
@@ -2477,7 +2417,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     });
 
     /**
-     * Zigbee Spec 05-3474-23 §3.8: Network Constants
+     * Zigbee Spec 06-3474-23 §3.8: Network Constants
      * Network layer SHALL enforce specified constants and attributes.
      */
     describe("NWK Constants (Zigbee §3.8)", () => {

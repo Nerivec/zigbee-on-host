@@ -3,8 +3,8 @@
  *
  * These tests verify that the handlers adhere to the Zigbee specification.
  * Tests are derived from:
- *   - Zigbee specification (05-3474-23): Revision 23.1
- *   - Base device behavior (16-02828-012): v3.0.1
+ *   - Zigbee specification (06-3474-23): Revision 23.1
+ *   - Base device behavior (16-02828-012): v3.1
  *   - ZCL specification (07-5123): Revision 8
  *   - Green Power specification (14-0563-19): Version 1.1.2
  *
@@ -16,6 +16,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeMACFrameZigbee, MACFrameAddressMode, MACFrameType, type MACHeader, ZigbeeMACConsts } from "../../src/zigbee/mac.js";
+import { readZigbeeTlvs } from "../../src/zigbee/tlvs.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType, ZigbeeSecurityLevel } from "../../src/zigbee/zigbee.js";
 import {
     decodeZigbeeAPSFrameControl,
@@ -28,13 +29,13 @@ import {
     ZigbeeAPSFragmentation,
     ZigbeeAPSFrameType,
     type ZigbeeAPSHeader,
+    ZigbeeAPSUpdateDeviceStatus,
 } from "../../src/zigbee/zigbee-aps.js";
 import {
     decodeZigbeeNWKFrameControl,
     decodeZigbeeNWKHeader,
     decodeZigbeeNWKPayload,
     encodeZigbeeNWKFrame,
-    ZigbeeNWKCommandId,
     ZigbeeNWKConsts,
     ZigbeeNWKFrameType,
     type ZigbeeNWKHeader,
@@ -60,7 +61,7 @@ import { NETDEF_EXTENDED_PAN_ID, NETDEF_NETWORK_KEY, NETDEF_PAN_ID, NETDEF_TC_KE
 import { createMACFrameControl } from "../utils.js";
 import { captureMacFrame, type DecodedMACFrame, decodeMACFramePayload, NO_ACK_CODE, registerNeighborDevice } from "./utils.js";
 
-describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
+describe("Zigbee 4.0 Application Support (APS) Layer Compliance", () => {
     let netParams: NetworkParameters;
     let saveDir: string;
 
@@ -106,6 +107,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),
+            onAPSSendStartKeyUpdateRequest: vi.fn(),
         };
         mockNWKGPHandlerCallbacks = {
             onGPFrame: vi.fn(),
@@ -153,11 +155,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
         return { nwkFrameControl, nwkHeader, apsFrameControl, apsHeader, apsPayload, nwkPayload };
     }
 
-    /**
-     * Zigbee Spec 05-3474-23 §2.2.5: APS Frame Format
-     * The APS frame SHALL consist of a frame control field, addressing fields,
-     * and frame payload.
-     */
     describe("APS Frame Format (Zigbee §2.2.5)", () => {
         const unicastDest16 = 0x2222;
         const unicastDest64 = 0x00124b00aaccef01n;
@@ -333,10 +330,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
         });
     });
 
-    /**
-     * Zigbee Spec 05-3474-23 §2.2.5.1.4: APS Counter
-     * The APS counter SHALL be an 8-bit value incremented for each transmission.
-     */
     describe("APS Counter (Zigbee §2.2.5.1.4)", () => {
         const neighbor16 = 0x2a2a;
         const neighbor64 = 0x00124b00abcddc01n;
@@ -533,10 +526,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
         });
     });
 
-    /**
-     * Zigbee Spec 05-3474-23 §2.2.6: APS Addressing
-     * APS addressing SHALL use endpoint, cluster, and profile identifiers.
-     */
     describe("APS Addressing (Zigbee §2.2.6)", () => {
         const neighbor16 = 0x3344;
         const neighbor64 = 0x00124b00bbccddeen;
@@ -638,10 +627,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
         });
     });
 
-    /**
-     * Zigbee Spec 05-3474-23 §2.2.8: APS Data Service
-     * APS data frames SHALL transport application payloads between endpoints.
-     */
     describe("APS Data Service (Zigbee §2.2.8)", () => {
         const unicastDest16 = 0x7788;
         const unicastDest64 = 0x00124b00ddccbb11n;
@@ -734,10 +719,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
         });
     });
 
-    /**
-     * Zigbee Spec 05-3474-23 §2.2.9: APS Acknowledgment
-     * APS acknowledgments SHALL be sent when requested to confirm delivery.
-     */
     describe("APS Acknowledgment (Zigbee §2.2.9)", () => {
         it("encodes APS acknowledgments with matching addressing and counter", async () => {
             const device16 = 0x3456;
@@ -1025,10 +1006,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
         });
     });
 
-    /**
-     * Zigbee Spec 05-3474-23 §4.4.3: APS Transport Key Command
-     * Transport key command SHALL be used to distribute security keys.
-     */
     describe("APS Transport Key Command (Zigbee §4.4.3)", () => {
         const child16 = 0x5c5d;
         const child64 = 0x00124b00ddddeee1n;
@@ -1096,7 +1073,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
 
             expect(apsPayload.readUInt8(0)).toStrictEqual(ZigbeeAPSCommandId.TRANSPORT_KEY);
             expect(apsPayload.readUInt8(1)).toStrictEqual(ZigbeeAPSConsts.CMD_KEY_TC_LINK);
-            expect(apsPayload.length).toStrictEqual(1 + 1 + ZigbeeAPSConsts.CMD_KEY_LENGTH + 8 + 8);
+            expect(apsPayload.length).toStrictEqual(1 + 1 + ZigbeeAPSConsts.CMD_KEY_LENGTH + 8 + 8 + 3);
 
             const keyOffset = 2;
             const destOffset = keyOffset + ZigbeeAPSConsts.CMD_KEY_LENGTH;
@@ -1105,6 +1082,10 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             expect(apsPayload.subarray(keyOffset, destOffset)).toStrictEqual(linkKey);
             expect(apsPayload.readBigUInt64LE(destOffset)).toStrictEqual(child64);
             expect(apsPayload.readBigUInt64LE(sourceOffset)).toStrictEqual(context.netParams.eui64);
+            // local TLV: Link-Key Features & Capabilities
+            expect(apsPayload.readUInt8(sourceOffset + 8)).toStrictEqual(0x00);
+            expect(apsPayload.readUInt8(sourceOffset + 9)).toStrictEqual(0x00);
+            expect(apsPayload.readUInt8(sourceOffset + 10)).toStrictEqual(0b00000001);
         });
 
         it("encodes application link key transport with partner address and initiator flag", async () => {
@@ -1122,7 +1103,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
 
             expect(apsPayload.readUInt8(0)).toStrictEqual(ZigbeeAPSCommandId.TRANSPORT_KEY);
             expect(apsPayload.readUInt8(1)).toStrictEqual(ZigbeeAPSConsts.CMD_KEY_APP_LINK);
-            expect(apsPayload.length).toStrictEqual(1 + 1 + ZigbeeAPSConsts.CMD_KEY_LENGTH + 8 + 1);
+            expect(apsPayload.length).toStrictEqual(1 + 1 + ZigbeeAPSConsts.CMD_KEY_LENGTH + 8 + 1 + 3);
 
             const keyOffset = 2;
             const partnerOffset = keyOffset + ZigbeeAPSConsts.CMD_KEY_LENGTH;
@@ -1134,10 +1115,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
         });
     });
 
-    /**
-     * Zigbee Spec 05-3474-23 §4.4.4: APS Update Device Command
-     * Update device command SHALL notify of device status changes.
-     */
     describe("APS Update Device Command (Zigbee §4.4.4)", () => {
         const parent16 = 0x2468;
         const parent64 = 0x00124b00aaaabbbcn;
@@ -1158,32 +1135,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             return { nwkFrameControl, nwkHeader, apsFrameControl, apsHeader, apsPayload };
         }
 
-        it.each([
-            ["secure rejoin", ZigbeeAPSConsts.CMD_UPDATE_STANDARD_SEC_REJOIN],
-            ["unsecured join", ZigbeeAPSConsts.CMD_UPDATE_STANDARD_UNSEC_JOIN],
-            ["device left", ZigbeeAPSConsts.CMD_UPDATE_LEAVE],
-            ["trust center rejoin", ZigbeeAPSConsts.CMD_UPDATE_STANDARD_UNSEC_REJOIN],
-        ])("encodes update device payload for %s status", async (_label, status) => {
-            const device16 = 0x3500 + status;
-            const device64 = 0x00124b00cccce000n + BigInt(status);
-
-            const frame = await captureMacFrame(() => apsHandler.sendUpdateDevice(parent16, device64, device16, status), mockMACHandlerCallbacks);
-            const { nwkFrameControl, apsFrameControl, apsPayload } = decodeAPSCommandFrame(frame);
-
-            expect(nwkFrameControl.frameType).toStrictEqual(ZigbeeNWKFrameType.DATA);
-            expect(nwkFrameControl.security).toStrictEqual(true);
-
-            expect(apsFrameControl.frameType).toStrictEqual(ZigbeeAPSFrameType.CMD);
-            expect(apsFrameControl.security).toStrictEqual(false);
-            expect(apsFrameControl.ackRequest).toStrictEqual(true);
-
-            expect(apsPayload.length).toStrictEqual(1 + 8 + 2 + 1);
-            expect(apsPayload.readUInt8(0)).toStrictEqual(ZigbeeAPSCommandId.UPDATE_DEVICE);
-            expect(apsPayload.readBigUInt64LE(1)).toStrictEqual(device64);
-            expect(apsPayload.readUInt16LE(9)).toStrictEqual(device16);
-            expect(apsPayload.readUInt8(11)).toStrictEqual(status);
-        });
-
         it("associates devices and tunnels the current network key for unsecured joins", async () => {
             const frames: Buffer[] = [];
             mockMACHandlerCallbacks.onSendFrame = vi.fn((payload: Buffer) => {
@@ -1202,7 +1153,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             offset += 8;
             payload.writeUInt16LE(device16, offset);
             offset += 2;
-            payload.writeUInt8(ZigbeeAPSConsts.CMD_UPDATE_STANDARD_UNSEC_JOIN, offset);
+            payload.writeUInt8(ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_UNSECURED_JOIN, offset);
 
             const macHeader: MACHeader = {
                 frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
@@ -1303,7 +1254,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             offset += 8;
             payload.writeUInt16LE(device16, offset);
             offset += 2;
-            payload.writeUInt8(ZigbeeAPSConsts.CMD_UPDATE_LEAVE, offset);
+            payload.writeUInt8(ZigbeeAPSUpdateDeviceStatus.DEVICE_LEFT, offset);
 
             const macHeader: MACHeader = {
                 frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
@@ -1374,7 +1325,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             offset += 8;
             payload.writeUInt16LE(newShort, offset);
             offset += 2;
-            payload.writeUInt8(ZigbeeAPSConsts.CMD_UPDATE_STANDARD_UNSEC_REJOIN, offset);
+            payload.writeUInt8(ZigbeeAPSUpdateDeviceStatus.STANDARD_DEVICE_TRUST_CENTER_REJOIN, offset);
 
             const macHeader: MACHeader = {
                 frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
@@ -1427,16 +1378,12 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             expect(entry).toBeDefined();
             expect(entry?.address16).toStrictEqual(newShort);
             expect(context.address16ToAddress64.get(newShort)).toStrictEqual(device64);
-            expect(frames).toHaveLength(0);
+            expect(frames).toHaveLength(1);
 
             mockMACHandlerCallbacks.onSendFrame = vi.fn();
         });
     });
 
-    /**
-     * Zigbee Spec 05-3474-23 §4.4.5: APS Remove Device Command
-     * Remove device command SHALL instruct a device to remove a child.
-     */
     describe("APS Remove Device Command (Zigbee §4.4.5)", () => {
         const parent16 = 0x2a2b;
         const parent64 = 0x00124b00aaaafff1n;
@@ -1469,95 +1416,8 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
 
             mockMACHandlerCallbacks.onSendFrame = vi.fn();
         });
-
-        it("processes remove device command by issuing leave and clearing child state", async () => {
-            const frames: Buffer[] = [];
-            mockMACHandlerCallbacks.onSendFrame = vi.fn((payload: Buffer) => {
-                frames.push(Buffer.from(payload));
-                return Promise.resolve();
-            });
-
-            const child16 = 0x4d4e;
-            const child64 = 0x00124b00cccddaa1n;
-            registerNeighborDevice(context, child16, child64);
-
-            const payload = Buffer.alloc(1 + 8);
-            payload.writeUInt8(ZigbeeAPSCommandId.REMOVE_DEVICE, 0);
-            payload.writeBigUInt64LE(child64, 1);
-
-            const macHeader: MACHeader = {
-                frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
-                sequenceNumber: 0x50,
-                destinationPANId: netParams.panId,
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source16: parent16,
-                commandId: undefined,
-                fcs: 0,
-            };
-            const nwkHeader: ZigbeeNWKHeader = {
-                frameControl: {
-                    frameType: ZigbeeNWKFrameType.DATA,
-                    protocolVersion: ZigbeeNWKConsts.VERSION_2007,
-                    discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
-                    multicast: false,
-                    security: true,
-                    sourceRoute: false,
-                    extendedDestination: false,
-                    extendedSource: true,
-                    endDeviceInitiator: false,
-                },
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source16: parent16,
-                source64: parent64,
-                radius: 3,
-                seqNum: 0x51,
-            };
-            const apsHeader: ZigbeeAPSHeader = {
-                frameControl: {
-                    frameType: ZigbeeAPSFrameType.CMD,
-                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
-                    ackFormat: false,
-                    security: true,
-                    ackRequest: true,
-                    extendedHeader: false,
-                },
-                counter: 0x52,
-            };
-
-            await apsHandler.processCommand(payload, macHeader, nwkHeader, apsHeader);
-
-            expect(frames).toHaveLength(1);
-            const leaveFrame = decodeMACFramePayload(frames[0]!);
-            const leaveMacPayload = leaveFrame.buffer.subarray(leaveFrame.payloadOffset, leaveFrame.buffer.length - 2);
-            const [leaveNwkFrameControl, leaveOffset] = decodeZigbeeNWKFrameControl(leaveMacPayload, 0);
-            const [leaveNwkHeader, leavePayloadOffset] = decodeZigbeeNWKHeader(leaveMacPayload, leaveOffset, leaveNwkFrameControl);
-            const leavePayload = decodeZigbeeNWKPayload(
-                leaveMacPayload,
-                leavePayloadOffset,
-                undefined,
-                context.netParams.eui64,
-                leaveNwkFrameControl,
-                leaveNwkHeader,
-            );
-
-            expect(leaveNwkFrameControl.frameType).toStrictEqual(ZigbeeNWKFrameType.CMD);
-            expect(leaveNwkFrameControl.security).toStrictEqual(true);
-            expect(leaveNwkHeader.destination16).toStrictEqual(child16);
-            expect(leavePayload.readUInt8(0)).toStrictEqual(ZigbeeNWKCommandId.LEAVE);
-            expect(leavePayload.readUInt8(1) & ZigbeeNWKConsts.CMD_LEAVE_OPTION_REQUEST).toStrictEqual(ZigbeeNWKConsts.CMD_LEAVE_OPTION_REQUEST);
-
-            expect(context.deviceTable.has(child64)).toStrictEqual(false);
-            expect(context.address16ToAddress64.has(child16)).toStrictEqual(false);
-            expect(mockStackContextCallbacks.onDeviceLeft).toHaveBeenCalledWith(child16, child64);
-
-            mockMACHandlerCallbacks.onSendFrame = vi.fn();
-        });
     });
 
-    /**
-     * Zigbee Spec 05-3474-23 §4.4.6: APS Request Key Command
-     * Request key command SHALL allow devices to request keys from TC.
-     */
     describe("APS Request Key Command (Zigbee §4.4.6)", () => {
         const requester16 = 0x6a6b;
         const requester64 = 0x00124b00abcdd001n;
@@ -1577,39 +1437,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
 
             return { nwkFrameControl, nwkHeader, apsFrameControl, apsHeader, apsPayload };
         }
-
-        it("encodes request key command payload with partner IEEE address for application link keys", async () => {
-            const partner64 = 0x00124b00ffffeeddn;
-
-            const frame = await captureMacFrame(
-                () => apsHandler.sendRequestKey(requester16, ZigbeeAPSConsts.CMD_KEY_APP_MASTER, partner64),
-                mockMACHandlerCallbacks,
-            );
-            const { nwkFrameControl, apsFrameControl, apsPayload } = decodeRequestKeyFrame(frame);
-
-            expect(nwkFrameControl.security).toStrictEqual(true);
-            expect(apsFrameControl.security).toStrictEqual(false);
-            expect(apsFrameControl.frameType).toStrictEqual(ZigbeeAPSFrameType.CMD);
-
-            expect(apsPayload.readUInt8(0)).toStrictEqual(ZigbeeAPSCommandId.REQUEST_KEY);
-            expect(apsPayload.readUInt8(1)).toStrictEqual(ZigbeeAPSConsts.CMD_KEY_APP_MASTER);
-            expect(apsPayload.length).toStrictEqual(2 + 8);
-            expect(apsPayload.readBigUInt64LE(2)).toStrictEqual(partner64);
-        });
-
-        it("encodes trust center link key requests without partner address", async () => {
-            const frame = await captureMacFrame(
-                () => apsHandler.sendRequestKey(requester16, ZigbeeAPSConsts.CMD_KEY_TC_LINK),
-                mockMACHandlerCallbacks,
-            );
-            const { nwkFrameControl, apsFrameControl, apsPayload } = decodeRequestKeyFrame(frame);
-
-            expect(nwkFrameControl.security).toStrictEqual(true);
-            expect(apsFrameControl.frameType).toStrictEqual(ZigbeeAPSFrameType.CMD);
-            expect(apsPayload.length).toStrictEqual(2);
-            expect(apsPayload.readUInt8(0)).toStrictEqual(ZigbeeAPSCommandId.REQUEST_KEY);
-            expect(apsPayload.readUInt8(1)).toStrictEqual(ZigbeeAPSConsts.CMD_KEY_TC_LINK);
-        });
 
         it("processes network key requests by unicasting the current network key", async () => {
             const frames: Buffer[] = [];
@@ -1813,10 +1640,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
         });
     });
 
-    /**
-     * Zigbee Spec 05-3474-23 §4.4.7-§4.4.8: APS Verify/Confirm Key Commands
-     * Verify key response SHALL deliver confirm key status to the requesting device.
-     */
     describe("APS Verify/Confirm Key Commands (Zigbee §4.4.7-§4.4.8)", () => {
         const device16 = 0x5b5c;
         const device64 = 0x00124b00deaddeadn;
@@ -2106,11 +1929,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
         });
     });
 
-    /**
-     * Zigbee Spec 05-3474-23 §4.4.7: APS Switch Key Command
-     * Switch key command SHALL trigger network key update.
-     */
-    describe("APS Switch Key Command (Zigbee §4.4.7)", () => {
+    describe("APS Switch Key Command (Zigbee §4.4.6)", () => {
         const router16 = 0x6c6d;
         const router64 = 0x00124b00abbaaddeen;
 
@@ -2145,130 +1964,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             expect(apsPayload.readUInt8(1)).toStrictEqual(nextSeq);
 
             mockMACHandlerCallbacks.onSendFrame = vi.fn();
-        });
-
-        it("activates pending network key, updates sequence number, and resets frame counter", async () => {
-            const frames: Buffer[] = [];
-            mockMACHandlerCallbacks.onSendFrame = vi.fn((payload: Buffer) => {
-                frames.push(Buffer.from(payload));
-                return Promise.resolve();
-            });
-
-            const originalKey = Buffer.from(context.netParams.networkKey);
-            context.netParams.networkKeyFrameCounter = 0x12345678;
-            context.netParams.networkKeySequenceNumber = 0x02;
-
-            const newKey = Buffer.from("112233445566778899aabbccddeeff00", "hex");
-            const newSeq = 0x0b;
-            const source16 = 0x4a4b;
-            const source64 = 0x00124b00cfde0001n;
-
-            const transportPayload = Buffer.alloc(1 + 1 + ZigbeeAPSConsts.CMD_KEY_LENGTH + 1 + 8 + 8);
-            let offset = 0;
-            transportPayload.writeUInt8(ZigbeeAPSCommandId.TRANSPORT_KEY, offset);
-            offset += 1;
-            transportPayload.writeUInt8(ZigbeeAPSConsts.CMD_KEY_STANDARD_NWK, offset);
-            offset += 1;
-            newKey.copy(transportPayload, offset);
-            offset += ZigbeeAPSConsts.CMD_KEY_LENGTH;
-            transportPayload.writeUInt8(newSeq, offset);
-            offset += 1;
-            transportPayload.writeBigUInt64LE(context.netParams.eui64, offset);
-            offset += 8;
-            transportPayload.writeBigUInt64LE(source64, offset);
-
-            const transportMac: MACHeader = {
-                frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
-                sequenceNumber: 0x70,
-                destinationPANId: netParams.panId,
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source16,
-                commandId: undefined,
-                fcs: 0,
-            };
-            const transportNWK: ZigbeeNWKHeader = {
-                frameControl: {
-                    frameType: ZigbeeNWKFrameType.DATA,
-                    protocolVersion: ZigbeeNWKConsts.VERSION_2007,
-                    discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
-                    multicast: false,
-                    security: false,
-                    sourceRoute: false,
-                    extendedDestination: false,
-                    extendedSource: true,
-                    endDeviceInitiator: false,
-                },
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source16,
-                source64,
-                radius: 5,
-                seqNum: 0x71,
-            };
-            const transportAPS: ZigbeeAPSHeader = {
-                frameControl: {
-                    frameType: ZigbeeAPSFrameType.CMD,
-                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
-                    ackFormat: false,
-                    security: false,
-                    ackRequest: false,
-                    extendedHeader: false,
-                },
-                counter: 0x72,
-            };
-
-            await apsHandler.processCommand(transportPayload, transportMac, transportNWK, transportAPS);
-
-            const switchPayload = Buffer.from([ZigbeeAPSCommandId.SWITCH_KEY, newSeq]);
-            const switchMac: MACHeader = {
-                frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
-                sequenceNumber: 0x73,
-                destinationPANId: netParams.panId,
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source16,
-                commandId: undefined,
-                fcs: 0,
-            };
-            const switchNWK: ZigbeeNWKHeader = {
-                frameControl: {
-                    frameType: ZigbeeNWKFrameType.DATA,
-                    protocolVersion: ZigbeeNWKConsts.VERSION_2007,
-                    discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
-                    multicast: false,
-                    security: false,
-                    sourceRoute: false,
-                    extendedDestination: false,
-                    extendedSource: true,
-                    endDeviceInitiator: false,
-                },
-                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                source16,
-                source64,
-                radius: 5,
-                seqNum: 0x74,
-            };
-            const switchAPS: ZigbeeAPSHeader = {
-                frameControl: {
-                    frameType: ZigbeeAPSFrameType.CMD,
-                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
-                    ackFormat: false,
-                    security: false,
-                    ackRequest: false,
-                    extendedHeader: false,
-                },
-                counter: 0x75,
-            };
-
-            await apsHandler.processCommand(switchPayload, switchMac, switchNWK, switchAPS);
-
-            expect(frames).toHaveLength(0);
-            expect(context.netParams.networkKey).toStrictEqual(newKey);
-            expect(context.netParams.networkKeySequenceNumber).toStrictEqual(newSeq);
-            expect(context.netParams.networkKeyFrameCounter).toStrictEqual(0);
-
-            mockMACHandlerCallbacks.onSendFrame = vi.fn();
-
-            // Ensure the old key is no longer active
-            expect(context.netParams.networkKey).not.toStrictEqual(originalKey);
         });
 
         it("ignores switch key commands when no pending key is staged", async () => {
@@ -2324,10 +2019,228 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
         });
     });
 
-    /**
-     * Zigbee Spec 05-3474-23 §2.2.11: APS Security
-     * APS security SHALL protect application data using link keys.
-     */
+    describe("APS Relay upstream/downstream Command (Zigbee  §4.4.11.9-4.4.11.10)", () => {
+        const unicastDest16 = 2594;
+        const destination64 = 0xe0797200018e6ebbn;
+
+        beforeEach(() => {
+            registerNeighborDevice(context, unicastDest16, destination64);
+        });
+
+        it("encodes relay downstream command", async () => {
+            const relayPayload = Buffer.from([0x09, 0x02, 0x01, 0x21]);
+            const relayHeader: ZigbeeAPSHeader = {
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: true,
+                    extendedHeader: false,
+                },
+                destEndpoint: 0x00,
+                clusterId: 0x0045,
+                profileId: 0x0000,
+                sourceEndpoint: 0x00,
+                counter: 9,
+            };
+            const relayAPSFrame = encodeZigbeeAPSFrame(relayHeader, relayPayload);
+
+            const frame = await captureMacFrame(
+                () => apsHandler.sendRelayMessageDownstream(unicastDest16, undefined, destination64, relayAPSFrame),
+                mockMACHandlerCallbacks,
+            );
+            const { apsFrameControl, apsPayload } = decodeAPSFrame(frame);
+
+            expect(apsFrameControl.frameType).toStrictEqual(ZigbeeAPSFrameType.CMD);
+            expect(apsFrameControl.deliveryMode).toStrictEqual(ZigbeeAPSDeliveryMode.UNICAST);
+            expect(apsFrameControl.security).toStrictEqual(false);
+            expect(apsFrameControl.ackRequest).toStrictEqual(false);
+
+            expect(apsPayload.readUInt8(0)).toStrictEqual(ZigbeeAPSCommandId.RELAY_MESSAGE_DOWNSTREAM);
+            expect(apsPayload.readUInt8(1)).toStrictEqual(0x00);
+            expect(apsPayload.readUInt8(2)).toStrictEqual(8 + relayAPSFrame.length - 1);
+
+            const [, localTlvs] = readZigbeeTlvs(apsPayload, 1);
+            const relayTlv = localTlvs.get(0x00);
+
+            expect(relayTlv).toBeDefined();
+            expect(relayTlv?.readBigUInt64LE(0)).toStrictEqual(destination64);
+            expect(relayTlv?.subarray(8)).toStrictEqual(relayAPSFrame);
+        });
+
+        it("processes relay upstream command", async () => {
+            const relayPayload = Buffer.from([0xaa, 0xbb, 0xcc]);
+            const relayHeader: ZigbeeAPSHeader = {
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: false,
+                    extendedHeader: false,
+                },
+                destEndpoint: 0x00,
+                clusterId: 0x0045,
+                profileId: 0x0000,
+                sourceEndpoint: 0x00,
+                counter: 18,
+            };
+            const relayAPSFrame = encodeZigbeeAPSFrame(relayHeader, relayPayload);
+
+            const payload = Buffer.allocUnsafe(1 + 2 + 8 + relayAPSFrame.length);
+            let offset = 0;
+            offset = payload.writeUInt8(ZigbeeAPSCommandId.RELAY_MESSAGE_UPSTREAM, offset);
+            offset = payload.writeUInt8(0x00, offset);
+            offset = payload.writeUInt8(8 + relayAPSFrame.length - 1, offset);
+            offset = payload.writeBigUInt64LE(destination64, offset);
+            relayAPSFrame.copy(payload, offset);
+
+            const macHeader: MACHeader = {
+                frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
+                sequenceNumber: 0x6a,
+                destinationPANId: netParams.panId,
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                source16: unicastDest16,
+                commandId: undefined,
+                fcs: 0,
+            };
+            const nwkHeader: ZigbeeNWKHeader = {
+                frameControl: {
+                    frameType: ZigbeeNWKFrameType.DATA,
+                    protocolVersion: ZigbeeNWKConsts.VERSION_2007,
+                    discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
+                    multicast: false,
+                    security: true,
+                    sourceRoute: false,
+                    extendedDestination: false,
+                    extendedSource: true,
+                    endDeviceInitiator: false,
+                },
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                source16: unicastDest16,
+                radius: 5,
+                seqNum: 0x6b,
+            };
+            const apsHeader: ZigbeeAPSHeader = {
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.CMD,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: true,
+                    ackRequest: true,
+                    extendedHeader: false,
+                },
+                counter: 0x6c,
+            };
+
+            await apsHandler.processCommand(payload, macHeader, nwkHeader, apsHeader);
+
+            expect(mockMACHandlerCallbacks.onSendFrame).not.toHaveBeenCalled();
+        });
+
+        it("sends relay downstream APS ACK for processed relay upstream command", async () => {
+            const relayPayload = Buffer.from([0x11, 0x22]);
+            const relayHeader: ZigbeeAPSHeader = {
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.DATA,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: false,
+                    ackRequest: true,
+                    extendedHeader: false,
+                },
+                destEndpoint: 0x00,
+                clusterId: 0x0045,
+                profileId: 0x0000,
+                sourceEndpoint: 0x00,
+                counter: 9,
+            };
+            const relayAPSFrame = encodeZigbeeAPSFrame(relayHeader, relayPayload);
+
+            const payload = Buffer.allocUnsafe(1 + 2 + 8 + relayAPSFrame.length);
+            let offset = 0;
+            offset = payload.writeUInt8(ZigbeeAPSCommandId.RELAY_MESSAGE_UPSTREAM, offset);
+            offset = payload.writeUInt8(0x00, offset);
+            offset = payload.writeUInt8(8 + relayAPSFrame.length - 1, offset);
+            offset = payload.writeBigUInt64LE(destination64, offset);
+            relayAPSFrame.copy(payload, offset);
+
+            const frames: Buffer[] = [];
+            mockMACHandlerCallbacks.onSendFrame = vi.fn((buffer: Buffer) => {
+                frames.push(Buffer.from(buffer));
+                return Promise.resolve();
+            });
+
+            const macHeader: MACHeader = {
+                frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
+                sequenceNumber: 0x6d,
+                destinationPANId: netParams.panId,
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                source16: unicastDest16,
+                commandId: undefined,
+                fcs: 0,
+            };
+            const nwkHeader: ZigbeeNWKHeader = {
+                frameControl: {
+                    frameType: ZigbeeNWKFrameType.DATA,
+                    protocolVersion: ZigbeeNWKConsts.VERSION_2007,
+                    discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
+                    multicast: false,
+                    security: true,
+                    sourceRoute: false,
+                    extendedDestination: false,
+                    extendedSource: true,
+                    endDeviceInitiator: false,
+                },
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                source16: unicastDest16,
+                radius: 5,
+                seqNum: 0x6e,
+            };
+            const apsHeader: ZigbeeAPSHeader = {
+                frameControl: {
+                    frameType: ZigbeeAPSFrameType.CMD,
+                    deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                    ackFormat: false,
+                    security: true,
+                    ackRequest: true,
+                    extendedHeader: false,
+                },
+                counter: 0x6f,
+            };
+
+            await apsHandler.processCommand(payload, macHeader, nwkHeader, apsHeader);
+
+            expect(frames).toHaveLength(1);
+
+            const relayDownstream = decodeMACFramePayload(frames[0]!);
+            const { apsFrameControl, apsPayload } = decodeAPSFrame(relayDownstream);
+
+            expect(apsFrameControl.frameType).toStrictEqual(ZigbeeAPSFrameType.CMD);
+            expect(apsPayload.readUInt8(0)).toStrictEqual(ZigbeeAPSCommandId.RELAY_MESSAGE_DOWNSTREAM);
+
+            const [, localTlvs] = readZigbeeTlvs(apsPayload, 1);
+            const relayTlv = localTlvs.get(0x00);
+
+            expect(relayTlv).toBeDefined();
+            expect(relayTlv?.readBigUInt64LE(0)).toStrictEqual(destination64);
+
+            const [innerFC, innerOffset] = decodeZigbeeAPSFrameControl(relayTlv!, 8);
+            const [innerHeader, innerHeaderOffset] = decodeZigbeeAPSHeader(relayTlv!, innerOffset, innerFC);
+            const innerPayload = decodeZigbeeAPSPayload(relayTlv!, innerHeaderOffset, undefined, context.netParams.eui64, innerFC, innerHeader);
+
+            expect(innerFC.frameType).toStrictEqual(ZigbeeAPSFrameType.ACK);
+            expect(innerFC.ackRequest).toStrictEqual(false);
+            expect(innerHeader.counter).toStrictEqual(relayHeader.counter);
+            expect(innerHeader.destEndpoint).toStrictEqual(relayHeader.sourceEndpoint);
+            expect(innerHeader.sourceEndpoint).toStrictEqual(relayHeader.destEndpoint);
+            expect(innerHeader.clusterId).toStrictEqual(relayHeader.clusterId);
+            expect(innerHeader.profileId).toStrictEqual(relayHeader.profileId);
+            expect(innerPayload.length).toStrictEqual(0);
+        });
+    });
+
     describe("APS Security (Zigbee §2.2.11)", () => {
         const child16 = 0x8c8d;
         const child64 = 0x00124b00ff001122n;
@@ -2452,6 +2365,10 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             expect(decoded.apsPayload.subarray(2, 2 + ZigbeeAPSConsts.CMD_KEY_LENGTH)).toStrictEqual(appLinkKey);
             const initiatorFlagOffset = 2 + ZigbeeAPSConsts.CMD_KEY_LENGTH + 8;
             expect(decoded.apsPayload.readUInt8(initiatorFlagOffset)).toStrictEqual(1);
+            // local TLV: Link-Key Features & Capabilities
+            expect(decoded.apsPayload.readUInt8(initiatorFlagOffset + 1)).toStrictEqual(0x00);
+            expect(decoded.apsPayload.readUInt8(initiatorFlagOffset + 2)).toStrictEqual(0x00);
+            expect(decoded.apsPayload.readUInt8(initiatorFlagOffset + 3)).toStrictEqual(0b00000001);
         });
 
         it("fails to decrypt APS frames when the trust center link key hash is incorrect", async () => {
@@ -2490,10 +2407,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
         });
     });
 
-    /**
-     * Zigbee Spec 05-3474-23 §2.2.12: Fragmentation
-     * APS fragmentation SHALL split large payloads across multiple frames.
-     */
     describe("APS Fragmentation (Zigbee §2.2.12)", () => {
         const fragmentDest16 = 0x4321;
         const fragmentDest64 = 0x00124b00ffee9911n;
@@ -2510,20 +2423,10 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             counter: number,
             nwkSeqNum: number,
         ): {
-            mac: MACHeader;
             nwk: ZigbeeNWKHeader;
             aps: ZigbeeAPSHeader;
         } {
             return {
-                mac: {
-                    frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
-                    sequenceNumber: (0x70 + nwkSeqNum) & 0xff,
-                    destinationPANId: netParams.panId,
-                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                    source16: fragmentDest16,
-                    commandId: undefined,
-                    fcs: 0,
-                },
                 nwk: {
                     frameControl: {
                         frameType: ZigbeeNWKFrameType.DATA,
@@ -2586,7 +2489,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             for (;;) {
                 const priorCount = frames.length;
                 const ack = buildAck(apsCounter, ackSeq);
-                await apsHandler.processFrame(Buffer.alloc(0), ack.mac, ack.nwk, ack.aps, lqa);
+                await apsHandler.resolvePendingAck(ack.nwk, ack.aps);
 
                 if (frames.length === priorCount) {
                     break;
@@ -2730,7 +2633,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
                     radius: 6,
                     seqNum: (0x90 + block) & 0xff,
                 };
-
                 const inboundAPS: ZigbeeAPSHeader = {
                     frameControl: {
                         frameType: ZigbeeAPSFrameType.DATA,
@@ -2774,10 +2676,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
         });
     });
 
-    /**
-     * Zigbee Spec 05-3474-23 §2.4: APS Constants
-     * APS layer SHALL enforce specified constants.
-     */
     describe("APS Constants (Zigbee §2.4)", () => {
         it("waits apsAckWaitDuration before retrying pending unicast data", async () => {
             vi.useFakeTimers();
@@ -2817,15 +2715,6 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
 
                 const firstTx = decodeAPSFrame(decodeMACFramePayload(sentFrames[0]!));
 
-                const ackMacHeader: MACHeader = {
-                    frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
-                    sequenceNumber: 0x90,
-                    destinationPANId: netParams.panId,
-                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
-                    source16: device16,
-                    commandId: undefined,
-                    fcs: 0,
-                };
                 const ackNwkHeader: ZigbeeNWKHeader = {
                     frameControl: {
                         frameType: ZigbeeNWKFrameType.DATA,
@@ -2860,7 +2749,7 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
                     counter: apsCounter,
                 };
 
-                await apsHandler.processFrame(Buffer.alloc(0), ackMacHeader, ackNwkHeader, ackAPSHeader, 0x60);
+                await apsHandler.resolvePendingAck(ackNwkHeader, ackAPSHeader);
 
                 await vi.runOnlyPendingTimersAsync();
                 expect(sentFrames).toHaveLength(2);
