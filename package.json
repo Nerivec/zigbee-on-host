@@ -45,7 +45,7 @@
         "@types/node": "^24.10.9",
         "@vitest/coverage-v8": "^4.1.6",
         "serialport": "^13.0.0",
-        "typescript": "^5.9.3",
+        "typescript": "^6.0.3",
         "vitest": "^4.0.18"
     }
 }
