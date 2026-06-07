@@ -68,6 +68,7 @@ describe("NWK Handler", () => {
             onAPSSendTransportKeyNWK: vi.fn().mockResolvedValue(undefined),
             onMarkRouteSuccess: vi.fn(),
             onMarkRouteFailure: vi.fn(),
+            onSrcMatchUpdate: vi.fn(),
         };
 
         mockMACHandler = new MACHandler(mockContext, mockMACCallbacks, 99999);

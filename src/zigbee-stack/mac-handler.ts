@@ -31,6 +31,13 @@ export interface MACHandlerCallbacks {
     onMarkRouteSuccess: (destination16: number) => void;
     /** Called to mark route as failed */
     onMarkRouteFailure: (destination16: number) => void;
+    /**
+     * Called whenever the set of devices with MAC-layer data pending changes (a pending association
+     * is added/removed, or an indirect-transmission queue becomes non-empty/empty), so the driver can
+     * sync the RCP source-match table. This governs the Frame Pending bit of the RCP's hardware
+     * auto-ACK to a device's data request poll, which the host cannot set per-poll.
+     */
+    onSrcMatchUpdate: () => Promise<void>;
 }
 
 /**
@@ -173,6 +180,11 @@ export class MACHandler {
                         () => `=|=> MAC[seqNum=${seqNum} dst=${dest16}:${dest64}] set for indirect transmission (count=${addrTXs.length})`,
                         NS,
                     );
+
+                    // queue just became non-empty: device now has data pending -> Frame Pending = 1 on its poll ACK
+                    if (addrTXs.length === 1) {
+                        await this.#callbacks.onSrcMatchUpdate();
+                    }
 
                     return; // done
                 }
@@ -356,6 +368,10 @@ export class MACHandler {
                 },
                 timestamp: Date.now(),
             });
+
+            // register the joiner as data-pending so its association-poll ACK carries Frame Pending = 1,
+            // keeping it awake for the indirect association response
+            await this.#callbacks.onSrcMatchUpdate();
         }
 
         return offset;
@@ -564,6 +580,10 @@ export class MACHandler {
 
                 // always delete, ensures no stale
                 this.#context.pendingAssociations.delete(address64);
+
+                // association poll handled: drop the joiner from the pending set (its poll ACK already
+                // carried Frame Pending = 1; it now has its short address)
+                await this.#callbacks.onSrcMatchUpdate();
             } else {
                 const addrTXs = this.#context.indirectTransmissions.get(address64);
 
@@ -579,6 +599,11 @@ export class MACHandler {
 
                         tx = addrTXs.shift();
                     } while (tx !== undefined);
+
+                    // queue drained: no more data pending for this device -> Frame Pending = 0 on its next poll ACK
+                    if (addrTXs.length === 0) {
+                        await this.#callbacks.onSrcMatchUpdate();
+                    }
                 }
             }
         }

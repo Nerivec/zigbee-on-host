@@ -125,6 +125,9 @@ export class OTRCPDriver {
             onMarkRouteFailure: (destination16) => {
                 this.nwkHandler.markRouteFailure(destination16);
             },
+            onSrcMatchUpdate: async () => {
+                await this.updateSrcMatchTable();
+            },
         };
 
         this.macHandler = new MACHandler(this.context, macCallbacks, SpinelStatus.NO_ACK, emitMACFrames);
@@ -354,6 +357,39 @@ export class OTRCPDriver {
         await this.sendCommand(SpinelCommandId.PROP_VALUE_SET, payload, true, timeout);
     }
 
+    /**
+     * Sync the RCP source-match (pending) table with the set of devices that currently have data
+     * pending at the MAC layer: devices awaiting an association response, plus devices with a
+     * non-empty indirect-transmission queue. While a device's extended address is in the table, the
+     * RCP hardware sets Frame Pending = 1 in its auto-ACK to that device's data request poll, keeping
+     * the device awake to receive the indirect frame.
+     *
+     * This must be managed explicitly: the hardware auto-ACK is emitted by the RCP before the poll is
+     * handed to the host, so the host cannot set Frame Pending per-poll, only by pre-loading the
+     * source-match table. Relying on the RCP's default pending behaviour is not portable -- e.g. the
+     * ESP32 OpenThread RCP enters an enhanced pending mode with an empty table after a stack reset,
+     * yielding Frame Pending = 0 for every poll, which breaks association and indirect delivery.
+     */
+    public async updateSrcMatchTable(): Promise<void> {
+        const entries = new Set<bigint>(this.context.pendingAssociations.keys());
+
+        for (const [address64, txs] of this.context.indirectTransmissions) {
+            if (txs.length > 0) {
+                entries.add(address64);
+            }
+        }
+
+        const [data, offset] = writePropertyId(SpinelPropertyId.MAC_SRC_MATCH_EXTENDED_ADDRESSES, entries.size * 8);
+        let o = offset;
+
+        for (const address64 of entries) {
+            data.writeBigUInt64BE(address64, o);
+            o += 8;
+        }
+
+        await this.setProperty(data);
+    }
+
     public async sendStreamRaw(payload: Buffer): Promise<void> {
         await this.setProperty(writePropertyStreamRaw(payload, this.#streamRawConfig));
     }
@@ -571,6 +607,11 @@ export class OTRCPDriver {
 
         await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RX_ON_WHEN_IDLE_MODE, true));
         await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, true));
+
+        // Manage the source-match table ourselves (see `updateSrcMatchTable`) instead of relying on the
+        // RCP's default pending behaviour. The table is filled per-device as data becomes pending; it
+        // starts empty after the reset performed during `start`.
+        await this.setProperty(writePropertyb(SpinelPropertyId.MAC_SRC_MATCH_ENABLED, true));
 
         const txPower = await this.getPHYTXPower();
         const radioRSSI = await this.getPHYRSSI();
