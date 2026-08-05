@@ -99,6 +99,7 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             onAPSSendTransportKeyNWK: vi.fn(),
             onMarkRouteSuccess: vi.fn(),
             onMarkRouteFailure: vi.fn(),
+            onSrcMatchUpdate: vi.fn(),
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),

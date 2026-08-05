@@ -16,6 +16,7 @@ import {
     writePropertyb,
     writePropertyC,
     writePropertyc,
+    writePropertyId,
     writePropertyS,
 } from "../../src/spinel/spinel.js";
 import { SpinelStatus } from "../../src/spinel/statuses.js";
@@ -165,10 +166,11 @@ const FORM_FRAMES_SILABS = {
     mac154PANId: "7e8c0636d98579727e",
     macRxOnWhenIdleMode: "7e8d060000e68c7e",
     macRawStreamEnabled: "7e8e06370108437e",
-    phyTxPowerGet: "7e8106257d3343647e",
-    phyRSSIGet: "7e820626983d517e",
-    phyRXSensitivityGet: "7e8306279c7a127e",
-    phyCCAThresholdGet: "7e840624b5f0d37e",
+    macSrcMatchEnabled: "7e81068326011e807e",
+    phyTxPowerGet: "7e8206257d338e417e",
+    phyRSSIGet: "7e83062698864d7e",
+    phyRXSensitivityGet: "7e8406279c5b457e",
+    phyCCAThresholdGet: "7e850624b54bcf7e",
 };
 /** OPENTHREAD/1.4.0-Koenkk-2025.2.1; CC13XX_CC26XX; Feb  3 2025 21:00:02 */
 const FORM_FRAMES_TI = {
@@ -180,10 +182,11 @@ const FORM_FRAMES_TI = {
     mac154PANId: "7e8c0636d9c57d5d307e",
     macRxOnWhenIdleMode: "7e8d060000e68c7e",
     macRawStreamEnabled: "7e8e06370108437e",
-    phyTxPowerGet: "7e81062505f47d317e",
-    phyRSSIGet: "7e820626ef05567e",
-    phyRXSensitivityGet: "7e830627a6a38c7e",
-    phyCCAThresholdGet: "7e8406000297567e",
+    macSrcMatchEnabled: "7e81068326011e807e",
+    phyTxPowerGet: "7e8206250539347e",
+    phyRSSIGet: "7e830626efbe4a7e",
+    phyRXSensitivityGet: "7e840627a682db7e",
+    phyCCAThresholdGet: "7e850600022c4a7e",
 };
 // /** SL-OPENTHREAD/2.5.2.0_GitHub-1fceb225b; EFR32; Mar 19 2025 13:45:44 */
 // const STOP_FRAMES_SILABS = {
@@ -312,6 +315,7 @@ describe("OT RCP Driver", () => {
                 frames.mac154PANId,
                 frames.macRxOnWhenIdleMode,
                 frames.macRawStreamEnabled,
+                frames.macSrcMatchEnabled,
                 frames.phyTxPowerGet,
                 frames.phyRSSIGet,
                 frames.phyRXSensitivityGet,
@@ -462,6 +466,47 @@ describe("OT RCP Driver", () => {
             if (driver) {
                 rmSync(saveDir, { force: true, recursive: true });
             }
+        });
+
+        it("syncs the source-match table with pending associations and non-empty indirect queues", async () => {
+            const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
+            const pendingJoiner = 0x1122334455667788n;
+            const indirectChild = 0x99aabbccddeeff00n;
+            const idleChild = 0x0102030405060708n;
+
+            driver.context.pendingAssociations.set(pendingJoiner, { sendResp: async () => {}, timestamp: Date.now() });
+            // non-empty queue -> data pending -> included
+            driver.context.indirectTransmissions.set(indirectChild, [{ sendFrame: async () => true, timestamp: Date.now() }]);
+            // empty queue -> nothing pending -> excluded
+            driver.context.indirectTransmissions.set(idleChild, []);
+
+            await driver.updateSrcMatchTable();
+
+            expect(setPropertySpy).toHaveBeenCalledTimes(1);
+
+            const payload = setPropertySpy.mock.calls[0][0];
+            const [, offset] = writePropertyId(SpinelPropertyId.MAC_SRC_MATCH_EXTENDED_ADDRESSES, 0);
+            // property id prefix matches
+            expect(payload.subarray(0, offset)).toStrictEqual(writePropertyId(SpinelPropertyId.MAC_SRC_MATCH_EXTENDED_ADDRESSES, 0)[0]);
+
+            const got = new Set<bigint>();
+            for (let o = offset; o < payload.byteLength; o += 8) {
+                got.add(payload.readBigUInt64BE(o));
+            }
+
+            expect(got).toStrictEqual(new Set([pendingJoiner, indirectChild]));
+        });
+
+        it("clears the source-match table when nothing is pending", async () => {
+            const setPropertySpy = vi.spyOn(driver, "setProperty").mockResolvedValue();
+
+            await driver.updateSrcMatchTable();
+
+            expect(setPropertySpy).toHaveBeenCalledTimes(1);
+            // property id only, no addresses
+            const [emptySet, offset] = writePropertyId(SpinelPropertyId.MAC_SRC_MATCH_EXTENDED_ADDRESSES, 0);
+            expect(setPropertySpy.mock.calls[0][0]).toStrictEqual(emptySet);
+            expect(setPropertySpy.mock.calls[0][0].byteLength).toStrictEqual(offset);
         });
 
         it("handles loading with given network params - first start", async () => {
@@ -2117,13 +2162,19 @@ describe("OT RCP Driver", () => {
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_ASSOC_REQ_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
+            // SRC_MATCH add (pending association) => OK
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 1), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_DATA_RQ_FROM_DEVICE), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // ASSOC_RSP => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 1), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 2), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // TRANSPORT_KEY NWK => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 2), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 3), "utf8", () => {});
+            await vi.advanceTimersByTimeAsync(10);
+            // SRC_MATCH remove (association poll handled) => OK
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 4), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             expect(savePeriodicStateSpy).toHaveBeenCalledTimes(1);
@@ -2151,10 +2202,10 @@ describe("OT RCP Driver", () => {
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_NODE_DESC_REQ_FROM_DEVICE, Buffer.from([0xce, 0xff, 0x00, 0x00])), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // node desc APS ACK => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 3), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 5), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // node desc RESP => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 4), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 6), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             driver.parser._transform(
@@ -2164,13 +2215,13 @@ describe("OT RCP Driver", () => {
             );
             await vi.advanceTimersByTimeAsync(10);
             // TRANSPORT_KEY TC => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 5), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 7), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             driver.parser._transform(makeSpinelStreamRaw(1, NET2_VERIFY_KEY_TC_FROM_DEVICE, Buffer.from([0xd5, 0xff, 0x00, 0x00])), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
             // CONFIRM_KEY => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 6), "utf8", () => {});
+            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 8), "utf8", () => {});
             await vi.advanceTimersByTimeAsync(10);
 
             expect(driver.context.deviceTable.get(11871832136131022815n)).toStrictEqual({

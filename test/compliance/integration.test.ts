@@ -117,6 +117,7 @@ describe("Integration and End-to-End Compliance", () => {
             onAPSSendTransportKeyNWK: vi.fn(),
             onMarkRouteSuccess: vi.fn(),
             onMarkRouteFailure: vi.fn(),
+            onSrcMatchUpdate: vi.fn(),
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),

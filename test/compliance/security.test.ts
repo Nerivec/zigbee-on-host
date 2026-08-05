@@ -121,6 +121,7 @@ describe("Zigbee 3.0 Security Compliance", () => {
             onAPSSendTransportKeyNWK: vi.fn(),
             onMarkRouteSuccess: vi.fn(),
             onMarkRouteFailure: vi.fn(),
+            onSrcMatchUpdate: vi.fn(),
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),

@@ -94,6 +94,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             onAPSSendTransportKeyNWK: vi.fn(),
             onMarkRouteSuccess: vi.fn(),
             onMarkRouteFailure: vi.fn(),
+            onSrcMatchUpdate: vi.fn(),
         };
         mockNWKHandlerCallbacks = {
             onAPSSendTransportKeyNWK: vi.fn(),

@@ -85,6 +85,7 @@ describe("MACHandler", () => {
             onAPSSendTransportKeyNWK: vi.fn().mockResolvedValue(undefined),
             onMarkRouteSuccess: vi.fn(),
             onMarkRouteFailure: vi.fn(),
+            onSrcMatchUpdate: vi.fn(),
         };
 
         macHandler = new MACHandler(mockContext, mockCallbacks, NO_ACK_CODE);

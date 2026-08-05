@@ -71,6 +71,7 @@ const setup = () => {
         onAPSSendTransportKeyNWK: () => Promise.resolve(),
         onMarkRouteSuccess: () => {},
         onMarkRouteFailure: () => {},
+        onSrcMatchUpdate: async () => {},
     };
 
     macHandler = new MACHandler(context, macCallbacks, NO_ACK_CODE);
