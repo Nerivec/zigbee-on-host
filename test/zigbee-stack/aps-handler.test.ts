@@ -1305,7 +1305,7 @@ describe("APS Handler", () => {
 
             await apsHandler.processVerifyKey(data, 0, macHeader, nwkHeader, apsHeader);
 
-            expect(sendSpy).toHaveBeenCalledWith(device16, 0x00, 0x04, device64); // SUCCESS
+            expect(sendSpy).toHaveBeenCalledWith(device16, 0x00, 0x04, device64, undefined); // SUCCESS, no device key issued
             sendSpy.mockRestore();
         });
 
@@ -1329,7 +1329,7 @@ describe("APS Handler", () => {
 
             await apsHandler.processVerifyKey(data, 0, macHeader, nwkHeader, apsHeader);
 
-            expect(sendSpy).toHaveBeenCalledWith(device16, 0xad, 0x04, device64); // SECURITY_FAILURE
+            expect(sendSpy).toHaveBeenCalledWith(device16, 0xad, 0x04, device64, undefined); // SECURITY_FAILURE, no device key issued
             sendSpy.mockRestore();
         });
 
@@ -1353,7 +1353,7 @@ describe("APS Handler", () => {
 
             await apsHandler.processVerifyKey(data, 0, macHeader, nwkHeader, apsHeader);
 
-            expect(sendSpy).toHaveBeenCalledWith(device16, 0xa3, 0x02, device64); // ILLEGAL_REQUEST
+            expect(sendSpy).toHaveBeenCalledWith(device16, 0xa3, 0x02, device64, undefined); // ILLEGAL_REQUEST, no device key issued
             sendSpy.mockRestore();
         });
 
@@ -1377,7 +1377,7 @@ describe("APS Handler", () => {
 
             await apsHandler.processVerifyKey(data, 0, macHeader, nwkHeader, apsHeader);
 
-            expect(sendSpy).toHaveBeenCalledWith(device16, 0xaa, 0x99, device64); // NOT_SUPPORTED
+            expect(sendSpy).toHaveBeenCalledWith(device16, 0xaa, 0x99, device64, undefined); // NOT_SUPPORTED, no device key issued
             sendSpy.mockRestore();
         });
 

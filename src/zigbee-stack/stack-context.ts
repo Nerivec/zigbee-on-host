@@ -103,6 +103,19 @@ export type TrustCenterPolicies = {
     allowRejoinsWithWellKnownKey: boolean;
     /** This value controls whether devices are allowed to request a Trust Center Link Key after they have joined the network. */
     allowTCKeyRequest: TrustCenterKeyRequestPolicy;
+    /**
+     * When TRUE, a Trust Center Link Key request is answered with a key generated for
+     * that device alone, which is what Zigbee 3.0 requires (05-3474-23 #4.6.3.6, BDB #10.2).
+     * When FALSE, every requester is given the global `tcKey`.
+     *
+     * A device that receives the well-known global key in answer to its request has been
+     * given a key every other device already holds. A conformant Zigbee 3.0 joiner treats
+     * that as a failed key update: it decrypts the transport, acknowledges it, and then
+     * leaves the network - which looks from outside like a device that cannot join at all.
+     *
+     * Defaults to FALSE to preserve existing behaviour on upgrade.
+     */
+    issueUniqueTCLinkKeys: boolean;
     /** This policy indicates whether a node on the network that transmits a ZDO Mgmt_Permit_Join with a significance set to 1 is allowed to effect the local Trust Center’s policies. */
     allowRemoteTCPolicyChange: boolean;
     /** This value determines how the Trust Center SHALL handle attempts to request an application link key with a partner node. */
@@ -388,6 +401,7 @@ export class StackContext {
         allowJoins: false,
         installCode: InstallCodePolicy.NOT_REQUIRED,
         allowRejoinsWithWellKnownKey: true,
+        issueUniqueTCLinkKeys: false,
         allowTCKeyRequest: TrustCenterKeyRequestPolicy.ALLOWED,
         networkKeyUpdatePeriod: 0, // disable
         networkKeyUpdateMethod: NetworkKeyUpdateMethod.BROADCAST,
