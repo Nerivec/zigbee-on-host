@@ -579,6 +579,54 @@ export class NWKHandler {
         return false;
     }
 
+    /**
+     * 05-3474-23 #3.6.3.3 (Source routing tables)
+     *
+     * Add a source route for a destination, or refresh the existing entry when that path is already known.
+     *
+     * A device that keeps confirming the same path must keep that path alive: without refreshing `lastUpdated`,
+     * the entry ages out of `findBestSourceRoute` after CONFIG_NWK_ROUTE_EXPIRY_TIME while the device is still
+     * reporting it, and every frame to that destination falls back to direct until discovery runs again.
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Matches on the relay hop list, which is the identity of a path; refreshes cost, age and failure count on a match
+     * - ✅ Accepts optional pre-fetched entry array to avoid redundant map lookups
+     * - ⚠️  Formally spec route table holds single entry per destination; this helper assumes multi-entry model
+     * DEVICE SCOPE: Coordinator, routers (N/A)
+     */
+    public upsertSourceRoute(address16: number, newEntry: SourceRouteTableEntry, existingEntries?: SourceRouteTableEntry[]): void {
+        const entries = existingEntries ?? this.#context.sourceRouteTable.get(address16);
+
+        if (entries === undefined) {
+            this.#context.sourceRouteTable.set(address16, [newEntry]);
+
+            return;
+        }
+
+        for (const existingEntry of entries) {
+            if (newEntry.relayAddresses.length === existingEntry.relayAddresses.length) {
+                let matching = true;
+
+                for (let i = 0; i < newEntry.relayAddresses.length; i++) {
+                    if (newEntry.relayAddresses[i] !== existingEntry.relayAddresses[i]) {
+                        matching = false;
+                        break;
+                    }
+                }
+
+                if (matching) {
+                    existingEntry.pathCost = newEntry.pathCost;
+                    existingEntry.lastUpdated = newEntry.lastUpdated;
+                    existingEntry.failureCount = 0;
+
+                    return;
+                }
+            }
+        }
+
+        entries.push(newEntry);
+    }
+
     // #endregion
 
     // #region Commands
@@ -939,27 +987,9 @@ export class NWKHandler {
             }
 
             const routeEntry = this.createSourceRouteEntry(nextHopCandidates, pathCost === 0 ? nextHopCandidates.length + 1 : pathCost);
-            const existingEntries = this.#context.sourceRouteTable.get(responder16);
 
-            if (existingEntries === undefined) {
-                this.#context.sourceRouteTable.set(responder16, [routeEntry]);
-            } else {
-                const existingIndex = existingEntries.findIndex(
-                    (entry) =>
-                        entry.relayAddresses.length === routeEntry.relayAddresses.length &&
-                        entry.relayAddresses.every((relay, idx) => relay === routeEntry.relayAddresses[idx]),
-                );
-
-                if (existingIndex !== -1) {
-                    const existingEntry = existingEntries[existingIndex];
-                    existingEntry.pathCost = routeEntry.pathCost;
-                    existingEntry.lastUpdated = routeEntry.lastUpdated;
-                    existingEntry.failureCount = 0;
-                } else if (!this.hasSourceRoute(responder16, routeEntry, existingEntries)) {
-                    // TODO: do we want this here?
-                    existingEntries.push(routeEntry);
-                }
-            }
+            // TODO: do we want this here?
+            this.upsertSourceRoute(responder16, routeEntry);
 
             this.markRouteSuccess(responder16);
         }
@@ -1213,7 +1243,7 @@ export class NWKHandler {
      * - ✅ Stores source route in sourceRouteTable
      * - ✅ Creates source route entry with relays and path cost (relayCount + 1)
      * - ✅ Handles missing source16 by looking up via source64
-     * - ✅ Checks for duplicate routes before adding (hasSourceRoute)
+     * - ✅ Refreshes the known path, or adds it when new (upsertSourceRoute)
      * - ✅ ROUTE_RECORD provides path from source to coordinator
      *       - Relay list is in order from source toward coordinator ✅
      *       - Path cost calculation (relayCount + 1) is correct ✅
@@ -1256,14 +1286,7 @@ export class NWKHandler {
                 : nwkHeader.source16;
 
         if (source16 !== undefined) {
-            const entry = this.createSourceRouteEntry(relays, relayCount + 1);
-            const entries = this.#context.sourceRouteTable.get(source16);
-
-            if (entries === undefined) {
-                this.#context.sourceRouteTable.set(source16, [entry]);
-            } else if (!this.hasSourceRoute(source16, entry, entries)) {
-                entries.push(entry);
-            }
+            this.upsertSourceRoute(source16, this.createSourceRouteEntry(relays, relayCount + 1));
         }
 
         return offset;
@@ -1495,27 +1518,8 @@ export class NWKHandler {
                     address === ZigbeeConsts.COORDINATOR_ADDRESS
                         ? this.createSourceRouteEntry([], pathCost)
                         : this.createSourceRouteEntry([address], pathCost + 1);
-                const entries = this.#context.sourceRouteTable.get(device.address16);
 
-                if (entries === undefined) {
-                    this.#context.sourceRouteTable.set(device.address16, [entry]);
-                } else {
-                    // check if we already have this route; if so, update it
-                    const existingIndex = entries.findIndex(
-                        (e) =>
-                            e.relayAddresses.length === entry.relayAddresses.length &&
-                            e.relayAddresses.every((relay, idx) => relay === entry.relayAddresses[idx]),
-                    );
-
-                    if (existingIndex !== -1) {
-                        // update existing route with new cost and reset failure count
-                        entries[existingIndex].pathCost = entry.pathCost;
-                        entries[existingIndex].lastUpdated = entry.lastUpdated;
-                        entries[existingIndex].failureCount = 0;
-                    } else if (!this.hasSourceRoute(device.address16, entry, entries)) {
-                        entries.push(entry);
-                    }
-                }
+                this.upsertSourceRoute(device.address16, entry);
             }
         }
 
