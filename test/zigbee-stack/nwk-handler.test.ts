@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { logger } from "../../src/utils/logger.js";
-import { MACAssociationStatus, type MACCapabilities, type MACHeader } from "../../src/zigbee/mac.js";
+import { MACAssociationStatus, type MACCapabilities, type MACHeader, ZigbeeMACConsts } from "../../src/zigbee/mac.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import { ZigbeeNWKCommandId, ZigbeeNWKConsts, type ZigbeeNWKHeader } from "../../src/zigbee/zigbee-nwk.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
@@ -1291,6 +1291,41 @@ describe("NWK Handler", () => {
 
         expect(sendRouteReplySpy).toHaveBeenCalledOnce();
         expect(sendRouteReplySpy.mock.calls[0][6]).toStrictEqual(destination64);
+        sendRouteReplySpy.mockRestore();
+    });
+
+    it("unicasts the route reply back to the neighbour that broadcast the request", async () => {
+        const sendRouteReplySpy = vi.spyOn(nwkHandler, "sendRouteReply").mockResolvedValue(true);
+        const firstHop16 = 0x8e8d;
+        const payload = Buffer.alloc(1 + 1 + 1 + 2 + 1);
+        let offset = 0;
+        offset = payload.writeUInt8(ZigbeeNWKCommandId.ROUTE_REQ, offset);
+        offset = payload.writeUInt8(0, offset);
+        offset = payload.writeUInt8(0x99, offset);
+        offset = payload.writeUInt16LE(ZigbeeConsts.COORDINATOR_ADDRESS, offset);
+        payload.writeUInt8(0x00, offset);
+
+        await nwkHandler.processCommand(
+            payload,
+            {
+                frameControl: {},
+                // a route request is broadcast, so this is never the originator's address
+                destination16: ZigbeeMACConsts.BCAST_ADDR,
+                source16: firstHop16,
+                sequenceNumber: 42,
+            } as MACHeader,
+            {
+                frameControl: {},
+                source16: firstHop16,
+                source64: 0x00124b0011223344n,
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                radius: 30,
+                seqNum: 43,
+            } as ZigbeeNWKHeader,
+        );
+
+        expect(sendRouteReplySpy).toHaveBeenCalledOnce();
+        expect(sendRouteReplySpy.mock.calls[0][0]).toStrictEqual(firstHop16);
         sendRouteReplySpy.mockRestore();
     });
 

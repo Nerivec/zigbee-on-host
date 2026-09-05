@@ -874,7 +874,10 @@ export class NWKHandler {
 
         if (destination16 < ZigbeeConsts.BCAST_MIN) {
             await this.sendRouteReply(
-                macHeader.destination16!,
+                // the first hop back to the originator is the neighbour this request arrived from.
+                // a route request is broadcast, so `macHeader.destination16` is BCAST_DEFAULT here,
+                // and replying to it addresses the reply to the whole network instead of to the originator.
+                macHeader.source16!,
                 nwkHeader.radius!,
                 id,
                 nwkHeader.source16!,
