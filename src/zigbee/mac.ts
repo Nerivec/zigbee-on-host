@@ -14,7 +14,7 @@ export const enum ZigbeeMACConsts {
      * - aMaxMACPayloadSize(118)
      * - aMaxMACSafePayloadSize(102)
      */
-    PAYLOAD_MAX_SIZE = 116, // zigbee-payload-calculator (r19)
+    PAYLOAD_MAX_SIZE = 118,
     PAYLOAD_MAX_SAFE_SIZE = 102,
     ACK_FRAME_SIZE = 11,
 
