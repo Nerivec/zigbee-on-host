@@ -46,5 +46,8 @@
         "serialport": "^13.0.0",
         "typescript": "^5.9.3",
         "vitest": "^4.0.18"
+    },
+    "allowScripts": {
+        "@serialport/bindings-cpp@13.0.1": true
     }
 }
