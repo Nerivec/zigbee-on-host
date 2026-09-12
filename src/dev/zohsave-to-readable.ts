@@ -8,6 +8,7 @@ async function printSave(dataPath: string): Promise<void> {
         // @ts-expect-error not needed here
         {},
         {},
+        {},
         {
             eui64: 0n,
             panId: 0,

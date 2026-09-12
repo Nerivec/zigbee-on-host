@@ -1,7 +1,8 @@
+import type EventEmitter from "node:events";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { SpinelCommandId } from "../spinel/commands.js";
-import { HDLC_TX_CHUNK_SIZE, HdlcReservedByte } from "../spinel/hdlc.js";
+import { HdlcReservedByte } from "../spinel/hdlc.js";
 import { SpinelPropertyId } from "../spinel/properties.js";
 import {
     decodeSpinelFrame,
@@ -37,8 +38,6 @@ import { MACHandler, type MACHandlerCallbacks } from "../zigbee-stack/mac-handle
 import { NWKGPHandler, type NWKGPHandlerCallbacks } from "../zigbee-stack/nwk-gp-handler.js";
 import { NWKHandler, type NWKHandlerCallbacks } from "../zigbee-stack/nwk-handler.js";
 import { type NetworkParameters, type StackCallbacks, StackContext, type StackContextCallbacks } from "../zigbee-stack/stack-context.js";
-import { OTRCPParser } from "./ot-rcp-parser.js";
-import { OTRCPWriter } from "./ot-rcp-writer.js";
 
 const NS = "ot-rcp-driver";
 
@@ -49,13 +48,21 @@ const NS = "ot-rcp-driver";
 // const SPINEL_FRAME_BUFFER_SIZE = SPINEL_FRAME_MAX_SIZE + SPINEL_ENCRYPTER_EXTRA_DATA_SIZE;
 
 const CONFIG_TID_MASK = 0x0e;
-const CONFIG_HIGHWATER_MARK = HDLC_TX_CHUNK_SIZE * 4;
+
+export interface TransportInterfaceEventMap {
+    data: [data: Buffer];
+}
+
+export interface TransportInterface extends EventEmitter<TransportInterfaceEventMap> {
+    write(buffer: Buffer): boolean;
+}
 
 export class OTRCPDriver {
+    transport: TransportInterface;
+    #inputBuffer = Buffer.alloc(0);
+
     readonly #onMACFrame: StackCallbacks["onMACFrame"];
     readonly #streamRawConfig: StreamRawConfig;
-    readonly writer = new OTRCPWriter({ highWaterMark: CONFIG_HIGHWATER_MARK });
-    readonly parser = new OTRCPParser({ readableHighWaterMark: CONFIG_HIGHWATER_MARK });
 
     #protocolVersionMajor = 0;
     #protocolVersionMinor = 0;
@@ -98,12 +105,20 @@ export class OTRCPDriver {
 
     #pendingChangeChannel: NodeJS.Timeout | undefined;
 
-    constructor(callbacks: StackCallbacks, streamRawConfig: StreamRawConfig, netParams: NetworkParameters, saveDir: string, emitMACFrames = false) {
+    constructor(
+        transport: TransportInterface,
+        callbacks: StackCallbacks,
+        streamRawConfig: StreamRawConfig,
+        netParams: NetworkParameters,
+        saveDir: string,
+        emitMACFrames = false,
+    ) {
         /* v8 ignore else -- @preserve */
         if (!existsSync(saveDir)) {
             mkdirSync(saveDir);
         }
 
+        this.transport = transport;
         this.#onMACFrame = callbacks.onMACFrame;
         this.#streamRawConfig = streamRawConfig;
 
@@ -152,6 +167,8 @@ export class OTRCPDriver {
         };
 
         this.nwkGPHandler = new NWKGPHandler(nwkGPCallbacks);
+
+        this.transport.on("data", this.onTransportData.bind(this));
     }
 
     // #region Getters/Setters
@@ -249,6 +266,36 @@ export class OTRCPDriver {
         }
     }
 
+    private async onTransportData(chunk: Buffer): Promise<void> {
+        let data = Buffer.concat([this.#inputBuffer, chunk]);
+
+        if (data[0] !== HdlcReservedByte.FLAG) {
+            // discard data before FLAG
+            data = data.subarray(data.indexOf(HdlcReservedByte.FLAG));
+        }
+
+        let position: number = data.indexOf(HdlcReservedByte.FLAG, 1);
+
+        while (position !== -1) {
+            const endPosition = position + 1;
+
+            // ignore repeated successive flags
+            if (position > 1) {
+                const frame = data.subarray(0, endPosition);
+
+                await this.onFrame(frame);
+                // remove the frame from internal buffer (set below)
+                data = data.subarray(endPosition);
+            } else {
+                data = data.subarray(position);
+            }
+
+            position = data.indexOf(HdlcReservedByte.FLAG, 1);
+        }
+
+        this.#inputBuffer = data;
+    }
+
     public async onFrame(buffer: Buffer): Promise<void> {
         const spinelFrame = decodeSpinelFrame(buffer);
 
@@ -335,11 +382,16 @@ export class OTRCPDriver {
             payload: buffer,
         };
         const hdlcFrame = encodeSpinelFrame(spinelFrame);
-
-        this.writer.writeBuffer(hdlcFrame);
+        let waiter: Promise<SpinelFrame> | undefined;
 
         if (waitForResponse) {
-            return await this.waitForTID(spinelFrame.header.tid, timeout);
+            waiter = this.waitForTID(spinelFrame.header.tid, timeout);
+        }
+
+        this.transport.write(hdlcFrame);
+
+        if (waiter !== undefined) {
+            return await waiter;
         }
     }
 
@@ -658,7 +710,7 @@ export class OTRCPDriver {
         await this.context.loadState();
 
         // flush
-        this.writer.writeBuffer(Buffer.from([HdlcReservedByte.FLAG]));
+        this.transport.write(Buffer.from([HdlcReservedByte.FLAG]));
 
         // Example output:
         //   Protocol version: 4.3
@@ -685,8 +737,10 @@ export class OTRCPDriver {
         this.#rcpMinHostAPIVersion = await this.getRCPMinHostAPIVersion();
         logger.info(`RCP min host API version: ${this.#rcpMinHostAPIVersion}`, NS);
 
+        const waiter = this.waitForReset();
+
         await this.sendCommand(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.STACK]), false);
-        await this.waitForReset();
+        await waiter;
 
         logger.info("======== Driver started ========", NS);
     }
@@ -713,8 +767,6 @@ export class OTRCPDriver {
         for (const [, waiter] of this.#tidWaiters) {
             clearTimeout(waiter.timer);
             waiter.timer = undefined;
-
-            waiter.reject(new Error("Driver stopping"));
         }
 
         this.#tidWaiters.clear();
@@ -744,8 +796,10 @@ export class OTRCPDriver {
             await this.stop();
         }
 
+        const waiter = this.waitForReset();
+
         await this.sendCommand(SpinelCommandId.RESET, Buffer.from([SpinelResetReason.STACK]), false);
-        await this.waitForReset();
+        await waiter;
     }
 
     /**

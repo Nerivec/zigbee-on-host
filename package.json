@@ -1,6 +1,6 @@
 {
     "name": "zigbee-on-host",
-    "version": "0.2.4",
+    "version": "0.3.0",
     "description": "Zigbee stack designed to run on a host and communicate with a radio co-processor (RCP)",
     "engines": {
         "node": "^20.19.0 || >=22.12.0"
@@ -43,11 +43,7 @@
         "@biomejs/biome": "^2.5.0",
         "@types/node": "^24.10.9",
         "@vitest/coverage-v8": "^4.1.9",
-        "serialport": "^13.0.0",
         "typescript": "^5.9.3",
         "vitest": "^4.0.18"
-    },
-    "allowScripts": {
-        "@serialport/bindings-cpp@13.0.1": true
     }
 }

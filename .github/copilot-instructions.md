@@ -31,7 +31,6 @@ Refer to [../package.json](../package.json) for versions.
 - **@biomejs/biome**: linting and formatting
 - **vitest**: testing framework
 - **@vitest/coverage-v8**: coverage provider
-- **serialport**: dev dependency only
 - **@types/node**: typing
 
 Refer to [../package.json](../package.json) for versions.
@@ -778,7 +777,6 @@ const enum SaveConsts {
 ### Development Code (src/dev/)
 
 - Excluded from production builds via tsconfig.prod.json
-- Can use dev dependencies (serialport, etc.)
 - Can have relaxed performance requirements
 - Used for CLI tools, testing utilities, data conversion
 

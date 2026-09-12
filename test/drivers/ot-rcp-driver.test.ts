@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
+import EventEmitter from "node:events";
 import { existsSync, rmSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
-import { OTRCPDriver } from "../../src/drivers/ot-rcp-driver.js";
+import { OTRCPDriver, type TransportInterfaceEventMap } from "../../src/drivers/ot-rcp-driver.js";
 import { SpinelCommandId } from "../../src/spinel/commands.js";
 import { SpinelPropertyId } from "../../src/spinel/properties.js";
 import {
@@ -104,6 +105,12 @@ import {
 } from "../data.js";
 
 const randomBigInt = (): bigint => BigInt(`0x${randomBytes(8).toString("hex")}`);
+
+class MockTransport extends EventEmitter<TransportInterfaceEventMap> {
+    write(_data: Buffer): boolean {
+        return false;
+    }
+}
 
 const COMMON_FFD_MAC_CAP: MACCapabilities = {
     alternatePANCoordinator: false,
@@ -243,37 +250,40 @@ describe("OT RCP Driver", () => {
                 loadStateSpy = vi.spyOn(driver.context, "loadState").mockResolvedValue(undefined);
             }
 
-            let i = -1;
             const orderedFrames = [
                 frames.protocolVersion,
                 frames.ncpVersion,
                 frames.interfaceType,
                 frames.rcpAPIVersion,
                 frames.rcpMinHostAPIVersion,
-                frames.resetPowerOn,
             ];
 
-            const reply = async () => {
-                await vi.advanceTimersByTimeAsync(5);
+            if (!timeoutReset) {
+                orderedFrames.push(frames.resetPowerOn);
+            }
 
-                // skip cancel byte
-                if (i >= 0) {
-                    if (i === 5 && timeoutReset) {
-                        await vi.advanceTimersByTimeAsync(5500);
-                    }
+            const writeSpy = vi.spyOn(driver.transport, "write");
 
-                    driver.parser._transform(Buffer.from(orderedFrames[i], "hex"), "utf8", () => {});
-                    await vi.advanceTimersByTimeAsync(5);
-                }
+            // skip cancel byte
+            writeSpy.mockImplementationOnce(() => false);
 
-                i++;
+            for (const frame of orderedFrames) {
+                writeSpy.mockImplementationOnce(() => {
+                    driver.transport.emit("data", Buffer.from(frame, "hex"));
+                    void vi.advanceTimersByTimeAsync(5);
 
-                if (i === orderedFrames.length) {
-                    driver.writer.removeListener("data", reply);
-                }
-            };
+                    return false;
+                });
+            }
 
-            driver.writer.on("data", reply);
+            if (timeoutReset) {
+                writeSpy.mockImplementationOnce(() => {
+                    void vi.advanceTimersByTimeAsync(5500);
+
+                    return false;
+                });
+            }
+
             await driver.start();
             loadStateSpy?.mockRestore();
             await vi.advanceTimersByTimeAsync(100); // flush
@@ -302,7 +312,6 @@ describe("OT RCP Driver", () => {
 
     const mockFormNetwork = async (driver: OTRCPDriver, registerTimers = false, frames = FORM_FRAMES_SILABS) => {
         if (driver) {
-            let i = 0;
             const orderedFrames = [
                 frames.phyEnabled,
                 frames.phyChan,
@@ -318,19 +327,16 @@ describe("OT RCP Driver", () => {
                 frames.phyCCAThresholdGet,
             ];
 
-            const reply = async () => {
-                await vi.advanceTimersByTimeAsync(5);
-                driver.parser._transform(Buffer.from(orderedFrames[i], "hex"), "utf8", () => {});
-                await vi.advanceTimersByTimeAsync(5);
+            const writeSpy = vi.spyOn(driver.transport, "write");
 
-                i++;
+            for (const frame of orderedFrames) {
+                writeSpy.mockImplementationOnce(() => {
+                    driver.transport.emit("data", Buffer.from(frame, "hex"));
+                    void vi.advanceTimersByTimeAsync(5);
 
-                if (i === orderedFrames.length) {
-                    driver.writer.removeListener("data", reply);
-                }
-            };
-
-            driver.writer.on("data", reply);
+                    return false;
+                });
+            }
 
             let registerTimersSpy: Mock<() => Promise<void>> | undefined;
 
@@ -362,7 +368,7 @@ describe("OT RCP Driver", () => {
                 linksSpy = links;
                 const p = driver.nwkHandler.sendLinkStatus(links);
                 // LINK_STATUS => OK
-                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
                 await vi.advanceTimersByTimeAsync(10);
                 await p;
             });
@@ -371,7 +377,7 @@ describe("OT RCP Driver", () => {
                 destination16Spy = destination16;
                 const p = driver.nwkHandler.sendRouteReq(manyToOne, destination16);
                 // ROUTE_REQ => OK
-                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 1), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup + 1));
                 await vi.advanceTimersByTimeAsync(10);
                 return await p;
             });
@@ -419,10 +425,12 @@ describe("OT RCP Driver", () => {
         };
         let driver: OTRCPDriver;
         let saveDir: string;
+        const mockTransport = new MockTransport();
 
         beforeEach(() => {
             saveDir = `temp_MGMT_${Math.floor(Math.random() * 1000000)}`;
             driver = new OTRCPDriver(
+                mockTransport,
                 mockCallbacks,
                 {
                     txChannel: A_CHANNEL,
@@ -452,8 +460,6 @@ describe("OT RCP Driver", () => {
                 saveDir,
                 // true, // emitFrames
             );
-
-            driver.parser.on("data", driver.onFrame.bind(driver));
         });
 
         afterEach(async () => {
@@ -1475,7 +1481,7 @@ describe("OT RCP Driver", () => {
                 payload: Buffer.from([SpinelPropertyId.MAC_ENERGY_SCAN_RESULT, channel, (rssi + 0x100) & 0xff]),
             };
             const enc = encodeSpinelFrame(spinelFrame);
-            driver.parser._transform(Buffer.from(enc), "utf8", () => {});
+            driver.transport.emit("data", Buffer.from(enc));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(infoSpy).toHaveBeenCalledWith(`<=== ENERGY_SCAN[channel=${channel} rssi=${rssi}]`, "ot-rcp-driver");
@@ -1580,10 +1586,12 @@ describe("OT RCP Driver", () => {
         };
         let driver: OTRCPDriver;
         let saveDir: string;
+        const mockTransport = new MockTransport();
 
         beforeEach(async () => {
             saveDir = `temp_NETDEF_${Math.floor(Math.random() * 1000000)}`;
             driver = new OTRCPDriver(
+                mockTransport,
                 mockCallbacks,
                 {
                     txChannel: A_CHANNEL,
@@ -1613,7 +1621,6 @@ describe("OT RCP Driver", () => {
                 saveDir,
                 // true, // emitFrames
             );
-            driver.parser.on("data", driver.onFrame.bind(driver));
 
             await mockStart(driver);
             await mockFormNetwork(driver);
@@ -1628,83 +1635,79 @@ describe("OT RCP Driver", () => {
         });
 
         it("ignores bogus data before start of HDLC frame", async () => {
-            const parserEmit = vi.spyOn(driver.parser, "emit");
+            const onFrameSpy = vi.spyOn(driver, "onFrame");
             const frame = makeSpinelLastStatus(nextTidFromStartup);
 
-            driver.parser._transform(Buffer.concat([Buffer.from([0x12, 0x32]), frame]), "utf8", () => {});
+            driver.transport.emit("data", Buffer.concat([Buffer.from([0x12, 0x32]), frame]));
             await vi.advanceTimersByTimeAsync(10);
 
-            expect(parserEmit).toHaveBeenNthCalledWith(1, "data", frame);
+            expect(onFrameSpy).toHaveBeenNthCalledWith(1, frame);
         });
 
         it("ignores bogus data after end of HDLC frame", async () => {
-            const parserEmit = vi.spyOn(driver.parser, "emit");
+            const onFrameSpy = vi.spyOn(driver, "onFrame");
             const frame = makeSpinelLastStatus(nextTidFromStartup);
 
-            driver.parser._transform(Buffer.concat([frame, Buffer.from([0x12, 0x32])]), "utf8", () => {});
+            driver.transport.emit("data", Buffer.concat([frame, Buffer.from([0x12, 0x32])]));
             await vi.advanceTimersByTimeAsync(10);
 
-            expect(parserEmit).toHaveBeenNthCalledWith(1, "data", frame);
+            expect(onFrameSpy).toHaveBeenNthCalledWith(1, frame);
         });
 
         it("ignores bogus data before start and after end of HDLC frame", async () => {
-            const parserEmit = vi.spyOn(driver.parser, "emit");
+            const onFrameSpy = vi.spyOn(driver, "onFrame");
             const frame = makeSpinelLastStatus(nextTidFromStartup);
 
-            driver.parser._transform(Buffer.concat([Buffer.from([0x12, 0x32]), frame, Buffer.from([0x12, 0x32])]), "utf8", () => {});
+            driver.transport.emit("data", Buffer.concat([Buffer.from([0x12, 0x32]), frame, Buffer.from([0x12, 0x32])]));
             await vi.advanceTimersByTimeAsync(10);
 
-            expect(parserEmit).toHaveBeenNthCalledWith(1, "data", frame);
+            expect(onFrameSpy).toHaveBeenNthCalledWith(1, frame);
         });
 
         it("skips duplicate FLAGs of HDLC frame", async () => {
-            const parserEmit = vi.spyOn(driver.parser, "emit");
+            const onFrameSpy = vi.spyOn(driver, "onFrame");
             const frame = makeSpinelLastStatus(nextTidFromStartup);
 
-            driver.parser._transform(Buffer.concat([Buffer.from([0x7e, 0x7e]), frame, Buffer.from([0x7e, 0x7e])]), "utf8", () => {});
+            driver.transport.emit("data", Buffer.concat([Buffer.from([0x7e, 0x7e]), frame, Buffer.from([0x7e, 0x7e])]));
             await vi.advanceTimersByTimeAsync(10);
 
-            expect(parserEmit).toHaveBeenNthCalledWith(1, "data", frame);
+            expect(onFrameSpy).toHaveBeenNthCalledWith(1, frame);
         });
 
         it("handles multiple HDLC frames in same transform call", async () => {
-            const parserEmit = vi.spyOn(driver.parser, "emit");
+            const onFrameSpy = vi.spyOn(driver, "onFrame");
             const frame = makeSpinelLastStatus(nextTidFromStartup);
             const frame2 = makeSpinelLastStatus(nextTidFromStartup);
 
-            driver.parser._transform(Buffer.concat([frame, frame2]), "utf8", () => {});
+            driver.transport.emit("data", Buffer.concat([frame, frame2]));
             await vi.advanceTimersByTimeAsync(10);
 
-            expect(parserEmit).toHaveBeenNthCalledWith(1, "data", frame);
-            expect(parserEmit).toHaveBeenNthCalledWith(2, "data", frame2);
+            expect(onFrameSpy).toHaveBeenNthCalledWith(1, frame);
+            expect(onFrameSpy).toHaveBeenNthCalledWith(2, frame2);
         });
 
         it("sends frame NETDEF_ACK_FRAME_FROM_COORD and receives LAST_STATUS response", async () => {
             const waitForTIDSpy = vi.spyOn(driver, "waitForTID");
-            const writeBufferSpy = vi.spyOn(driver.writer, "writeBuffer");
 
             const p = driver.macHandler.sendFrame(1, NETDEF_ACK_FRAME_FROM_COORD, undefined, undefined); // bypass indirect transmissions
             await vi.advanceTimersByTimeAsync(10);
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
             await vi.advanceTimersByTimeAsync(10);
 
             await expect(p).resolves.toStrictEqual(true);
             expect(waitForTIDSpy).toHaveBeenCalledWith(nextTidFromStartup, 10000);
-            expect(writeBufferSpy).toHaveBeenCalledTimes(1);
         });
 
         it("sends frame NETDEF_MTORR_FRAME_FROM_COORD and receives LAST_STATUS response", async () => {
             const waitForTIDSpy = vi.spyOn(driver, "waitForTID");
-            const writeBufferSpy = vi.spyOn(driver.writer, "writeBuffer");
 
             const p = driver.macHandler.sendFrame(1, NETDEF_MTORR_FRAME_FROM_COORD, undefined, undefined); // bypass indirect transmissions
             await vi.advanceTimersByTimeAsync(10);
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
             await vi.advanceTimersByTimeAsync(10);
 
             await expect(p).resolves.toStrictEqual(true);
             expect(waitForTIDSpy).toHaveBeenCalledWith(nextTidFromStartup, 10000);
-            expect(writeBufferSpy).toHaveBeenCalledTimes(1);
         });
 
         it("receives frame NETDEF_ACK_FRAME_TO_COORD", async () => {
@@ -1713,7 +1716,7 @@ describe("OT RCP Driver", () => {
             const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processCommandSpy = vi.spyOn(driver.apsHandler, "processCommand");
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ACK_FRAME_TO_COORD), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NETDEF_ACK_FRAME_TO_COORD));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
@@ -1728,7 +1731,7 @@ describe("OT RCP Driver", () => {
             const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processLinkStatusSpy = vi.spyOn(driver.nwkHandler, "processLinkStatus");
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_LINK_STATUS_FROM_DEV), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NETDEF_LINK_STATUS_FROM_DEV));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
@@ -1743,7 +1746,7 @@ describe("OT RCP Driver", () => {
             const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processCommandSpy = vi.spyOn(driver.apsHandler, "processCommand");
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ZCL_FRAME_CMD_TO_COORD), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NETDEF_ZCL_FRAME_CMD_TO_COORD));
             await vi.runOnlyPendingTimersAsync();
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
@@ -1784,7 +1787,7 @@ describe("OT RCP Driver", () => {
             const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processRouteRecSpy = vi.spyOn(driver.nwkHandler, "processRouteRecord");
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ROUTE_RECORD_TO_COORD), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NETDEF_ROUTE_RECORD_TO_COORD));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
@@ -1800,7 +1803,7 @@ describe("OT RCP Driver", () => {
             const processRouteReqSpy = vi.spyOn(driver.nwkHandler, "processRouteReq");
             const sendRouteReplySpy = vi.spyOn(driver.nwkHandler, "sendRouteReply");
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_MTORR_FRAME_FROM_COORD), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NETDEF_MTORR_FRAME_FROM_COORD));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
@@ -1818,7 +1821,7 @@ describe("OT RCP Driver", () => {
             const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processGPFrameSpy = vi.spyOn(driver.nwkGPHandler, "processFrame");
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ZGP_COMMISSIONING), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NETDEF_ZGP_COMMISSIONING));
             await vi.runOnlyPendingTimersAsync();
 
             const expectedMACHeader: MACHeader = {
@@ -1872,7 +1875,7 @@ describe("OT RCP Driver", () => {
         it("receives frame NETDEF_ZGP_COMMISSIONING while not in commissioning mode", async () => {
             // driver.nwkGPHandler.gpEnterCommissioningMode(0xfe); // not in commissioning mode
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ZGP_COMMISSIONING), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NETDEF_ZGP_COMMISSIONING));
             await vi.runOnlyPendingTimersAsync();
 
             expect(mockCallbacks.onGPFrame).toHaveBeenCalledTimes(0);
@@ -1884,7 +1887,7 @@ describe("OT RCP Driver", () => {
             const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processGPFrameSpy = vi.spyOn(driver.nwkGPHandler, "processFrame");
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NETDEF_ZGP_FRAME_BCAST_RECALL_SCENE_0));
             await vi.runOnlyPendingTimersAsync();
 
             const expectedMACHeader: MACHeader = {
@@ -1948,10 +1951,12 @@ describe("OT RCP Driver", () => {
         };
         let driver: OTRCPDriver;
         let saveDir: string;
+        const mockTransport = new MockTransport();
 
         beforeEach(async () => {
             saveDir = `temp_NET2_${Math.floor(Math.random() * 1000000)}`;
             driver = new OTRCPDriver(
+                mockTransport,
                 mockCallbacks,
                 {
                     txChannel: A_CHANNEL,
@@ -1981,7 +1986,6 @@ describe("OT RCP Driver", () => {
                 saveDir,
                 // true, // emitFrames
             );
-            driver.parser.on("data", driver.onFrame.bind(driver));
 
             await mockStart(driver);
             await mockFormNetwork(driver);
@@ -2002,7 +2006,7 @@ describe("OT RCP Driver", () => {
             const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processTransportKeySpy = vi.spyOn(driver.apsHandler, "processTransportKey");
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET2_TRANSPORT_KEY_NWK_FROM_COORD), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET2_TRANSPORT_KEY_NWK_FROM_COORD));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
@@ -2033,9 +2037,9 @@ describe("OT RCP Driver", () => {
             const processRequestKeySpy = vi.spyOn(driver.apsHandler, "processRequestKey");
             const sendTransportKeyTCSpy = vi.spyOn(driver.apsHandler, "sendTransportKeyTC");
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET2_REQUEST_KEY_TC_FROM_DEVICE), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET2_REQUEST_KEY_TC_FROM_DEVICE));
             await vi.advanceTimersByTimeAsync(10);
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(1);
@@ -2055,8 +2059,8 @@ describe("OT RCP Driver", () => {
             const sendFrameSpy = vi.spyOn(driver.macHandler, "sendFrame");
             const sendAssocRspSpy = vi.spyOn(driver.macHandler, "sendAssocRsp");
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET2_BEACON_REQ_FROM_DEVICE), "utf8", () => {});
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET2_BEACON_REQ_FROM_DEVICE));
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
 
             expect(sendFrameSpy).toHaveBeenCalledTimes(1);
             const beaconRespFrame = sendFrameSpy.mock.calls[0][1];
@@ -2065,12 +2069,12 @@ describe("OT RCP Driver", () => {
 
             expect(decBeaconRespHeader.superframeSpec?.associationPermit).toStrictEqual(false);
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET2_ASSOC_REQ_FROM_DEVICE), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET2_ASSOC_REQ_FROM_DEVICE));
             await vi.advanceTimersByTimeAsync(10);
-            driver.parser._transform(makeSpinelStreamRaw(1, NET2_DATA_RQ_FROM_DEVICE), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET2_DATA_RQ_FROM_DEVICE));
             await vi.advanceTimersByTimeAsync(10);
             // ASSOC_RSP => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(sendAssocRspSpy).toHaveBeenCalledTimes(1);
@@ -2102,10 +2106,10 @@ describe("OT RCP Driver", () => {
             const sendTransportKeyNWKSpy = vi.spyOn(driver.apsHandler, "sendTransportKeyNWK");
             vi.spyOn(driver.context, "assignNetworkAddress").mockReturnValueOnce(0xa18f); // force nwk16 matching vectors
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET2_BEACON_REQ_FROM_DEVICE), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET2_BEACON_REQ_FROM_DEVICE));
             await vi.advanceTimersByTimeAsync(10);
             // BEACON_RSP => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(sendFrameSpy).toHaveBeenCalledTimes(1);
@@ -2115,15 +2119,15 @@ describe("OT RCP Driver", () => {
 
             expect(decBeaconRespHeader.superframeSpec?.associationPermit).toStrictEqual(true);
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET2_ASSOC_REQ_FROM_DEVICE), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET2_ASSOC_REQ_FROM_DEVICE));
             await vi.advanceTimersByTimeAsync(10);
-            driver.parser._transform(makeSpinelStreamRaw(1, NET2_DATA_RQ_FROM_DEVICE), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET2_DATA_RQ_FROM_DEVICE));
             await vi.advanceTimersByTimeAsync(10);
             // ASSOC_RSP => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 1), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup + 1));
             await vi.advanceTimersByTimeAsync(10);
             // TRANSPORT_KEY NWK => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 2), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup + 2));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(savePeriodicStateSpy).toHaveBeenCalledTimes(1);
@@ -2142,35 +2146,31 @@ describe("OT RCP Driver", () => {
                 linkStatusMisses: 0,
             });
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET2_DEVICE_ANNOUNCE_BCAST, Buffer.from([0xd8, 0xff, 0x00, 0x00])), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET2_DEVICE_ANNOUNCE_BCAST, Buffer.from([0xd8, 0xff, 0x00, 0x00])));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(mockCallbacks.onDeviceJoined).toHaveBeenCalledWith(0xa18f, 11871832136131022815n, structuredClone(COMMON_FFD_MAC_CAP));
             expect(mockCallbacks.onFrame).toHaveBeenCalledWith(0xa18f, undefined, expect.any(Object), expect.any(Buffer), 200);
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET2_NODE_DESC_REQ_FROM_DEVICE, Buffer.from([0xce, 0xff, 0x00, 0x00])), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET2_NODE_DESC_REQ_FROM_DEVICE, Buffer.from([0xce, 0xff, 0x00, 0x00])));
             await vi.advanceTimersByTimeAsync(10);
             // node desc APS ACK => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 3), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup + 3));
             await vi.advanceTimersByTimeAsync(10);
             // node desc RESP => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 4), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup + 4));
             await vi.advanceTimersByTimeAsync(10);
 
-            driver.parser._transform(
-                makeSpinelStreamRaw(1, NET2_REQUEST_KEY_TC_FROM_DEVICE, Buffer.from([0xd3, 0xff, 0x00, 0x00])),
-                "utf8",
-                () => {},
-            );
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET2_REQUEST_KEY_TC_FROM_DEVICE, Buffer.from([0xd3, 0xff, 0x00, 0x00])));
             await vi.advanceTimersByTimeAsync(10);
             // TRANSPORT_KEY TC => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 5), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup + 5));
             await vi.advanceTimersByTimeAsync(10);
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET2_VERIFY_KEY_TC_FROM_DEVICE, Buffer.from([0xd5, 0xff, 0x00, 0x00])), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET2_VERIFY_KEY_TC_FROM_DEVICE, Buffer.from([0xd5, 0xff, 0x00, 0x00])));
             await vi.advanceTimersByTimeAsync(10);
             // CONFIRM_KEY => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 6), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup + 6));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(driver.context.deviceTable.get(11871832136131022815n)).toStrictEqual({
@@ -2204,10 +2204,12 @@ describe("OT RCP Driver", () => {
         };
         let driver: OTRCPDriver;
         let saveDir: string;
+        const mockTransport = new MockTransport();
 
         beforeEach(async () => {
             saveDir = `temp_NET3_${Math.floor(Math.random() * 1000000)}`;
             driver = new OTRCPDriver(
+                mockTransport,
                 mockCallbacks,
                 {
                     txChannel: A_CHANNEL,
@@ -2237,7 +2239,6 @@ describe("OT RCP Driver", () => {
                 saveDir,
                 true, // emitFrames
             );
-            driver.parser.on("data", driver.onFrame.bind(driver));
             // joined devices
             // 5c:c7:c1:ff:fe:5e:70:ea
             driver.context.deviceTable.set(6685525477083214058n, {
@@ -2285,10 +2286,10 @@ describe("OT RCP Driver", () => {
             expect(sendPeriodicZigbeeNWKLinkStatusSpy).toHaveBeenCalledTimes(1);
             expect(sendPeriodicManyToOneRouteRequestSpy).toHaveBeenCalledTimes(1);
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET3_ROUTE_RECORD), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET3_ROUTE_RECORD));
             await vi.advanceTimersByTimeAsync(10);
             // ROUTE_RECORD => OK
-            driver.parser._transform(makeSpinelLastStatus(1), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(1));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(processRouteRecordSpy).toHaveBeenCalledTimes(1);
@@ -2299,7 +2300,7 @@ describe("OT RCP Driver", () => {
                 linksSpy = links;
                 const p = driver.nwkHandler.sendLinkStatus(links);
                 // LINK_STATUS => OK
-                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
                 await vi.advanceTimersByTimeAsync(10);
                 await p;
             });
@@ -2319,7 +2320,7 @@ describe("OT RCP Driver", () => {
                 linksSpy = links;
                 const p = driver.nwkHandler.sendLinkStatus(links);
                 // LINK_STATUS => OK
-                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 1), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup + 1));
                 await vi.advanceTimersByTimeAsync(10);
                 await p;
             });
@@ -2337,7 +2338,7 @@ describe("OT RCP Driver", () => {
                 linksSpy = links;
                 const p = driver.nwkHandler.sendLinkStatus(links);
                 // LINK_STATUS => OK
-                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 2), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup + 2));
                 await vi.advanceTimersByTimeAsync(10);
                 await p;
             });
@@ -2356,7 +2357,7 @@ describe("OT RCP Driver", () => {
                 destination16Spy = destination16;
                 const p = driver.nwkHandler.sendRouteReq(manyToOne, destination16);
                 // ROUTE_REQ => OK
-                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup + 3), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup + 3));
                 await vi.advanceTimersByTimeAsync(10);
                 return await p;
             });
@@ -2491,7 +2492,7 @@ describe("OT RCP Driver", () => {
             await driver.context.associate(nwkDest16, nwkDest64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
 
             const p = driver.sendZDO(payload, nwkDest16, nwkDest64, clusterId);
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK));
             await vi.advanceTimersByTimeAsync(10);
 
             await expect(p).resolves.toStrictEqual([1, 1]);
@@ -2600,7 +2601,7 @@ describe("OT RCP Driver", () => {
             const clusterId = 1;
 
             const p = driver.sendZDO(payload, nwkDest16, nwkDest64, clusterId);
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK));
             await vi.advanceTimersByTimeAsync(10);
 
             await expect(p).resolves.toStrictEqual([1, 1]);
@@ -2715,7 +2716,7 @@ describe("OT RCP Driver", () => {
             await driver.context.associate(nwkDest16, nwkDest64, true, structuredClone(COMMON_FFD_MAC_CAP), true);
 
             const p = driver.sendUnicast(payload, profileId, clusterId, nwkDest16, nwkDest64, destEndpoint, sourceEndpoint);
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK));
             await vi.advanceTimersByTimeAsync(10);
 
             await expect(p).resolves.toStrictEqual(1);
@@ -2825,7 +2826,7 @@ describe("OT RCP Driver", () => {
             const sourceEndpoint = 1;
 
             const p = driver.sendGroupcast(payload, profileId, clusterId, groupId, sourceEndpoint);
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK));
             await vi.advanceTimersByTimeAsync(10);
 
             await expect(p).resolves.toStrictEqual(1);
@@ -2936,7 +2937,7 @@ describe("OT RCP Driver", () => {
             const sourceEndpoint = 1;
 
             const p = driver.sendBroadcast(payload, profileId, clusterId, dest16, destEndpoint, sourceEndpoint);
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup, SpinelStatus.OK));
             await vi.advanceTimersByTimeAsync(10);
 
             await expect(p).resolves.toStrictEqual(1);
@@ -3050,10 +3051,12 @@ describe("OT RCP Driver", () => {
         };
         let driver: OTRCPDriver;
         let saveDir: string;
+        const mockTransport = new MockTransport();
 
         beforeEach(async () => {
             saveDir = `temp_NET4_${Math.floor(Math.random() * 1000000)}`;
             driver = new OTRCPDriver(
+                mockTransport,
                 mockCallbacks,
                 {
                     txChannel: NET4_CHANNEL,
@@ -3084,7 +3087,6 @@ describe("OT RCP Driver", () => {
                 true, // emitFrames
             );
 
-            driver.parser.on("data", driver.onFrame.bind(driver));
             // joined devices
             // 80:4b:50:ff:fe:a4:b9:73
             driver.context.deviceTable.set(9244571720527165811n, {
@@ -3187,34 +3189,34 @@ describe("OT RCP Driver", () => {
             if (driver) {
                 const processRouteRecordSpy = vi.spyOn(driver.nwkHandler, "processRouteRecord");
 
-                driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_96BA_NO_RELAY), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_96BA_NO_RELAY));
                 await vi.advanceTimersByTimeAsync(10);
                 // ROUTE_RECORD => OK
-                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
                 await vi.advanceTimersByTimeAsync(10);
 
-                driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_91D2_NO_RELAY), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_91D2_NO_RELAY));
                 await vi.advanceTimersByTimeAsync(10);
                 // ROUTE_RECORD => OK
-                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
                 await vi.advanceTimersByTimeAsync(10);
 
-                driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_6887_RELAY_96BA), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_6887_RELAY_96BA));
                 await vi.advanceTimersByTimeAsync(10);
                 // ROUTE_RECORD => OK
-                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
                 await vi.advanceTimersByTimeAsync(10);
 
-                driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_9ED5_RELAY_91D2), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_9ED5_RELAY_91D2));
                 await vi.advanceTimersByTimeAsync(10);
                 // ROUTE_RECORD => OK
-                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
                 await vi.advanceTimersByTimeAsync(10);
 
-                driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_4B8E_RELAY_CB47), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_4B8E_RELAY_CB47));
                 await vi.advanceTimersByTimeAsync(10);
                 // ROUTE_RECORD => OK
-                driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+                driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
                 await vi.advanceTimersByTimeAsync(10);
 
                 expect(processRouteRecordSpy).toHaveBeenCalledTimes(5);
@@ -3328,10 +3330,10 @@ describe("OT RCP Driver", () => {
             expect(sendFrameSpy).toHaveBeenLastCalledWith(expect.any(Number), expect.any(Buffer), 0xcb47, undefined);
 
             //-- no duplication of existing entries
-            driver.parser._transform(makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_4B8E_RELAY_CB47), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET4_ROUTE_RECORD_FROM_4B8E_RELAY_CB47));
             await vi.advanceTimersByTimeAsync(10);
             // ROUTE_RECORD => OK
-            driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
             await vi.advanceTimersByTimeAsync(10);
 
             expect(driver.context.sourceRouteTable.get(0x4b8e)!.length).toStrictEqual(1);
@@ -4067,10 +4069,12 @@ describe("OT RCP Driver", () => {
         };
         let driver: OTRCPDriver;
         let saveDir: string;
+        const mockTransport = new MockTransport();
 
         beforeEach(async () => {
             saveDir = `temp_NET5_${Math.floor(Math.random() * 1000000)}`;
             driver = new OTRCPDriver(
+                mockTransport,
                 mockCallbacks,
                 {
                     txChannel: A_CHANNEL,
@@ -4101,8 +4105,6 @@ describe("OT RCP Driver", () => {
                 // true, // emitFrames
             );
 
-            driver.parser.on("data", driver.onFrame.bind(driver));
-
             await mockStart(driver);
             await mockFormNetwork(driver);
         });
@@ -4123,7 +4125,7 @@ describe("OT RCP Driver", () => {
             const onZigbeeAPSFrameSpy = vi.spyOn(driver.apsHandler, "processFrame");
             const processGPFrameSpy = vi.spyOn(driver.nwkGPHandler, "processFrame");
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET5_GP_CHANNEL_REQUEST_BCAST));
             await vi.runOnlyPendingTimersAsync();
             const expectedMACHeader: MACHeader = {
                 frameControl: {
@@ -4181,7 +4183,7 @@ describe("OT RCP Driver", () => {
         it("receives frame NET5_GP_CHANNEL_REQUEST_BCAST while not in commissioning mode", async () => {
             // driver.nwkGPHandler.enterCommissioningMode(0xfe); // not in commissioning mode
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET5_GP_CHANNEL_REQUEST_BCAST));
             await vi.runOnlyPendingTimersAsync();
 
             expect(mockCallbacks.onGPFrame).toHaveBeenCalledTimes(0);
@@ -4192,33 +4194,31 @@ describe("OT RCP Driver", () => {
 
             const onStreamRawFrameSpy = vi.spyOn(driver, "onStreamRawFrame");
 
-            driver.parser._transform(makeSpinelStreamRaw(1, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(1, NET5_GP_CHANNEL_REQUEST_BCAST));
             await vi.advanceTimersByTimeAsync(100);
 
-            driver.parser._transform(makeSpinelStreamRaw(2, NET5_GP_CHANNEL_REQUEST_BCAST), "utf8", () => {});
+            driver.transport.emit("data", makeSpinelStreamRaw(2, NET5_GP_CHANNEL_REQUEST_BCAST));
             await vi.advanceTimersByTimeAsync(100);
 
             expect(mockCallbacks.onGPFrame).toHaveBeenCalledTimes(2); // no identifier for MAINTENANCE frames
             expect(onStreamRawFrameSpy).toHaveBeenCalledTimes(2);
 
             // dupe notification frames from live logs
-            driver.parser._transform(
+            driver.transport.emit(
+                "data",
                 Buffer.from(
                     "7e8006711800010802ffffffff8c30d755550102020000683e1b87c46921c98000000a0014ff8e54cb990000000001000005000000000000979a7e",
                     "hex",
                 ),
-                "utf8",
-                () => {},
             );
             await vi.advanceTimersByTimeAsync(100);
 
-            driver.parser._transform(
+            driver.transport.emit(
+                "data",
                 Buffer.from(
                     "7e8006711800010802ffffffff8c30d755550102020000683e1b87c46921c98000000a0014ff5e5ccb99000000000100000500000000000060a27e",
                     "hex",
                 ),
-                "utf8",
-                () => {},
             );
             await vi.advanceTimersByTimeAsync(100);
 
@@ -4227,9 +4227,11 @@ describe("OT RCP Driver", () => {
         });
     });
 
-    it.skip("NOT A TEST - only meant for quick local parsing", async () => {
+    it("NOT A TEST - only meant for quick local parsing", async () => {
         const saveDir = `temp_TMP_${Math.floor(Math.random() * 1000000)}`;
+        const mockTransport = new MockTransport();
         const driver = new OTRCPDriver(
+            mockTransport,
             {
                 onFatalError: vi.fn(),
                 onMACFrame: vi.fn(),
@@ -4269,21 +4271,18 @@ describe("OT RCP Driver", () => {
             // true, // emitFrames
         );
 
-        driver.parser.on("data", driver.onFrame.bind(driver));
-
         await mockStart(driver);
         await mockFormNetwork(driver);
 
-        driver.parser._transform(
+        driver.transport.emit(
+            "data",
             Buffer.from(
                 "7e800671300061883bc61800001e6b4802000038d11d8528c6847d310099779fbe4c38c1a4006ceeabe886fb158a3e69c907468825fa7fc78000000a0014ffd300659100000000010000050000000000000e737e",
                 "hex",
             ),
-            "utf8",
-            () => {},
         );
         await vi.advanceTimersByTimeAsync(10);
-        driver.parser._transform(makeSpinelLastStatus(nextTidFromStartup), "utf8", () => {});
+        driver.transport.emit("data", makeSpinelLastStatus(nextTidFromStartup));
         await vi.advanceTimersByTimeAsync(10);
 
         await mockStop(driver);
