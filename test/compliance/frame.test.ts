@@ -318,7 +318,7 @@ describe("Frame handler", () => {
         expect(decodeGPHeaderSpy).not.toHaveBeenCalled();
         expect(decodeGPPayloadSpy).not.toHaveBeenCalled();
         expect(loggerDebugSpy).toHaveBeenCalledWith(expect.any(Function), "frame-handler");
-        expect((loggerDebugSpy.mock.calls.at(-1)?.[0] as () => string)()).toContain("Invalid frame addressing");
+        expect((loggerDebugSpy.mock.calls.at(-1)![0] as () => string)()).toContain("Invalid frame addressing");
         expect(nwkGPHandlerMock.processFrame).not.toHaveBeenCalled();
     });
 

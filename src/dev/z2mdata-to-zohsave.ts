@@ -63,6 +63,9 @@ async function openDb(path: string): Promise<[devices: DeviceDatabaseEntry[], gr
                         devices.push(json);
                         break;
                     }
+                    default: {
+                        break;
+                    }
                 }
             } catch (error) {
                 console.error(`Corrupted database line, ignoring. ${error}`);
