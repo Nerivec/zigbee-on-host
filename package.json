@@ -19,7 +19,6 @@
         "check": "biome check --write .",
         "check:ci": "biome check .",
         "clean": "rm -rf dist *.tsbuildinfo",
-        "dev:cli": "node dist/dev/cli.js",
         "dev:z2z": "node dist/dev/z2mdata-to-zohsave.js",
         "dev:z2r": "node dist/dev/zohsave-to-readable.js",
         "prepack": "npm run clean && npm run build:prod"

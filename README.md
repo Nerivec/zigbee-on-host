@@ -168,17 +168,6 @@ npm run dev:z2z ./path/to/data/
 npm run dev:z2r ./path/to/data/
 ```
 
-##### CLI
-
-Get a list of supported commands with:
-
-```bash
-npm run dev:cli help
-```
-
-> [!TIP]
-> `dev:cli` commands can be configured in more details using the file `dist/dev/conf.json`. Some environment variables are also available to quickly configure the adapter & wireshark. _The effective config is printed at the start of every command (`help` included)._
-
 ##### Using Docker
 
 ###### Prerequisites
@@ -204,15 +193,6 @@ Print readable 'zoh.save' content (details above):
 ```bash
 docker compose -f docker-dev/compose.yaml exec zigbee-on-host npm run dev:z2r ./path/to/data
 ```
-
-CLI:
-
-```bash
-docker compose -f docker-dev/compose.yaml exec zigbee-on-host npm run dev:cli help
-```
-
-> [!TIP]
-> `dev:cli` commands can be configured in more details using the file `dist/dev/conf.json`. Some environment variables are also available to configure the adapter & wireshark from the compose file. _The effective config is printed at the start of every command (`help` included)._
 
 ###### Stopping & removing the container
 

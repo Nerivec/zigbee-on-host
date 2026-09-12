@@ -1,18 +1,14 @@
 services:
-    zigbee-on-host:
-        container_name: zigbee-on-host
-        image: nerivec/zigbee-on-host:dev
-        build:
-            context: ../
-            dockerfile: docker-dev/Dockerfile
-        volumes:
-            - ../:/app
-        environment:
-            # used by `dev:cli` commands
-            ADAPTER_PATH: /dev/ttyACM0
-            ADAPTER_BAUDRATE: 921600
-            ADAPTER_RTSCTS: false
-            # WIRESHARK_ZEP_PORT: 17754
-            # WIRESHARK_ADDRESS: 127.0.0.1
-        # devices:
-        #     - /dev/serial/by-id/<serial-id>:/dev/ttyACM0
+  zigbee-on-host:
+    container_name: zigbee-on-host
+    image: nerivec/zigbee-on-host:dev
+    build:
+      context: ../
+      dockerfile: docker-dev/Dockerfile
+    volumes:
+      - ../:/app
+    # environment:
+    #   WIRESHARK_ZEP_PORT: 17754
+    #   WIRESHARK_ADDRESS: 127.0.0.1
+    # devices:
+    #     - /dev/serial/by-id/<serial-id>:/dev/ttyACM0

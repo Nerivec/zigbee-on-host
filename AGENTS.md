@@ -67,22 +67,13 @@ npm run build:prod       # Rebuild
 After running `npm run build` (not build:prod), these commands are available:
 
 ```bash
-npm run dev:cli help                           # Show CLI commands
 npm run dev:z2z ./path/to/data/               # Convert Z2M data to zoh.save
 npm run dev:z2r ./path/to/data/               # Print readable zoh.save content
 ```
 
-**CLI configuration:** `dist/dev/conf.json` (auto-generated after build)
-
-**Environment variables:**
-- `ADAPTER_PATH` - Serial port path
-- `ADAPTER_BAUDRATE` - Baud rate (default: 921600)
-- `ADAPTER_RTSCTS` - Hardware flow control (true/false)
-
 ### State Management
 
 - **State file:** `zoh.save` contains network state (similar to NCP NVRAM)
-- **Config file:** `dist/dev/conf.json` for adapter/network settings (development only)
 - Located in the working directory or data folder
 
 ## Testing Instructions
@@ -378,11 +369,6 @@ docker compose -f docker-dev/compose.yaml down
 - Run `npm run clean` to remove stale build artifacts
 - Ensure Node.js version is >=22.12.0 (or ^20.19.0)
 - Check TypeScript incremental compilation cache (*.tsbuildinfo)
-
-**Dev commands not available:**
-- Ensure you ran `npm run build` (not `build:prod`)
-- Check that `dist/dev/` directory exists
-- Verify `dist/dev/conf.json` was generated
 
 **Test failures:**
 - Some Wireshark tests may be environment-dependent
