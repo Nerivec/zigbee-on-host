@@ -804,6 +804,198 @@ describe("NWK Handler", () => {
         });
     });
 
+    describe("Link Status Relay Routes", () => {
+        const relay16 = 0xfed8;
+        const relay64 = 0x00124b0022334455n;
+        const quiet16 = 0x4e1e;
+        const quiet64 = 0x00124b0066778899n;
+
+        const addDevice = (address16: number, address64: bigint) => {
+            mockContext.address16ToAddress64.set(address16, address64);
+            mockContext.deviceTable.set(address64, {
+                address16,
+                authorized: true,
+                capabilities: {
+                    alternatePANCoordinator: false,
+                    deviceType: 1,
+                    powerSource: 1,
+                    rxOnWhenIdle: true,
+                    securityCapability: true,
+                    allocateAddress: true,
+                },
+                neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
+                recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
+            });
+        };
+
+        /** One link status frame from `sender16` listing `links` as [address, incomingCost, outgoingCost]. */
+        const sendLinkStatus = (sender16: number, links: [number, number, number][]) => {
+            const payload = Buffer.alloc(1 + links.length * 3);
+            payload.writeUInt8(0x60 | links.length, 0); // first frame + last frame + count
+
+            let offset = 1;
+
+            for (const [address, incomingCost, outgoingCost] of links) {
+                offset = payload.writeUInt16LE(address, offset);
+                offset = payload.writeUInt8((incomingCost & 0x07) | ((outgoingCost & 0x07) << 4), offset);
+            }
+
+            nwkHandler.processLinkStatus(
+                payload,
+                0,
+                { frameControl: {}, source16: sender16, sequenceNumber: 1 } as MACHeader,
+                {
+                    frameControl: {
+                        frameType: 1,
+                        protocolVersion: 2,
+                        discoverRoute: 0,
+                        multicast: false,
+                        security: false,
+                        sourceRoute: false,
+                        extendedDestination: false,
+                        extendedSource: false,
+                        endDeviceInitiator: false,
+                    },
+                    destination16: ZigbeeConsts.BCAST_DEFAULT,
+                    source16: sender16,
+                    source64: undefined,
+                    radius: 1,
+                    seqNum: 1,
+                } as ZigbeeNWKHeader,
+            );
+        };
+
+        beforeEach(() => {
+            addDevice(relay16, relay64);
+            addDevice(quiet16, quiet64);
+            // the relay is a coordinator neighbour: a direct, zero-relay route
+            mockContext.sourceRouteTable.set(relay16, [nwkHandler.createSourceRouteEntry([], 1)]);
+        });
+
+        it("routes a quiet neighbour through the relay that reported it", () => {
+            expect(mockContext.sourceRouteTable.get(quiet16)).toBeUndefined();
+
+            sendLinkStatus(relay16, [
+                [ZigbeeConsts.COORDINATOR_ADDRESS, 1, 2],
+                [quiet16, 3, 1],
+            ]);
+
+            const entries = mockContext.sourceRouteTable.get(quiet16);
+
+            expect(entries).toHaveLength(1);
+            expect(entries?.[0].relayAddresses).toStrictEqual([relay16]);
+            // the relay's own cost (1) plus the hop, costed at max(incoming 3, outgoing 1) per #3.6.4.5.1.2
+            expect(entries?.[0].pathCost).toStrictEqual(4);
+
+            // and it is usable, which is the whole point
+            const [relayIndex, relayAddresses] = nwkHandler.findBestSourceRoute(quiet16, undefined);
+
+            expect(relayAddresses).toStrictEqual([relay16]);
+            expect(relayAddresses?.[relayIndex!]).toStrictEqual(relay16);
+        });
+
+        it("refreshes the route on every link status, so it cannot age out", () => {
+            sendLinkStatus(relay16, [[quiet16, 3, 1]]);
+
+            const entry = mockContext.sourceRouteTable.get(quiet16)?.[0];
+
+            expect(entry).toBeDefined();
+
+            // age it past expiry and mark it failing, as an unrefreshed route would be
+            entry!.lastUpdated = Date.now() - 400000;
+            entry!.failureCount = 2;
+
+            sendLinkStatus(relay16, [[quiet16, 3, 1]]);
+
+            const entries = mockContext.sourceRouteTable.get(quiet16);
+
+            expect(entries).toHaveLength(1);
+            expect(Date.now() - entries![0].lastUpdated).toBeLessThan(1000);
+            expect(entries![0].failureCount).toStrictEqual(0);
+        });
+
+        it("records nothing when the outgoing cost is unknown", () => {
+            // outgoing cost 0 means "no outgoing cost is available" (#3.6.1.7, Table 3-71), not "free"
+            sendLinkStatus(relay16, [[quiet16, 7, 0]]);
+
+            expect(mockContext.sourceRouteTable.get(quiet16)).toBeUndefined();
+        });
+
+        it("never routes the coordinator through anyone", () => {
+            sendLinkStatus(relay16, [[ZigbeeConsts.COORDINATOR_ADDRESS, 1, 1]]);
+
+            expect(mockContext.sourceRouteTable.get(ZigbeeConsts.COORDINATOR_ADDRESS)).toBeUndefined();
+        });
+
+        it("records nothing for a device it cannot name", () => {
+            sendLinkStatus(relay16, [[0x9999, 1, 1]]);
+
+            expect(mockContext.sourceRouteTable.get(0x9999)).toBeUndefined();
+        });
+
+        it("records nothing when the relay itself has no usable route", () => {
+            mockContext.sourceRouteTable.delete(relay16);
+
+            sendLinkStatus(relay16, [[quiet16, 3, 1]]);
+
+            expect(mockContext.sourceRouteTable.get(quiet16)).toBeUndefined();
+        });
+
+        it("records nothing when the relay's own route has expired", () => {
+            const stale = nwkHandler.createSourceRouteEntry([], 1);
+            stale.lastUpdated = Date.now() - 400000;
+            mockContext.sourceRouteTable.set(relay16, [stale]);
+
+            sendLinkStatus(relay16, [[quiet16, 3, 1]]);
+
+            expect(mockContext.sourceRouteTable.get(quiet16)).toBeUndefined();
+        });
+
+        it("extends a multi-hop relay path rather than replacing it", () => {
+            const far16 = 0x8e8d;
+            addDevice(far16, 0x00124b00ccddeeffn);
+            // reaching the relay already takes one hop through 0x1111
+            mockContext.sourceRouteTable.set(relay16, [nwkHandler.createSourceRouteEntry([0x1111], 3)]);
+
+            sendLinkStatus(relay16, [[far16, 1, 2]]);
+
+            const entry = mockContext.sourceRouteTable.get(far16)?.[0];
+
+            expect(entry?.relayAddresses).toStrictEqual([0x1111, relay16]);
+            expect(entry?.pathCost).toStrictEqual(5);
+        });
+
+        it("refuses a path that loops back through its own destination", () => {
+            // we reach the relay *through* the quiet node; routing the quiet node back through the
+            // relay would be a loop
+            mockContext.sourceRouteTable.set(relay16, [nwkHandler.createSourceRouteEntry([quiet16], 3)]);
+
+            sendLinkStatus(relay16, [[quiet16, 3, 1]]);
+
+            expect(mockContext.sourceRouteTable.get(quiet16)).toBeUndefined();
+        });
+
+        it("leaves a better existing route in place", () => {
+            // a direct route to the quiet node already exists and is cheaper
+            mockContext.sourceRouteTable.set(quiet16, [nwkHandler.createSourceRouteEntry([], 1)]);
+
+            sendLinkStatus(relay16, [[quiet16, 3, 1]]);
+
+            const entries = mockContext.sourceRouteTable.get(quiet16);
+
+            expect(entries).toHaveLength(2);
+
+            // the cheaper direct route still wins
+            const [, relayAddresses] = nwkHandler.findBestSourceRoute(quiet16, undefined);
+
+            expect(relayAddresses).toBeUndefined();
+        });
+    });
+
     describe("Additional NWK Commands", () => {
         it("should process route reply", () => {
             const device16 = 0x1234;

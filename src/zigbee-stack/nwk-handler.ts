@@ -540,6 +540,96 @@ export class NWKHandler {
     }
 
     /**
+     * 05-3474-23 #3.6.3.3 (Source routing tables)
+     *
+     * Record that `neighbor16` is reachable by relaying through `relay16`, learned from a link status
+     * entry `relay16` sent about it.
+     *
+     * WHY THIS EXISTS. A source route is otherwise only learned from traffic the destination itself
+     * sends, and expires CONFIG_NWK_ROUTE_EXPIRY_TIME after the last such frame. A mains router with
+     * nothing to report sends none, so its route ages out while the device sits there perfectly
+     * healthy -- and `findBestSourceRoute` then returns nothing and the caller falls back to
+     * addressing the frame directly at MAC level. That last resort assumes the coordinator has a
+     * radio that might just reach the destination. A coordinator that has none (an RCP-less,
+     * tunnel-only deployment) cannot deliver it at all, and every frame to a quiet router fails.
+     *
+     * Link status commands are the fix because they arrive from every router on a ~15 s timer and
+     * name exactly the neighbours that router can reach. A route learned here is therefore refreshed
+     * far faster than it can expire, for as long as the relay is alive.
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Gates on the OUTGOING cost, which #3.4.8 defines as the relay -> neighbour direction, i.e. the one traffic takes
+     * - ✅ Costs the hop at max(incoming, outgoing) per #3.6.4.5.1.2, not at the outgoing cost alone
+     * - ✅ Treats outgoing cost 0 as the broken/unidirectional link #3.6.4.4.2 says it is, and records nothing
+     * - ✅ Extends the relay's own best path, so a neighbour two hops out is reached in two hops
+     * - ✅ Skips relay paths that already pass through the destination (a loop) or that would exceed CONFIG_NWK_MAX_SOURCE_ROUTE
+     * - ⚠️  Cost is additive over the path; the spec leaves link cost composition to the implementation
+     * DEVICE SCOPE: Coordinator, routers (N/A)
+     */
+    #relayRouteThroughNeighbor(relay16: number, neighbor16: number, incomingCost: number, outgoingCost: number, now: number): void {
+        // The coordinator is never reached through anyone, and a device we cannot name we cannot route to.
+        if (
+            neighbor16 === ZigbeeConsts.COORDINATOR_ADDRESS ||
+            neighbor16 === relay16 ||
+            neighbor16 >= ZigbeeConsts.BCAST_MIN ||
+            !this.#context.address16ToAddress64.has(neighbor16)
+        ) {
+            return;
+        }
+
+        // 05-3474-23 #3.6.4.4.2: an outgoing cost of 0 means the link "SHOULD be considered
+        // unidirectional or completely broken", and route request processing discards such a frame
+        // outright (#3.6.4.5.1.2). It is not a free link; it is no link.
+        if (outgoingCost === 0) {
+            return;
+        }
+
+        // 05-3474-23 #3.6.4.5.1.2: "The maximum of the incoming and outgoing costs for the neighbor is
+        // used for the purposes of the path cost calculation, instead of the incoming cost."
+        const linkCost = Math.max(incomingCost, outgoingCost);
+
+        // How we reach the relay itself, without the side effects of findBestSourceRoute -- this runs
+        // for every link of every link status frame and must not schedule discoveries or drop entries.
+        const relayEntries = this.#context.sourceRouteTable.get(relay16);
+
+        if (relayEntries === undefined || relayEntries.length === 0) {
+            return;
+        }
+
+        let relayPath: SourceRouteTableEntry | undefined;
+
+        for (const entry of relayEntries) {
+            if (now - entry.lastUpdated > CONFIG_NWK_ROUTE_EXPIRY_TIME || entry.failureCount >= CONFIG_NWK_ROUTE_MAX_FAILURES) {
+                continue;
+            }
+
+            // A path to the relay that already goes through the neighbour cannot also be the path to
+            // the neighbour. This is not hypothetical: the block that calls this has just recorded
+            // "reach the sender via `address`" from this very link, so that entry is sitting in the
+            // table, is often the cheapest, and would fold into a loop if taken.
+            if (entry.relayAddresses.indexOf(neighbor16) !== -1) {
+                continue;
+            }
+
+            if (entry.relayAddresses.length + 1 > CONFIG_NWK_MAX_SOURCE_ROUTE) {
+                continue;
+            }
+
+            if (relayPath === undefined || entry.pathCost < relayPath.pathCost) {
+                relayPath = entry;
+            }
+        }
+
+        if (relayPath === undefined) {
+            return;
+        }
+
+        const relayAddresses = [...relayPath.relayAddresses, relay16];
+
+        this.upsertSourceRoute(neighbor16, this.createSourceRouteEntry(relayAddresses, relayPath.pathCost + linkCost));
+    }
+
+    /**
      * 05-3474-23 #3.6.3.3
      *
      * Check if a source route already exists in the table
@@ -1495,6 +1585,9 @@ export class NWKHandler {
             device.linkStatusMisses = 0;
         }
 
+        // one timestamp for the whole frame, so every link it carries ages together
+        const now = Date.now();
+
         for (let i = 0; i < linkCount; i++) {
             const address = data.readUInt16LE(offset);
             offset += 2;
@@ -1523,6 +1616,18 @@ export class NWKHandler {
                         : this.createSourceRouteEntry([address], pathCost + 1);
 
                 this.upsertSourceRoute(device.address16, entry);
+
+                // ...and the converse, which is the direction that keeps a quiet router reachable.
+                // The block above reads the link as "`address` can relay to the sender". The same link
+                // also says the sender can reach `address` -- so if we can reach the sender, we can
+                // reach `address` through it. See #relayRouteThroughNeighbor for why this matters.
+                this.#relayRouteThroughNeighbor(
+                    device.address16,
+                    address,
+                    incomingCost,
+                    (costByte & ZigbeeNWKConsts.CMD_LINK_OUTGOING_COST_MASK) >> 4,
+                    now,
+                );
             }
         }
 
