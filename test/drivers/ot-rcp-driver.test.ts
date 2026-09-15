@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import EventEmitter from "node:events";
 import { existsSync, rmSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { OTRCPDriver, type TransportInterfaceEventMap } from "../../src/drivers/ot-rcp-driver.js";
@@ -723,6 +723,37 @@ describe("OT RCP Driver", () => {
             expect(driver.context.deviceTable.size).toStrictEqual(0);
             expect(driver.context.address16ToAddress64.size).toStrictEqual(0);
             expect(driver.context.indirectTransmissions.size).toStrictEqual(0);
+        });
+
+        it("keeps the save file when stopping before state was loaded", async () => {
+            // a start that cannot open the adapter tears the driver back down without ever reaching `loadState`,
+            // so the context still holds the constructor params and empty tables. saving that would replace a
+            // good save file with an empty network.
+            const savePath = join(saveDir, "zoh.save");
+            const existingState = randomBytes(64);
+
+            await writeFile(savePath, existingState);
+
+            const saveStateSpy = vi.spyOn(driver.context, "saveState");
+
+            expect(driver.context.loaded).toStrictEqual(false);
+
+            await mockStop(driver);
+
+            expect(saveStateSpy).toHaveBeenCalledTimes(0);
+            expect(await readFile(savePath)).toStrictEqual(existingState);
+        });
+
+        it("saves the state when stopping after state was loaded", async () => {
+            await mockStart(driver);
+
+            const saveStateSpy = vi.spyOn(driver.context, "saveState");
+
+            expect(driver.context.loaded).toStrictEqual(true);
+
+            await mockStop(driver);
+
+            expect(saveStateSpy).toHaveBeenCalledTimes(1);
         });
 
         it("throw on failed RESET", async () => {
