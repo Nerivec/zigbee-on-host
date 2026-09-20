@@ -1,4 +1,16 @@
-### Guidelines
+# Contributing
+
+> [!NOTE]
+> Contributions get harder to review with increased size, and the potential for breaks increases drastically.
+> Try to keep contributions on same aspect, and as small as possible.
+> For larger contributions, split into multiple pull requests when possible.
+
+> [!IMPORTANT]
+> On the use of AI:
+> - AI-aided: OK - understanding a pull request's goal/changes is a must
+> - AI-coded: NO - will be ignored/rejected
+
+## Guidelines
 
 Some quick guidelines to keep the codebase maintainable:
 
