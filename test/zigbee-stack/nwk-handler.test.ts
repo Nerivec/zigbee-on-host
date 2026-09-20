@@ -230,6 +230,67 @@ describe("NWK Handler", () => {
             expect(routes[0].lastUsed).toBeDefined();
         });
 
+        it("records success against the selected route, not the first one held", () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0000001234n;
+
+            mockContext.address16ToAddress64.set(device16, device64);
+
+            // an inferred relayed path was installed first, then the device reported a direct one
+            const relayed = nwkHandler.createSourceRouteEntry([0x0001], 2);
+            const direct = nwkHandler.createSourceRouteEntry([], 1);
+
+            mockContext.sourceRouteTable.set(device16, [relayed, direct]);
+
+            // the cheaper path is the one that carries the frame
+            expect(nwkHandler.findBestSourceRoute(device16, undefined)[1]).toBeUndefined();
+
+            nwkHandler.markRouteSuccess(device16);
+
+            expect(direct.lastUsed).toBeDefined();
+            expect(direct.failureCount).toStrictEqual(0);
+            expect(relayed.lastUsed).toBeUndefined();
+
+            // table order is untouched: it is reported verbatim in Mgmt_Rtg_rsp
+            expect(mockContext.sourceRouteTable.get(device16)).toStrictEqual([relayed, direct]);
+        });
+
+        it("does not clear a blacklisted route when the frame went direct as a last resort", () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0000001234n;
+
+            mockContext.address16ToAddress64.set(device16, device64);
+
+            const blacklisted = nwkHandler.createSourceRouteEntry([0x0001], 2);
+
+            blacklisted.failureCount = 3;
+            mockContext.sourceRouteTable.set(device16, [blacklisted]);
+
+            // nothing is selectable, so the frame was sent direct; its success says nothing
+            // about the stored path
+            nwkHandler.markRouteSuccess(device16);
+
+            expect(blacklisted.failureCount).toStrictEqual(3);
+            expect(blacklisted.lastUsed).toBeUndefined();
+        });
+
+        it("records failure against the selected route, not the first one held", () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0000001234n;
+
+            mockContext.address16ToAddress64.set(device16, device64);
+
+            const relayed = nwkHandler.createSourceRouteEntry([0x0001], 2);
+            const direct = nwkHandler.createSourceRouteEntry([], 1);
+
+            mockContext.sourceRouteTable.set(device16, [relayed, direct]);
+
+            nwkHandler.markRouteFailure(device16);
+
+            expect(direct.failureCount).toStrictEqual(1);
+            expect(relayed.failureCount).toStrictEqual(0);
+        });
+
         it("should mark route failure and trigger MTORR", async () => {
             const sendPeriodicManyToOneRouteRequestSpy = vi.spyOn(nwkHandler, "sendPeriodicManyToOneRouteRequest");
             const device16 = 0x1234;
