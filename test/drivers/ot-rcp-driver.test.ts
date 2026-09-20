@@ -726,9 +726,6 @@ describe("OT RCP Driver", () => {
         });
 
         it("keeps the save file when stopping before state was loaded", async () => {
-            // a start that cannot open the adapter tears the driver back down without ever reaching `loadState`,
-            // so the context still holds the constructor params and empty tables. saving that would replace a
-            // good save file with an empty network.
             const savePath = join(saveDir, "zoh.save");
             const existingState = randomBytes(64);
 
