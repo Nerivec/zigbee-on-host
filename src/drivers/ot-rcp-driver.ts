@@ -777,10 +777,6 @@ export class OTRCPDriver {
             await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false));
         }
 
-        // a `stop` that follows a `start` which never reached `loadState` has nothing worth saving: `netParams`
-        // still hold the constructor defaults and every table is empty, so writing here would replace a good save
-        // file with an empty network. this is reachable whenever opening the adapter fails, since the caller's
-        // error path tears the driver down before the state has been read.
         if (this.context.loaded) {
             await this.context.saveState();
         }
