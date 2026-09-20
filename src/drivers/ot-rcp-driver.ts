@@ -777,7 +777,9 @@ export class OTRCPDriver {
             await this.setProperty(writePropertyb(SpinelPropertyId.MAC_RAW_STREAM_ENABLED, false));
         }
 
-        await this.context.saveState();
+        if (this.context.loaded) {
+            await this.context.saveState();
+        }
 
         logger.info("======== Driver stopped ========", NS);
     }
