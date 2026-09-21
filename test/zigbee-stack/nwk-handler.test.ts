@@ -160,6 +160,121 @@ describe("NWK Handler", () => {
             expect(relayAddresses).toEqual([0x0003]);
         });
 
+        it("does not reorder the source route table when a lookup prunes an entry", () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0012345678n;
+
+            mockContext.address16ToAddress64.set(device16, device64);
+
+            // Insertion order: the expired entry first, then a costly direct path, then a
+            // cheap relayed one. Filtering drops the first, which is what makes
+            // `findBestSourceRoute` write the survivors back to the table.
+            mockContext.sourceRouteTable.set(device16, [
+                {
+                    relayAddresses: [0x00aa],
+                    pathCost: 2,
+                    lastUpdated: Date.now() - 11 * 60 * 1000, // expired
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+                {
+                    relayAddresses: [],
+                    pathCost: 5,
+                    lastUpdated: Date.now(),
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+                {
+                    relayAddresses: [0x00bb],
+                    pathCost: 1,
+                    lastUpdated: Date.now(),
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+            ]);
+
+            const [, relayAddresses] = nwkHandler.findBestSourceRoute(device16, device64);
+
+            // The cheapest entry is chosen even though it is last in the table.
+            expect(relayAddresses).toEqual([0x00bb]);
+
+            // ...and the table still holds the survivors in insertion order. A read path
+            // must not reorder state that `Mgmt_Rtg_rsp` reports verbatim.
+            const stored = mockContext.sourceRouteTable.get(device16)!;
+
+            expect(stored.map((e) => e.pathCost)).toStrictEqual([5, 1]);
+        });
+
+        it("returns the same table order on repeated lookups", () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0012345678n;
+
+            mockContext.address16ToAddress64.set(device16, device64);
+
+            mockContext.sourceRouteTable.set(device16, [
+                {
+                    relayAddresses: [0x00aa],
+                    pathCost: 9,
+                    lastUpdated: Date.now() - 11 * 60 * 1000, // expired, forces the write-back
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+                {
+                    relayAddresses: [0x00cc],
+                    pathCost: 4,
+                    lastUpdated: Date.now(),
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+                {
+                    relayAddresses: [],
+                    pathCost: 1,
+                    lastUpdated: Date.now(),
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+            ]);
+
+            nwkHandler.findBestSourceRoute(device16, device64);
+            const afterFirst = mockContext.sourceRouteTable.get(device16)!.map((e) => e.pathCost);
+
+            nwkHandler.findBestSourceRoute(device16, device64);
+            const afterSecond = mockContext.sourceRouteTable.get(device16)!.map((e) => e.pathCost);
+
+            expect(afterFirst).toStrictEqual([4, 1]);
+            expect(afterSecond).toStrictEqual(afterFirst);
+        });
+
+        it("keeps the earlier entry when two routes score equally", () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0012345678n;
+
+            mockContext.address16ToAddress64.set(device16, device64);
+
+            // Same cost, same age, no failures: the tie must break on table order, which is
+            // what the stable sort used to do.
+            mockContext.sourceRouteTable.set(device16, [
+                {
+                    relayAddresses: [0x0011],
+                    pathCost: 2,
+                    lastUpdated: Date.now(),
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+                {
+                    relayAddresses: [0x0022],
+                    pathCost: 2,
+                    lastUpdated: Date.now(),
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+            ]);
+
+            const [, relayAddresses] = nwkHandler.findBestSourceRoute(device16, device64);
+
+            expect(relayAddresses).toEqual([0x0011]);
+        });
+
         it("should filter expired routes", () => {
             const device16 = 0x1234;
             const device64 = 0x00124b0012345678n;

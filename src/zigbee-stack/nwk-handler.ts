@@ -367,6 +367,40 @@ export class NWKHandler {
     /**
      * 05-3474-23 #3.6.3.3 (Source routing tables)
      *
+     * The lowest-scoring entry of an already-filtered list, without reordering it.
+     *
+     * Ranking by scanning rather than by sorting is what keeps the source route table in
+     * insertion order: the array handed in here is sometimes the very array stored in
+     * `sourceRouteTable`, which is reported verbatim in `Mgmt_Rtg_rsp` and is the order
+     * blacklisting walks. A comparison `sort()` would reorder that state as a side effect
+     * of a read.
+     *
+     * The tie rule is the stable sort's: a strictly lower score wins, so equal scores keep
+     * the earlier entry.
+     *
+     * @param entries Entries already judged usable by `#rejectRouteEntry`
+     * @param now Reference time, so a whole list is scored against a single instant
+     * @returns The entry that should carry the frame, or undefined when the list is empty
+     */
+    #lowestScoringEntry(entries: SourceRouteTableEntry[], now: number): SourceRouteTableEntry | undefined {
+        let best: SourceRouteTableEntry | undefined;
+        let bestScore = Number.POSITIVE_INFINITY;
+
+        for (const entry of entries) {
+            const score = this.#scoreRouteEntry(entry, now);
+
+            if (score < bestScore) {
+                best = entry;
+                bestScore = score;
+            }
+        }
+
+        return best;
+    }
+
+    /**
+     * 05-3474-23 #3.6.3.3 (Source routing tables)
+     *
      * The entry `findBestSourceRoute` would choose for a destination, without the table
      * maintenance and route discovery that function also performs.
      *
@@ -378,25 +412,15 @@ export class NWKHandler {
      */
     #selectRouteEntry(entries: SourceRouteTableEntry[]): SourceRouteTableEntry | undefined {
         const now = Date.now();
-        let best: SourceRouteTableEntry | undefined;
-        let bestScore = Number.POSITIVE_INFINITY;
+        const usableEntries: SourceRouteTableEntry[] = [];
 
         for (const entry of entries) {
-            if (this.#rejectRouteEntry(entry, now, false) !== undefined) {
-                continue;
-            }
-
-            const score = this.#scoreRouteEntry(entry, now);
-
-            // strictly lower, so that ties keep the earlier entry, as the sort in
-            // `findBestSourceRoute` does
-            if (score < bestScore) {
-                best = entry;
-                bestScore = score;
+            if (this.#rejectRouteEntry(entry, now, false) === undefined) {
+                usableEntries.push(entry);
             }
         }
 
-        return best;
+        return this.#lowestScoringEntry(usableEntries, now);
     }
 
     public findBestSourceRoute(
@@ -477,10 +501,10 @@ export class NWKHandler {
             this.#context.sourceRouteTable.set(destination16, validEntries);
         }
 
-        // sort routes by composite score: path cost + staleness penalty + failure penalty + recency bonus
-        validEntries.sort((a, b) => this.#scoreRouteEntry(a, now) - this.#scoreRouteEntry(b, now));
-
-        const bestEntry = validEntries[0];
+        // Rank by scanning, never by sorting: when the filter above dropped an entry,
+        // `validEntries` IS the array just stored in the table, and an in-place sort would
+        // reorder persistent state as a side effect of a read. See `#lowestScoringEntry`.
+        const bestEntry = this.#lowestScoringEntry(validEntries, now)!;
 
         if (bestEntry.relayAddresses.length === 0) {
             // direct route (cost only, no relays)
