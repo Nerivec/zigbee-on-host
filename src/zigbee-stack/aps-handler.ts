@@ -1765,6 +1765,23 @@ export class APSHandler {
         } else if (status === ZigbeeAPSUpdateDeviceStatus.DEVICE_LEFT) {
             // left
             // TODO: according to spec, this is "informative" only, should not take any action?
+
+            // A third party's report can arrive after the device has already
+            // rejoined elsewhere under a new address -- a former parent ages the
+            // child out tens of seconds after it left. Removing by EUI64 then
+            // takes out the live device. Only a report naming the address the
+            // device holds now describes it.
+            const current16 = this.#context.deviceTable.get(device64)?.address16;
+
+            if (current16 !== undefined && current16 !== device16) {
+                logger.debug(
+                    () => `<-~- APS Ignoring stale UPDATE_DEVICE[dev=${device16}:${device64} status=${status}], device is now ${current16}`,
+                    NS,
+                );
+
+                return offset;
+            }
+
             await this.#context.disassociate(device16, device64);
         }
 
