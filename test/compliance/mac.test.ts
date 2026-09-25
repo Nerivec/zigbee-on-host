@@ -1083,7 +1083,8 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
 
             await macHandler.processCommand(Buffer.from([MACDisassociationReason.COORDINATOR_INITIATED]), buildDisassocHeader());
 
-            expect(disassociateSpy).toHaveBeenCalledWith(disassocDest16, undefined);
+            // dropKeys=false: an unauthenticated frame must not destroy keys.
+            expect(disassociateSpy).toHaveBeenCalledWith(disassocDest16, undefined, false);
             expect(context.deviceTable.has(disassocDest64)).toStrictEqual(false);
             expect(context.address16ToAddress64.has(disassocDest16)).toStrictEqual(false);
             expect(context.indirectTransmissions.has(disassocDest64)).toStrictEqual(false);
@@ -1095,7 +1096,7 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
 
             await macHandler.processCommand(Buffer.from([MACDisassociationReason.DEVICE_INITIATED]), buildDisassocHeader());
 
-            expect(disassociateSpy).toHaveBeenCalledWith(disassocDest16, undefined);
+            expect(disassociateSpy).toHaveBeenCalledWith(disassocDest16, undefined, false);
             expect(context.deviceTable.has(disassocDest64)).toStrictEqual(false);
         });
     });

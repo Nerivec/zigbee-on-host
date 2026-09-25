@@ -1845,7 +1845,12 @@ export class APSHandler {
         } else if (status === ZigbeeAPSUpdateDeviceStatus.DEVICE_LEFT) {
             // left
             // TODO: according to spec, this is "informative" only, should not take any action?
-            await this.#context.disassociate(device16, device64);
+            //
+            // dropKeys=false: 05-3474-23 #4.4.3.2.3 item 1, "A Device Left is
+            // considered informative but SHOULD NOT be considered
+            // authoritative. Security related actions SHALL not be taken on
+            // receipt of this." Deleting a link key is such an action.
+            await this.#context.disassociate(device16, device64, false);
         }
 
         return offset;
