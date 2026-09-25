@@ -540,6 +540,96 @@ export class NWKHandler {
     }
 
     /**
+     * 05-3474-23 #3.6.3.3 (Source routing tables)
+     *
+     * Record that `neighbor16` is reachable by relaying through `relay16`, learned from a link status
+     * entry `relay16` sent about it.
+     *
+     * WHY THIS EXISTS. A source route is otherwise only learned from traffic the destination itself
+     * sends, and expires CONFIG_NWK_ROUTE_EXPIRY_TIME after the last such frame. A mains router with
+     * nothing to report sends none, so its route ages out while the device sits there perfectly
+     * healthy -- and `findBestSourceRoute` then returns nothing and the caller falls back to
+     * addressing the frame directly at MAC level. That last resort assumes the coordinator has a
+     * radio that might just reach the destination. A coordinator that has none (an RCP-less,
+     * tunnel-only deployment) cannot deliver it at all, and every frame to a quiet router fails.
+     *
+     * Link status commands are the fix because they arrive from every router on a ~15 s timer and
+     * name exactly the neighbours that router can reach. A route learned here is therefore refreshed
+     * far faster than it can expire, for as long as the relay is alive.
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Gates on the OUTGOING cost, which #3.4.8 defines as the relay -> neighbour direction, i.e. the one traffic takes
+     * - ✅ Costs the hop at max(incoming, outgoing) per #3.6.4.5.1.2, not at the outgoing cost alone
+     * - ✅ Treats outgoing cost 0 as the broken/unidirectional link #3.6.4.4.2 says it is, and records nothing
+     * - ✅ Extends the relay's own best path, so a neighbour two hops out is reached in two hops
+     * - ✅ Skips relay paths that already pass through the destination (a loop) or that would exceed CONFIG_NWK_MAX_SOURCE_ROUTE
+     * - ⚠️  Cost is additive over the path; the spec leaves link cost composition to the implementation
+     * DEVICE SCOPE: Coordinator, routers (N/A)
+     */
+    #relayRouteThroughNeighbor(relay16: number, neighbor16: number, incomingCost: number, outgoingCost: number, now: number): void {
+        // The coordinator is never reached through anyone, and a device we cannot name we cannot route to.
+        if (
+            neighbor16 === ZigbeeConsts.COORDINATOR_ADDRESS ||
+            neighbor16 === relay16 ||
+            neighbor16 >= ZigbeeConsts.BCAST_MIN ||
+            !this.#context.address16ToAddress64.has(neighbor16)
+        ) {
+            return;
+        }
+
+        // 05-3474-23 #3.6.4.4.2: an outgoing cost of 0 means the link "SHOULD be considered
+        // unidirectional or completely broken", and route request processing discards such a frame
+        // outright (#3.6.4.5.1.2). It is not a free link; it is no link.
+        if (outgoingCost === 0) {
+            return;
+        }
+
+        // 05-3474-23 #3.6.4.5.1.2: "The maximum of the incoming and outgoing costs for the neighbor is
+        // used for the purposes of the path cost calculation, instead of the incoming cost."
+        const linkCost = Math.max(incomingCost, outgoingCost);
+
+        // How we reach the relay itself, without the side effects of findBestSourceRoute -- this runs
+        // for every link of every link status frame and must not schedule discoveries or drop entries.
+        const relayEntries = this.#context.sourceRouteTable.get(relay16);
+
+        if (relayEntries === undefined || relayEntries.length === 0) {
+            return;
+        }
+
+        let relayPath: SourceRouteTableEntry | undefined;
+
+        for (const entry of relayEntries) {
+            if (now - entry.lastUpdated > CONFIG_NWK_ROUTE_EXPIRY_TIME || entry.failureCount >= CONFIG_NWK_ROUTE_MAX_FAILURES) {
+                continue;
+            }
+
+            // A path to the relay that already goes through the neighbour cannot also be the path to
+            // the neighbour. This is not hypothetical: the block that calls this has just recorded
+            // "reach the sender via `address`" from this very link, so that entry is sitting in the
+            // table, is often the cheapest, and would fold into a loop if taken.
+            if (entry.relayAddresses.indexOf(neighbor16) !== -1) {
+                continue;
+            }
+
+            if (entry.relayAddresses.length + 1 > CONFIG_NWK_MAX_SOURCE_ROUTE) {
+                continue;
+            }
+
+            if (relayPath === undefined || entry.pathCost < relayPath.pathCost) {
+                relayPath = entry;
+            }
+        }
+
+        if (relayPath === undefined) {
+            return;
+        }
+
+        const relayAddresses = [...relayPath.relayAddresses, relay16];
+
+        this.upsertSourceRoute(neighbor16, this.createSourceRouteEntry(relayAddresses, relayPath.pathCost + linkCost));
+    }
+
+    /**
      * 05-3474-23 #3.6.3.3
      *
      * Check if a source route already exists in the table
@@ -577,6 +667,54 @@ export class NWKHandler {
         }
 
         return false;
+    }
+
+    /**
+     * 05-3474-23 #3.6.3.3 (Source routing tables)
+     *
+     * Add a source route for a destination, or refresh the existing entry when that path is already known.
+     *
+     * A device that keeps confirming the same path must keep that path alive: without refreshing `lastUpdated`,
+     * the entry ages out of `findBestSourceRoute` after CONFIG_NWK_ROUTE_EXPIRY_TIME while the device is still
+     * reporting it, and every frame to that destination falls back to direct until discovery runs again.
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Matches on the relay hop list, which is the identity of a path; refreshes cost, age and failure count on a match
+     * - ✅ Accepts optional pre-fetched entry array to avoid redundant map lookups
+     * - ⚠️  Formally spec route table holds single entry per destination; this helper assumes multi-entry model
+     * DEVICE SCOPE: Coordinator, routers (N/A)
+     */
+    public upsertSourceRoute(address16: number, newEntry: SourceRouteTableEntry, existingEntries?: SourceRouteTableEntry[]): void {
+        const entries = existingEntries ?? this.#context.sourceRouteTable.get(address16);
+
+        if (entries === undefined) {
+            this.#context.sourceRouteTable.set(address16, [newEntry]);
+
+            return;
+        }
+
+        for (const existingEntry of entries) {
+            if (newEntry.relayAddresses.length === existingEntry.relayAddresses.length) {
+                let matching = true;
+
+                for (let i = 0; i < newEntry.relayAddresses.length; i++) {
+                    if (newEntry.relayAddresses[i] !== existingEntry.relayAddresses[i]) {
+                        matching = false;
+                        break;
+                    }
+                }
+
+                if (matching) {
+                    existingEntry.pathCost = newEntry.pathCost;
+                    existingEntry.lastUpdated = newEntry.lastUpdated;
+                    existingEntry.failureCount = 0;
+
+                    return;
+                }
+            }
+        }
+
+        entries.push(newEntry);
     }
 
     // #endregion
@@ -826,7 +964,10 @@ export class NWKHandler {
 
         if (destination16 < ZigbeeConsts.BCAST_MIN) {
             await this.sendRouteReply(
-                macHeader.destination16!,
+                // the first hop back to the originator is the neighbour this request arrived from.
+                // a route request is broadcast, so `macHeader.destination16` is BCAST_DEFAULT here,
+                // and replying to it addresses the reply to the whole network instead of to the originator.
+                macHeader.source16!,
                 nwkHeader.radius!,
                 id,
                 nwkHeader.source16!,
@@ -939,27 +1080,9 @@ export class NWKHandler {
             }
 
             const routeEntry = this.createSourceRouteEntry(nextHopCandidates, pathCost === 0 ? nextHopCandidates.length + 1 : pathCost);
-            const existingEntries = this.#context.sourceRouteTable.get(responder16);
 
-            if (existingEntries === undefined) {
-                this.#context.sourceRouteTable.set(responder16, [routeEntry]);
-            } else {
-                const existingIndex = existingEntries.findIndex(
-                    (entry) =>
-                        entry.relayAddresses.length === routeEntry.relayAddresses.length &&
-                        entry.relayAddresses.every((relay, idx) => relay === routeEntry.relayAddresses[idx]),
-                );
-
-                if (existingIndex !== -1) {
-                    const existingEntry = existingEntries[existingIndex];
-                    existingEntry.pathCost = routeEntry.pathCost;
-                    existingEntry.lastUpdated = routeEntry.lastUpdated;
-                    existingEntry.failureCount = 0;
-                } else if (!this.hasSourceRoute(responder16, routeEntry, existingEntries)) {
-                    // TODO: do we want this here?
-                    existingEntries.push(routeEntry);
-                }
-            }
+            // TODO: do we want this here?
+            this.upsertSourceRoute(responder16, routeEntry);
 
             this.markRouteSuccess(responder16);
         }
@@ -1213,7 +1336,7 @@ export class NWKHandler {
      * - ✅ Stores source route in sourceRouteTable
      * - ✅ Creates source route entry with relays and path cost (relayCount + 1)
      * - ✅ Handles missing source16 by looking up via source64
-     * - ✅ Checks for duplicate routes before adding (hasSourceRoute)
+     * - ✅ Refreshes the known path, or adds it when new (upsertSourceRoute)
      * - ✅ ROUTE_RECORD provides path from source to coordinator
      *       - Relay list is in order from source toward coordinator ✅
      *       - Path cost calculation (relayCount + 1) is correct ✅
@@ -1256,14 +1379,7 @@ export class NWKHandler {
                 : nwkHeader.source16;
 
         if (source16 !== undefined) {
-            const entry = this.createSourceRouteEntry(relays, relayCount + 1);
-            const entries = this.#context.sourceRouteTable.get(source16);
-
-            if (entries === undefined) {
-                this.#context.sourceRouteTable.set(source16, [entry]);
-            } else if (!this.hasSourceRoute(source16, entry, entries)) {
-                entries.push(entry);
-            }
+            this.upsertSourceRoute(source16, this.createSourceRouteEntry(relays, relayCount + 1));
         }
 
         return offset;
@@ -1469,6 +1585,9 @@ export class NWKHandler {
             device.linkStatusMisses = 0;
         }
 
+        // one timestamp for the whole frame, so every link it carries ages together
+        const now = Date.now();
+
         for (let i = 0; i < linkCount; i++) {
             const address = data.readUInt16LE(offset);
             offset += 2;
@@ -1495,27 +1614,20 @@ export class NWKHandler {
                     address === ZigbeeConsts.COORDINATOR_ADDRESS
                         ? this.createSourceRouteEntry([], pathCost)
                         : this.createSourceRouteEntry([address], pathCost + 1);
-                const entries = this.#context.sourceRouteTable.get(device.address16);
 
-                if (entries === undefined) {
-                    this.#context.sourceRouteTable.set(device.address16, [entry]);
-                } else {
-                    // check if we already have this route; if so, update it
-                    const existingIndex = entries.findIndex(
-                        (e) =>
-                            e.relayAddresses.length === entry.relayAddresses.length &&
-                            e.relayAddresses.every((relay, idx) => relay === entry.relayAddresses[idx]),
-                    );
+                this.upsertSourceRoute(device.address16, entry);
 
-                    if (existingIndex !== -1) {
-                        // update existing route with new cost and reset failure count
-                        entries[existingIndex].pathCost = entry.pathCost;
-                        entries[existingIndex].lastUpdated = entry.lastUpdated;
-                        entries[existingIndex].failureCount = 0;
-                    } else if (!this.hasSourceRoute(device.address16, entry, entries)) {
-                        entries.push(entry);
-                    }
-                }
+                // ...and the converse, which is the direction that keeps a quiet router reachable.
+                // The block above reads the link as "`address` can relay to the sender". The same link
+                // also says the sender can reach `address` -- so if we can reach the sender, we can
+                // reach `address` through it. See #relayRouteThroughNeighbor for why this matters.
+                this.#relayRouteThroughNeighbor(
+                    device.address16,
+                    address,
+                    incomingCost,
+                    (costByte & ZigbeeNWKConsts.CMD_LINK_OUTGOING_COST_MASK) >> 4,
+                    now,
+                );
             }
         }
 

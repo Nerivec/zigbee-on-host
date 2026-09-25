@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { logger } from "../../src/utils/logger.js";
-import { MACAssociationStatus, type MACCapabilities, type MACHeader } from "../../src/zigbee/mac.js";
+import { MACAssociationStatus, type MACCapabilities, type MACHeader, ZigbeeMACConsts } from "../../src/zigbee/mac.js";
 import { makeKeyedHashByType, registerDefaultHashedKeys, ZigbeeConsts, ZigbeeKeyType } from "../../src/zigbee/zigbee.js";
 import { ZigbeeNWKCommandId, ZigbeeNWKConsts, type ZigbeeNWKHeader } from "../../src/zigbee/zigbee-nwk.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
@@ -804,6 +804,198 @@ describe("NWK Handler", () => {
         });
     });
 
+    describe("Link Status Relay Routes", () => {
+        const relay16 = 0xfed8;
+        const relay64 = 0x00124b0022334455n;
+        const quiet16 = 0x4e1e;
+        const quiet64 = 0x00124b0066778899n;
+
+        const addDevice = (address16: number, address64: bigint) => {
+            mockContext.address16ToAddress64.set(address16, address64);
+            mockContext.deviceTable.set(address64, {
+                address16,
+                authorized: true,
+                capabilities: {
+                    alternatePANCoordinator: false,
+                    deviceType: 1,
+                    powerSource: 1,
+                    rxOnWhenIdle: true,
+                    securityCapability: true,
+                    allocateAddress: true,
+                },
+                neighbor: false,
+                lastTransportedNetworkKeySeq: undefined,
+                recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
+            });
+        };
+
+        /** One link status frame from `sender16` listing `links` as [address, incomingCost, outgoingCost]. */
+        const sendLinkStatus = (sender16: number, links: [number, number, number][]) => {
+            const payload = Buffer.alloc(1 + links.length * 3);
+            payload.writeUInt8(0x60 | links.length, 0); // first frame + last frame + count
+
+            let offset = 1;
+
+            for (const [address, incomingCost, outgoingCost] of links) {
+                offset = payload.writeUInt16LE(address, offset);
+                offset = payload.writeUInt8((incomingCost & 0x07) | ((outgoingCost & 0x07) << 4), offset);
+            }
+
+            nwkHandler.processLinkStatus(
+                payload,
+                0,
+                { frameControl: {}, source16: sender16, sequenceNumber: 1 } as MACHeader,
+                {
+                    frameControl: {
+                        frameType: 1,
+                        protocolVersion: 2,
+                        discoverRoute: 0,
+                        multicast: false,
+                        security: false,
+                        sourceRoute: false,
+                        extendedDestination: false,
+                        extendedSource: false,
+                        endDeviceInitiator: false,
+                    },
+                    destination16: ZigbeeConsts.BCAST_DEFAULT,
+                    source16: sender16,
+                    source64: undefined,
+                    radius: 1,
+                    seqNum: 1,
+                } as ZigbeeNWKHeader,
+            );
+        };
+
+        beforeEach(() => {
+            addDevice(relay16, relay64);
+            addDevice(quiet16, quiet64);
+            // the relay is a coordinator neighbour: a direct, zero-relay route
+            mockContext.sourceRouteTable.set(relay16, [nwkHandler.createSourceRouteEntry([], 1)]);
+        });
+
+        it("routes a quiet neighbour through the relay that reported it", () => {
+            expect(mockContext.sourceRouteTable.get(quiet16)).toBeUndefined();
+
+            sendLinkStatus(relay16, [
+                [ZigbeeConsts.COORDINATOR_ADDRESS, 1, 2],
+                [quiet16, 3, 1],
+            ]);
+
+            const entries = mockContext.sourceRouteTable.get(quiet16);
+
+            expect(entries).toHaveLength(1);
+            expect(entries?.[0].relayAddresses).toStrictEqual([relay16]);
+            // the relay's own cost (1) plus the hop, costed at max(incoming 3, outgoing 1) per #3.6.4.5.1.2
+            expect(entries?.[0].pathCost).toStrictEqual(4);
+
+            // and it is usable, which is the whole point
+            const [relayIndex, relayAddresses] = nwkHandler.findBestSourceRoute(quiet16, undefined);
+
+            expect(relayAddresses).toStrictEqual([relay16]);
+            expect(relayAddresses?.[relayIndex!]).toStrictEqual(relay16);
+        });
+
+        it("refreshes the route on every link status, so it cannot age out", () => {
+            sendLinkStatus(relay16, [[quiet16, 3, 1]]);
+
+            const entry = mockContext.sourceRouteTable.get(quiet16)?.[0];
+
+            expect(entry).toBeDefined();
+
+            // age it past expiry and mark it failing, as an unrefreshed route would be
+            entry!.lastUpdated = Date.now() - 400000;
+            entry!.failureCount = 2;
+
+            sendLinkStatus(relay16, [[quiet16, 3, 1]]);
+
+            const entries = mockContext.sourceRouteTable.get(quiet16);
+
+            expect(entries).toHaveLength(1);
+            expect(Date.now() - entries![0].lastUpdated).toBeLessThan(1000);
+            expect(entries![0].failureCount).toStrictEqual(0);
+        });
+
+        it("records nothing when the outgoing cost is unknown", () => {
+            // outgoing cost 0 means "no outgoing cost is available" (#3.6.1.7, Table 3-71), not "free"
+            sendLinkStatus(relay16, [[quiet16, 7, 0]]);
+
+            expect(mockContext.sourceRouteTable.get(quiet16)).toBeUndefined();
+        });
+
+        it("never routes the coordinator through anyone", () => {
+            sendLinkStatus(relay16, [[ZigbeeConsts.COORDINATOR_ADDRESS, 1, 1]]);
+
+            expect(mockContext.sourceRouteTable.get(ZigbeeConsts.COORDINATOR_ADDRESS)).toBeUndefined();
+        });
+
+        it("records nothing for a device it cannot name", () => {
+            sendLinkStatus(relay16, [[0x9999, 1, 1]]);
+
+            expect(mockContext.sourceRouteTable.get(0x9999)).toBeUndefined();
+        });
+
+        it("records nothing when the relay itself has no usable route", () => {
+            mockContext.sourceRouteTable.delete(relay16);
+
+            sendLinkStatus(relay16, [[quiet16, 3, 1]]);
+
+            expect(mockContext.sourceRouteTable.get(quiet16)).toBeUndefined();
+        });
+
+        it("records nothing when the relay's own route has expired", () => {
+            const stale = nwkHandler.createSourceRouteEntry([], 1);
+            stale.lastUpdated = Date.now() - 400000;
+            mockContext.sourceRouteTable.set(relay16, [stale]);
+
+            sendLinkStatus(relay16, [[quiet16, 3, 1]]);
+
+            expect(mockContext.sourceRouteTable.get(quiet16)).toBeUndefined();
+        });
+
+        it("extends a multi-hop relay path rather than replacing it", () => {
+            const far16 = 0x8e8d;
+            addDevice(far16, 0x00124b00ccddeeffn);
+            // reaching the relay already takes one hop through 0x1111
+            mockContext.sourceRouteTable.set(relay16, [nwkHandler.createSourceRouteEntry([0x1111], 3)]);
+
+            sendLinkStatus(relay16, [[far16, 1, 2]]);
+
+            const entry = mockContext.sourceRouteTable.get(far16)?.[0];
+
+            expect(entry?.relayAddresses).toStrictEqual([0x1111, relay16]);
+            expect(entry?.pathCost).toStrictEqual(5);
+        });
+
+        it("refuses a path that loops back through its own destination", () => {
+            // we reach the relay *through* the quiet node; routing the quiet node back through the
+            // relay would be a loop
+            mockContext.sourceRouteTable.set(relay16, [nwkHandler.createSourceRouteEntry([quiet16], 3)]);
+
+            sendLinkStatus(relay16, [[quiet16, 3, 1]]);
+
+            expect(mockContext.sourceRouteTable.get(quiet16)).toBeUndefined();
+        });
+
+        it("leaves a better existing route in place", () => {
+            // a direct route to the quiet node already exists and is cheaper
+            mockContext.sourceRouteTable.set(quiet16, [nwkHandler.createSourceRouteEntry([], 1)]);
+
+            sendLinkStatus(relay16, [[quiet16, 3, 1]]);
+
+            const entries = mockContext.sourceRouteTable.get(quiet16);
+
+            expect(entries).toHaveLength(2);
+
+            // the cheaper direct route still wins
+            const [, relayAddresses] = nwkHandler.findBestSourceRoute(quiet16, undefined);
+
+            expect(relayAddresses).toBeUndefined();
+        });
+    });
+
     describe("Additional NWK Commands", () => {
         it("should process route reply", () => {
             const device16 = 0x1234;
@@ -1294,6 +1486,41 @@ describe("NWK Handler", () => {
         sendRouteReplySpy.mockRestore();
     });
 
+    it("unicasts the route reply back to the neighbour that broadcast the request", async () => {
+        const sendRouteReplySpy = vi.spyOn(nwkHandler, "sendRouteReply").mockResolvedValue(true);
+        const firstHop16 = 0x8e8d;
+        const payload = Buffer.alloc(1 + 1 + 1 + 2 + 1);
+        let offset = 0;
+        offset = payload.writeUInt8(ZigbeeNWKCommandId.ROUTE_REQ, offset);
+        offset = payload.writeUInt8(0, offset);
+        offset = payload.writeUInt8(0x99, offset);
+        offset = payload.writeUInt16LE(ZigbeeConsts.COORDINATOR_ADDRESS, offset);
+        payload.writeUInt8(0x00, offset);
+
+        await nwkHandler.processCommand(
+            payload,
+            {
+                frameControl: {},
+                // a route request is broadcast, so this is never the originator's address
+                destination16: ZigbeeMACConsts.BCAST_ADDR,
+                source16: firstHop16,
+                sequenceNumber: 42,
+            } as MACHeader,
+            {
+                frameControl: {},
+                source16: firstHop16,
+                source64: 0x00124b0011223344n,
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                radius: 30,
+                seqNum: 43,
+            } as ZigbeeNWKHeader,
+        );
+
+        expect(sendRouteReplySpy).toHaveBeenCalledOnce();
+        expect(sendRouteReplySpy.mock.calls[0][0]).toStrictEqual(firstHop16);
+        sendRouteReplySpy.mockRestore();
+    });
+
     it("purges relay references while retaining alternate routes", async () => {
         vi.spyOn(nwkHandler, "sendPeriodicManyToOneRouteRequest").mockResolvedValue();
 
@@ -1375,6 +1602,239 @@ describe("NWK Handler", () => {
         const routes = mockContext.sourceRouteTable.get(0x7788);
         expect(routes).toBeDefined();
         expect(routes).toHaveLength(2);
+    });
+
+    it("refreshes the known path when a route record repeats it", async () => {
+        const source16 = 0x8899;
+        const staleUpdate = Date.now() - 400000;
+
+        mockContext.sourceRouteTable.set(source16, [
+            {
+                relayAddresses: [0x1234],
+                pathCost: 2,
+                lastUpdated: staleUpdate,
+                failureCount: 2,
+                lastUsed: undefined,
+            },
+        ]);
+
+        const payload = Buffer.from([ZigbeeNWKCommandId.ROUTE_RECORD, 0x01, 0x34, 0x12]);
+
+        await nwkHandler.processCommand(
+            payload,
+            {
+                frameControl: {},
+                source16: 0x1234,
+                sequenceNumber: 21,
+            } as MACHeader,
+            {
+                frameControl: {},
+                source16,
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                seqNum: 22,
+            } as ZigbeeNWKHeader,
+        );
+
+        const routes = mockContext.sourceRouteTable.get(source16);
+        expect(routes).toHaveLength(1);
+        expect(routes?.[0].relayAddresses).toStrictEqual([0x1234]);
+        expect(routes?.[0].lastUpdated).toBeGreaterThan(staleUpdate);
+        expect(routes?.[0].failureCount).toStrictEqual(0);
+    });
+
+    it("keeps a repeated path usable past the route expiry", async () => {
+        const source16 = 0x9911;
+        const source64 = 0x00124b0000991122n;
+
+        mockContext.deviceTable.set(source64, {
+            address16: source16,
+            capabilities: undefined,
+            authorized: true,
+            neighbor: false,
+            lastTransportedNetworkKeySeq: undefined,
+            recentLQAs: [],
+            incomingNWKFrameCounter: undefined,
+            endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
+        });
+        mockContext.address16ToAddress64.set(source16, source64);
+        // learned longer ago than CONFIG_NWK_ROUTE_EXPIRY_TIME
+        mockContext.sourceRouteTable.set(source16, [
+            {
+                relayAddresses: [0x1234],
+                pathCost: 2,
+                lastUpdated: Date.now() - 400000,
+                failureCount: 0,
+                lastUsed: undefined,
+            },
+        ]);
+
+        const payload = Buffer.from([ZigbeeNWKCommandId.ROUTE_RECORD, 0x01, 0x34, 0x12]);
+
+        await nwkHandler.processCommand(
+            payload,
+            {
+                frameControl: {},
+                source16: 0x1234,
+                sequenceNumber: 23,
+            } as MACHeader,
+            {
+                frameControl: {},
+                source16,
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                seqNum: 24,
+            } as ZigbeeNWKHeader,
+        );
+
+        expect(nwkHandler.findBestSourceRoute(source16, undefined)).toStrictEqual([0, [0x1234], 2]);
+        expect(mockContext.sourceRouteTable.get(source16)).toHaveLength(1);
+    });
+
+    it("stores a new entry when the route record carries an unknown path", async () => {
+        const source16 = 0xaa22;
+
+        mockContext.sourceRouteTable.set(source16, [
+            {
+                relayAddresses: [0x1234],
+                pathCost: 2,
+                lastUpdated: Date.now(),
+                failureCount: 0,
+                lastUsed: undefined,
+            },
+        ]);
+
+        const payload = Buffer.from([ZigbeeNWKCommandId.ROUTE_RECORD, 0x01, 0x78, 0x56]);
+
+        await nwkHandler.processCommand(
+            payload,
+            {
+                frameControl: {},
+                source16: 0x5678,
+                sequenceNumber: 25,
+            } as MACHeader,
+            {
+                frameControl: {},
+                source16,
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                seqNum: 26,
+            } as ZigbeeNWKHeader,
+        );
+
+        const routes = mockContext.sourceRouteTable.get(source16);
+        expect(routes).toHaveLength(2);
+        expect(routes?.[1].relayAddresses).toStrictEqual([0x5678]);
+    });
+
+    it("creates the source route table entry for an unknown destination", () => {
+        const destination16 = 0xbb33;
+
+        nwkHandler.upsertSourceRoute(destination16, nwkHandler.createSourceRouteEntry([0x1234], 2));
+
+        const routes = mockContext.sourceRouteTable.get(destination16);
+        expect(routes).toHaveLength(1);
+        expect(routes?.[0].relayAddresses).toStrictEqual([0x1234]);
+    });
+
+    it("refreshes cost, age and failure count of a known path on upsert", () => {
+        const destination16 = 0xcc44;
+        const staleUpdate = Date.now() - 400000;
+
+        mockContext.sourceRouteTable.set(destination16, [
+            {
+                relayAddresses: [0x1234, 0x5678],
+                pathCost: 5,
+                lastUpdated: staleUpdate,
+                failureCount: 3,
+                lastUsed: staleUpdate,
+            },
+        ]);
+
+        nwkHandler.upsertSourceRoute(destination16, nwkHandler.createSourceRouteEntry([0x1234, 0x5678], 3));
+
+        const routes = mockContext.sourceRouteTable.get(destination16);
+        expect(routes).toHaveLength(1);
+        expect(routes?.[0].pathCost).toStrictEqual(3);
+        expect(routes?.[0].lastUpdated).toBeGreaterThan(staleUpdate);
+        expect(routes?.[0].failureCount).toStrictEqual(0);
+        // untouched by a refresh
+        expect(routes?.[0].lastUsed).toStrictEqual(staleUpdate);
+    });
+
+    it("appends an unknown path on upsert, keeping the known one", () => {
+        const destination16 = 0xdd55;
+
+        mockContext.sourceRouteTable.set(destination16, [
+            {
+                relayAddresses: [0x1234],
+                pathCost: 2,
+                lastUpdated: Date.now(),
+                failureCount: 0,
+                lastUsed: undefined,
+            },
+        ]);
+
+        nwkHandler.upsertSourceRoute(destination16, nwkHandler.createSourceRouteEntry([0x1234, 0x5678], 3));
+
+        const routes = mockContext.sourceRouteTable.get(destination16);
+        expect(routes).toHaveLength(2);
+        expect(routes?.[0].relayAddresses).toStrictEqual([0x1234]);
+        expect(routes?.[1].relayAddresses).toStrictEqual([0x1234, 0x5678]);
+    });
+
+    it("refreshes the known path from a link status, without duplicating it", async () => {
+        const source16 = 0xee66;
+        const source64 = 0x00124b0000ee6677n;
+        const staleUpdate = Date.now() - 400000;
+
+        mockContext.deviceTable.set(source64, {
+            address16: source16,
+            capabilities: undefined,
+            authorized: true,
+            neighbor: true,
+            lastTransportedNetworkKeySeq: undefined,
+            recentLQAs: [],
+            incomingNWKFrameCounter: undefined,
+            endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
+        });
+        mockContext.address16ToAddress64.set(source16, source64);
+        mockContext.sourceRouteTable.set(source16, [
+            {
+                relayAddresses: [],
+                pathCost: 1,
+                lastUpdated: staleUpdate,
+                failureCount: 1,
+                lastUsed: undefined,
+            },
+        ]);
+
+        const payload = Buffer.alloc(1 + 1 + 2 + 1);
+        let offset = 0;
+        offset = payload.writeUInt8(ZigbeeNWKCommandId.LINK_STATUS, offset);
+        offset = payload.writeUInt8(ZigbeeNWKConsts.CMD_LINK_OPTION_FIRST_FRAME | ZigbeeNWKConsts.CMD_LINK_OPTION_LAST_FRAME | 1, offset);
+        offset = payload.writeUInt16LE(ZigbeeConsts.COORDINATOR_ADDRESS, offset);
+        payload.writeUInt8(0x11, offset);
+
+        await nwkHandler.processCommand(
+            payload,
+            {
+                frameControl: {},
+                source16,
+                sequenceNumber: 27,
+            } as MACHeader,
+            {
+                frameControl: {},
+                source16,
+                source64,
+                destination16: ZigbeeConsts.BCAST_DEFAULT,
+                seqNum: 28,
+            } as ZigbeeNWKHeader,
+        );
+
+        const routes = mockContext.sourceRouteTable.get(source16);
+        expect(routes).toHaveLength(1);
+        expect(routes?.[0].lastUpdated).toBeGreaterThan(staleUpdate);
+        expect(routes?.[0].failureCount).toStrictEqual(0);
     });
 
     it("updates source route entries when route reply introduces new path", async () => {
