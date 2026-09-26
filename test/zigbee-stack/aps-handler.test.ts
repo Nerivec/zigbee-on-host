@@ -2348,12 +2348,34 @@ describe("APS Handler", () => {
             expect(mockContext.disassociate).not.toHaveBeenCalled();
         });
 
-        it("acts on a report naming the device's current address", async () => {
+        it("ignores a report about a neighbor, even naming its current address", async () => {
+            // A router granted the device 0x3c4d and reported the join; the
+            // device never collected the response, associated with the
+            // coordinator instead and was given 0x3c4d back. The router ages
+            // it out later.
             mockContext.deviceTable.set(device64, {
                 address16: 0x3c4d,
                 capabilities: undefined,
                 authorized: true,
                 neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
+                recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
+            });
+
+            await apsHandler.processUpdateDevice(deviceLeft(0x3c4d), 0, parentMac, parentNwk, {} as ZigbeeAPSHeader);
+
+            expect(mockContext.disassociate).not.toHaveBeenCalled();
+        });
+
+        it("acts on a report naming the device's current address", async () => {
+            mockContext.deviceTable.set(device64, {
+                address16: 0x3c4d,
+                capabilities: undefined,
+                authorized: true,
+                neighbor: false,
                 lastTransportedNetworkKeySeq: undefined,
                 recentLQAs: [],
                 incomingNWKFrameCounter: undefined,
