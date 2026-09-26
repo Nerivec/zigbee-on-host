@@ -301,9 +301,9 @@ export class MACHandler {
      * SPEC COMPLIANCE NOTES (IEEE 802.15.4-2015 #6.3.1):
      * - ✅ Correctly extracts capabilities byte from payload
      * - ✅ Validates presence of source64 (mandatory per spec)
-     * - ✅ Enforces associationPermit flag for initial joins (PAN access denied when false)
+     * - ✅ Enforces associationPermit flag for every association (PAN access denied when false), known device or not
      * - ✅ Calls context associate to handle higher-layer processing
-     * - ✅ Determines initial join vs rejoin by checking if device is known
+     * - ✅ Treats every association as an initial join; a known device keeps its address
      * - ✅ Stores pending association in map for DATA_REQ retrieval
      * - ✅ Pending association includes sendResp callback and timestamp
      * - ✅  SPEC COMPLIANCE: Association response is indirect transmission
@@ -331,13 +331,33 @@ export class MACHandler {
             const device = this.#context.deviceTable.get(macHeader.source64);
             const address16 = device?.address16;
             const decodedCap = decodeMACCapabilities(capabilities);
+            // An association is an initial join whatever the device table
+            // holds. 05-3474-23 Table 3-69 maps a MAC association to "Standard
+            // Device Unsecured Join"; a rejoin is the NWK Rejoin command
+            // (#4.6.3.3), handled in processRejoinReq. A device that associates
+            // after leaving has cleared its security material (#3.6.1.11.4),
+            // so the network key must go out again, and a previous
+            // incarnation's link key must not be kept.
+            //
+            // Reading an authorized entry as a rejoin sent no Transport Key,
+            // kept the old link key and ignored the permit flag, so a device
+            // whose leave went unheard could never join again.
+            //
+            // A known device keeps its address: the allow override does what a
+            // router's UPDATE_DEVICE unsecured join already does (see
+            // processUpdateDevice). Without it, an initial join from an
+            // authorized entry lands in the address-conflict branch meant for
+            // the NWK Commissioning Request. The deny override is checked
+            // first, so #3.6.1.6.1.3 still refuses anyone while the permit is
+            // off.
             const [status, newAddress16, requiresTransportKey] = await this.#context.associate(
                 address16,
                 macHeader.source64,
-                !device?.authorized /* rejoin only if was previously authorized */,
+                true /* initial join */,
                 decodedCap,
                 true /* neighbor */,
-                address16 === undefined && !this.#context.associationPermit,
+                !this.#context.associationPermit,
+                device !== undefined,
             );
 
             this.#context.pendingAssociations.set(macHeader.source64, {

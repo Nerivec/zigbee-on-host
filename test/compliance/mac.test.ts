@@ -982,6 +982,75 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             expect(context.deviceTable.has(device64)).toStrictEqual(false);
         });
 
+        /**
+         * A device that left without the coordinator hearing it is still
+         * recorded as authorized, with the current network key marked as
+         * delivered. It has cleared its security material, so it associates.
+         */
+        function seedAuthorizedDevice(address16: number): void {
+            context.deviceTable.set(device64, {
+                address16,
+                capabilities: undefined,
+                authorized: true,
+                neighbor: true,
+                lastTransportedNetworkKeySeq: netParams.networkKeySequenceNumber,
+                recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
+            });
+            context.address16ToAddress64.set(address16, device64);
+        }
+
+        it("treats an association from an authorized device as an initial join and sends the network key", async () => {
+            // 05-3474-23 Table 3-69: a MAC association is a Standard Device Unsecured Join
+            seedAuthorizedDevice(0x4321);
+            context.allowJoins(60, true);
+
+            await macHandler.processCommand(Buffer.from([defaultCapabilities]), buildAssocHeader());
+
+            const pending = context.pendingAssociations.get(device64);
+            expect(pending).not.toBeUndefined();
+
+            const sendCommandSpy = vi.spyOn(macHandler, "sendCommand").mockResolvedValue(true);
+
+            await pending!.sendResp();
+
+            const payload = sendCommandSpy.mock.calls[0][4];
+            // the known device keeps its address, as it does joining through a router
+            expect(payload.readUInt16LE(0)).toStrictEqual(0x4321);
+            expect(payload.readUInt8(2)).toStrictEqual(MACAssociationStatus.SUCCESS);
+            expect(mockMACHandlerCallbacks.onAPSSendTransportKeyNWK).toHaveBeenCalledTimes(1);
+            expect(mockMACHandlerCallbacks.onAPSSendTransportKeyNWK).toHaveBeenCalledWith(
+                0x4321,
+                netParams.networkKey,
+                netParams.networkKeySequenceNumber,
+                device64,
+            );
+            expect(context.deviceTable.get(device64)!.authorized).toStrictEqual(false);
+        });
+
+        it("denies an association from an authorized device when joins are not permitted", async () => {
+            // IEEE 802.15.4-2020 §6.3.3 / 05-3474-23 #3.6.1.6.1.3: macAssociationPermit FALSE -> PAN_ACCESS_DENIED
+            seedAuthorizedDevice(0x4321);
+            const sendCommandSpy = vi.spyOn(macHandler, "sendCommand").mockResolvedValue(true);
+
+            await macHandler.processCommand(Buffer.from([defaultCapabilities]), buildAssocHeader());
+
+            const pending = context.pendingAssociations.get(device64);
+            expect(pending).not.toBeUndefined();
+
+            await pending!.sendResp();
+
+            const payload = sendCommandSpy.mock.calls[0][4];
+            expect(payload.readUInt16LE(0)).toStrictEqual(0xffff);
+            expect(payload.readUInt8(2)).toStrictEqual(MACAssociationStatus.PAN_ACCESS_DENIED);
+            expect(mockMACHandlerCallbacks.onAPSSendTransportKeyNWK).not.toHaveBeenCalled();
+            // a refused association changes nothing about the recorded device
+            expect(context.deviceTable.get(device64)!.authorized).toStrictEqual(true);
+            expect(context.deviceTable.get(device64)!.address16).toStrictEqual(0x4321);
+        });
+
         it("serves pending association responses within indirect transmission timeout", async () => {
             context.allowJoins(60, true);
             const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.15);

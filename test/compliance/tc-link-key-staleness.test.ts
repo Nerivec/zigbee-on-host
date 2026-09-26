@@ -38,6 +38,7 @@ describe("Stale trust centre link keys", () => {
     let netParams: NetworkParameters;
     let saveDir: string;
     let context: StackContext;
+    let macHandler: MACHandler;
     let apsHandler: APSHandler;
 
     const capabilities: MACCapabilities = {
@@ -92,7 +93,7 @@ describe("Stale trust centre link keys", () => {
         context = new StackContext(stackContextCallbacks, join(saveDir, "zoh.save"), netParams);
         await context.loadState();
 
-        const macHandler = new MACHandler(context, macCallbacks, NO_ACK_CODE);
+        macHandler = new MACHandler(context, macCallbacks, NO_ACK_CODE);
         const nwkHandler = new NWKHandler(context, macHandler, nwkCallbacks);
         apsHandler = new APSHandler(context, macHandler, nwkHandler, apsCallbacks);
     });
@@ -154,6 +155,46 @@ describe("Stale trust centre link keys", () => {
         // 0xad SECURITY_FAILURE is the defect: the correct proof compared
         // against the stale unique key.
         expect(await verifyAsFactoryResetDevice(assigned16, device64)).toStrictEqual(0x00);
+    });
+
+    it("accepts the proof when the previous incarnation is still recorded as authorized", async () => {
+        const device64 = 0x00124b00ffee0606n;
+        const previous16 = 0x2468;
+
+        context.trustCenterPolicies.issueUniqueTCLinkKeys = true;
+
+        // The device left without the trust centre hearing it: its entry is
+        // still there, authorized, the network key marked as delivered, and
+        // its unique key kept.
+        context.deviceTable.set(device64, {
+            address16: previous16,
+            capabilities,
+            authorized: true,
+            neighbor: true,
+            lastTransportedNetworkKeySeq: netParams.networkKeySequenceNumber,
+            recentLQAs: [],
+            incomingNWKFrameCounter: undefined,
+            endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
+        });
+        context.address16ToAddress64.set(previous16, device64);
+        context.setAppLinkKey(device64, netParams.eui64, Buffer.from("0f0e0d0c0b0a09080706050403020100", "hex"));
+
+        // Factory reset, it associates with the coordinator as its parent.
+        context.allowJoins(60, true);
+
+        const macHeader = { frameControl: {}, source64: device64 } as MACHeader;
+
+        await macHandler.processAssocReq(Buffer.from([0x8e]), 0, macHeader);
+
+        // 0xad SECURITY_FAILURE is the defect: the association was taken for a
+        // rejoin, so the stale unique key survived it.
+        expect(await verifyAsFactoryResetDevice(previous16, device64)).toStrictEqual(0x00);
+
+        const device = context.deviceTable.get(device64)!;
+
+        expect(device.address16).toStrictEqual(previous16);
+        expect(device.authorized).toStrictEqual(false);
     });
 
     it("still accepts the proof when no previous key was ever issued", async () => {
