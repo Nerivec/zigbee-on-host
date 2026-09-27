@@ -689,6 +689,18 @@ describe("IEEE 802.15.4-2020 MAC Layer Compliance", () => {
             expect(payload.txOffset).toStrictEqual(0x00ffffff);
             expect(payload.updateId).toStrictEqual(netParams.nwkUpdateId);
         });
+
+        it("carries the NIB nwkUpdateId in the last octet of the beacon payload", async () => {
+            // 05-3474-23 #3.6.8: nwkUpdateId "reflects the value of nwkUpdateId from the NIB"
+            context.netParams.nwkUpdateId = 0x19;
+
+            const beacon = await generateBeacon();
+            const payload = decodeMACZigbeeBeacon(beacon.buffer, beacon.payloadOffset);
+
+            expect(beacon.buffer.readUInt8(beacon.payloadOffset + ZigbeeMACConsts.ZIGBEE_BEACON_LENGTH - 1)).toStrictEqual(0x19);
+            expect(payload.updateId).toStrictEqual(0x19);
+            expect(payload.txOffset).toStrictEqual(0x00ffffff);
+        });
     });
 
     /**
