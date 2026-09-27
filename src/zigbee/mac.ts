@@ -1240,7 +1240,8 @@ export function decodeMACZigbeeBeacon(data: Buffer, offset: number): MACZigbeeBe
     offset += 8;
     const endBytes = data.readUInt32LE(offset);
     const txOffset = endBytes & ZigbeeMACConsts.ZIGBEE_BEACON_TX_OFFSET_MASK;
-    const updateId = (endBytes & ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_MASK) >> ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_SHIFT;
+    // the update ID is the top octet: shift it down first, then mask (unsigned shift, bit 31 is data)
+    const updateId = (endBytes >>> ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_SHIFT) & ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_MASK;
 
     return {
         protocolId,
@@ -1279,9 +1280,11 @@ export function encodeMACZigbeeBeacon(beacon: MACZigbeeBeacon): Buffer {
         offset,
     );
     offset = payload.writeBigUInt64LE(beacon.extendedPANId, offset);
+    // mask the update ID before shifting it into the top octet; `>>> 0` keeps the result unsigned when bit 31 is set
     offset = payload.writeUInt32LE(
-        (beacon.txOffset & ZigbeeMACConsts.ZIGBEE_BEACON_TX_OFFSET_MASK) |
-            ((beacon.updateId << ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_SHIFT) & ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_MASK),
+        ((beacon.txOffset & ZigbeeMACConsts.ZIGBEE_BEACON_TX_OFFSET_MASK) |
+            ((beacon.updateId & ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_MASK) << ZigbeeMACConsts.ZIGBEE_BEACON_UPDATE_ID_SHIFT)) >>>
+            0,
         offset,
     );
 

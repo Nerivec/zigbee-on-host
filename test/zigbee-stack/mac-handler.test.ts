@@ -1093,6 +1093,28 @@ describe("MACHandler", () => {
             expect(decoded.deviceDepth).toStrictEqual(beacon.deviceDepth);
         });
 
+        it.each([0x00, 0x01, 0x19, 0x7f, 0x80, 0xff])("round-trips Zigbee beacon update ID %i next to txOffset", (updateId) => {
+            const beacon: MACZigbeeBeacon = {
+                protocolId: ZigbeeMACConsts.ZIGBEE_BEACON_PROTOCOL_ID,
+                profile: 0x02,
+                version: ZigbeeNWKConsts.VERSION_2007,
+                routerCapacity: true,
+                deviceDepth: 0,
+                endDeviceCapacity: true,
+                extendedPANId: 0x00124b0000000011n,
+                txOffset: 0xffffff,
+                updateId,
+            };
+
+            const encoded = encodeMACZigbeeBeacon(beacon);
+            const decoded = decodeMACZigbeeBeacon(encoded, 0);
+
+            // txOffset (3 octets LE), then nwkUpdateId (1 octet)
+            expect(encoded.subarray(11)).toStrictEqual(Buffer.from([0xff, 0xff, 0xff, updateId]));
+            expect(decoded.updateId).toStrictEqual(updateId);
+            expect(decoded.txOffset).toStrictEqual(0xffffff);
+        });
+
         it("computes MIC length per security level", () => {
             const lengths = Array.from({ length: 8 }, (_, level) => getMICLength(level));
 
