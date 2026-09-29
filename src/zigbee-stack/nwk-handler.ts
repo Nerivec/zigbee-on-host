@@ -101,6 +101,8 @@ export class NWKHandler {
 
     #linkStatusTimeout: NodeJS.Timeout | undefined;
     #manyToOneRouteRequestTimeout: NodeJS.Timeout | undefined;
+    /** Address conflicts answered for an end device child, by its IEEE address, until the rejoin response can no longer reach it */
+    readonly #childConflictResolutions = new Map<bigint, { address16: number; newAddress16: number; expiresAt: number }>();
     /** Time of last many-to-one route request */
     #lastMTORRTime = 0;
 
@@ -128,6 +130,8 @@ export class NWKHandler {
 
         clearTimeout(this.#manyToOneRouteRequestTimeout);
         this.#manyToOneRouteRequestTimeout = undefined;
+
+        this.#childConflictResolutions.clear();
     }
 
     /**
@@ -1047,7 +1051,9 @@ export class NWKHandler {
      * - ✅ Marks route as failed and schedules MTORR recovery
      * - ✅ Logs network status issues for diagnostics
      * - ❌ NOT IMPLEMENTED: TLV processing (R23)
-     * - ✅ Issues REJOIN_RESP with address-conflict status to prompt device reassignment
+     * - ✅ Resolves an address conflict on an end device child with an unsolicited REJOIN_RESP carrying a new address (#3.6.1.10.5)
+     * - ✅ Leaves a conflict on a router to the router, and one on another parent's end device to that parent (#3.6.1.10.5)
+     * - ⚠️  A sleepy child's REJOIN_RESP joins the back of its indirect queue; the spec gives it precedence over other queued frames
      * DEVICE SCOPE: Coordinator, routers (N/A), end devices (N/A)
      *
      * IMPACT: Receives status but minimal action beyond route marking
@@ -1076,16 +1082,19 @@ export class NWKHandler {
             target16 = data.readUInt16LE(offset);
             offset += 2;
 
+            // #3.6.1.10.5: the coordinator never changes its address, and a router that changes its own announces it,
+            // so the only conflict the coordinator resolves is one on the address of its own end device child
             if (target16 !== ZigbeeConsts.COORDINATOR_ADDRESS) {
                 const device64 = this.#context.address16ToAddress64.get(target16);
 
-                if (device64 !== undefined) {
-                    const newAddress16 = this.#context.assignNetworkAddress();
-
-                    // TODO: is this correct?
-                    await this.sendRejoinResp(target16, newAddress16, ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
-                } else {
+                if (device64 === undefined) {
                     logger.warning(() => `NWK address conflict reported for unknown short address ${target16}`, NS);
+                } else if (!(await this.resolveChildAddressConflict(target16, device64))) {
+                    // a router resolves a conflict on its own address, and another parent one on its end device child's
+                    logger.warning(
+                        () => `NWK address conflict reported for ${target16}:${device64}, not an end device child, left to the device or its parent`,
+                        NS,
+                    );
                 }
             }
         }
@@ -1100,6 +1109,52 @@ export class NWKHandler {
         );
 
         return offset;
+    }
+
+    /**
+     * 05-3474-23 #3.6.1.10.5
+     *
+     * "If a parent device detects or is informed of a conflict with the address of an end device child, the parent SHALL pick
+     * a new address for the end device child", and sends it in an unsolicited rejoin response.
+     *
+     * SPEC COMPLIANCE:
+     * - ✅ Acts only for an end device child of the coordinator; a router changes its own address, another parent its own child's
+     * - ✅ Addresses the response by the child's IEEE address: both holders of the address receive at `address16` (#3.6.1.6.1.2)
+     * - ✅ Answers one conflict once: every router that sees it reports it, and each report would otherwise renumber the child again
+     * DEVICE SCOPE: Coordinator, routers (N/A)
+     *
+     * @param address16 The conflicting address
+     * @param device64 The IEEE address of the device recorded at `address16`
+     * @returns True if the device is an end device child of the coordinator, whose conflict is now resolved
+     */
+    public async resolveChildAddressConflict(address16: number, device64: bigint): Promise<boolean> {
+        const device = this.#context.deviceTable.get(device64);
+
+        if (device === undefined || !device.neighbor || device.capabilities?.deviceType !== ZigbeeMACConsts.DEVICE_TYPE_RFD) {
+            return false;
+        }
+
+        const now = Date.now();
+        const previous = this.#childConflictResolutions.get(device64);
+
+        // the child keeps `address16` until it receives the response, so another report within that time is the same conflict
+        if (previous !== undefined && previous.address16 === address16 && previous.expiresAt > now) {
+            logger.debug(() => `NWK address conflict on ${address16}:${device64} already answered with ${previous.newAddress16}`, NS);
+
+            return true;
+        }
+
+        const newAddress16 = this.#context.assignNetworkAddress();
+
+        this.#childConflictResolutions.set(device64, {
+            address16,
+            newAddress16,
+            expiresAt: now + ZigbeeConsts.MAC_INDIRECT_TRANSMISSION_TIMEOUT,
+        });
+
+        await this.sendRejoinResp(address16, newAddress16, ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT, device64);
+
+        return true;
     }
 
     /**
@@ -1393,9 +1448,15 @@ export class NWKHandler {
      * @param requestSource16 Requestor network address
      * @param newAddress16 Assigned network address
      * @param status Rejoin status (MACAssociationStatus or NWK status)
+     * @param requestSource64 Requestor IEEE address, for the NWK header; looked up from `newAddress16` when omitted
      * @returns True if success sending (or indirect transmission)
      */
-    public async sendRejoinResp(requestSource16: number, newAddress16: number, status: MACAssociationStatus | number): Promise<boolean> {
+    public async sendRejoinResp(
+        requestSource16: number,
+        newAddress16: number,
+        status: MACAssociationStatus | number,
+        requestSource64?: bigint,
+    ): Promise<boolean> {
         logger.debug(() => `===> NWK REJOIN_RESP[reqSrc16=${requestSource16} newAddr16=${newAddress16} status=${status}]`, NS);
 
         const finalPayload = Buffer.from([ZigbeeNWKCommandId.REJOIN_RESP, newAddress16 & 0xff, (newAddress16 >> 8) & 0xff, status]);
@@ -1406,7 +1467,7 @@ export class NWKHandler {
             true, // nwkSecurity TODO: ??
             ZigbeeConsts.COORDINATOR_ADDRESS, // nwkSource16
             requestSource16, // nwkDest16
-            this.#context.address16ToAddress64.get(newAddress16), // nwkDest64
+            requestSource64 ?? this.#context.address16ToAddress64.get(newAddress16), // nwkDest64
             CONFIG_NWK_MAX_HOPS, // nwkRadius
         );
     }
