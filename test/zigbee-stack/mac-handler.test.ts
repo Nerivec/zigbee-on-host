@@ -413,11 +413,11 @@ describe("MACHandler", () => {
             const data = Buffer.from([0x8e]); // capabilities: rxOnWhenIdle=true, deviceType=FFD, powerSource=mains, securityCapability=true, allocateAddress=true
             await macHandler.processAssocReq(data, 0, macHeader);
 
-            expect(mockContext.associate).toHaveBeenCalledWith(undefined, 0x00124b0098765432n, true, expect.any(Object), true, false);
+            expect(mockContext.associate).toHaveBeenCalledWith(undefined, 0x00124b0098765432n, true, expect.any(Object), true, false, false);
             expect(mockContext.pendingAssociations.has(0x00124b0098765432n)).toStrictEqual(true);
         });
 
-        it("should process association request from known device (rejoin)", async () => {
+        it("should process association request from known device as an initial join that keeps its address", async () => {
             mockContext.allowJoins(0xfe, true);
 
             const dest64 = 0x00124b0098765432n;
@@ -448,7 +448,7 @@ describe("MACHandler", () => {
             const data = Buffer.from([0x8e]);
             await macHandler.processAssocReq(data, 0, macHeader);
 
-            expect(mockContext.associate).toHaveBeenCalledWith(dest16, dest64, false, expect.any(Object), true, false);
+            expect(mockContext.associate).toHaveBeenCalledWith(dest16, dest64, true, expect.any(Object), true, false, true);
         });
 
         it("should handle association request without source64", async () => {

@@ -29,6 +29,8 @@ type TestContext = {
     computeDeviceLQA: ReturnType<typeof vi.fn>;
     updateIncomingNWKFrameCounter: ReturnType<typeof vi.fn>;
     rssiMin: number;
+    trustCenterPolicies: { issueUniqueTCLinkKeys: boolean };
+    getAppLinkKey: ReturnType<typeof vi.fn>;
 };
 
 type MacHandlerMock = {
@@ -168,6 +170,8 @@ describe("Frame handler", () => {
             computeDeviceLQA: vi.fn(() => 0x60),
             updateIncomingNWKFrameCounter: vi.fn(() => true),
             rssiMin: -60,
+            trustCenterPolicies: { issueUniqueTCLinkKeys: false },
+            getAppLinkKey: vi.fn(() => undefined),
         };
         context = rawContext as unknown as StackContext;
 
@@ -374,6 +378,72 @@ describe("Frame handler", () => {
         expect(apsHandlerMock.sendACK).toHaveBeenCalledTimes(1);
         expect(apsHandlerMock.sendACK).toHaveBeenCalledWith(header, nwkHeader, apsHeader);
         expect(apsHandlerMock.processFrame).toHaveBeenCalledWith(apsPayload, header, nwkHeader, apsHeader, expect.any(Number));
+    });
+
+    it("decrypts an APS frame with the device's own trust centre link key", async () => {
+        const source16 = 0x6790;
+        const source64 = 0x00124b0000000004n;
+        const deviceKey = Buffer.alloc(16, 0x5a);
+        rawContext.trustCenterPolicies.issueUniqueTCLinkKeys = true;
+        rawContext.getAppLinkKey = vi.fn(() => deviceKey);
+
+        const fcf = createMACFrameControl(macModule.MACFrameType.DATA, macModule.MACFrameAddressMode.SHORT, macModule.MACFrameAddressMode.SHORT);
+        const header = buildMacHeader(fcf, { destination16: ZigbeeConsts.COORDINATOR_ADDRESS });
+        mockMACDecoding(fcf, header, Buffer.from([0x08]));
+
+        const nwkFCF = buildNWKFrameControl();
+        const nwkHeader = buildNWKHeader(nwkFCF, { source16, source64 });
+        mockNWKDecoding(nwkFCF, nwkHeader, Buffer.from([0x02]));
+
+        const apsFCF = buildAPSFrameControl({ security: true });
+        const apsHeader = buildAPSHeader(apsFCF);
+        mockAPSDecoding(apsFCF, apsHeader, Buffer.from([0x03]));
+
+        await processFrame(Buffer.from([0x08]), context, macHandler, nwkHandler, nwkGPHandler, apsHandler);
+
+        expect(rawContext.getAppLinkKey).toHaveBeenCalledWith(source64, rawContext.netParams.eui64);
+        expect(apsModule.decodeZigbeeAPSPayload).toHaveBeenCalledWith(expect.anything(), expect.any(Number), deviceKey, source64, apsFCF, apsHeader);
+    });
+
+    it("falls back to the global key when the device key does not fit the frame", async () => {
+        const source16 = 0x6791;
+        const source64 = 0x00124b0000000005n;
+        const deviceKey = Buffer.alloc(16, 0x5b);
+        const decrypted = Buffer.from([0x04]);
+        rawContext.trustCenterPolicies.issueUniqueTCLinkKeys = true;
+        rawContext.getAppLinkKey = vi.fn(() => deviceKey);
+
+        const fcf = createMACFrameControl(macModule.MACFrameType.DATA, macModule.MACFrameAddressMode.SHORT, macModule.MACFrameAddressMode.SHORT);
+        const header = buildMacHeader(fcf, { destination16: ZigbeeConsts.COORDINATOR_ADDRESS });
+        mockMACDecoding(fcf, header, Buffer.from([0x08]));
+
+        const nwkFCF = buildNWKFrameControl();
+        const nwkHeader = buildNWKHeader(nwkFCF, { source16, source64 });
+        mockNWKDecoding(nwkFCF, nwkHeader, Buffer.from([0x02]));
+
+        const apsFCF = buildAPSFrameControl({ security: true });
+        const apsHeader = buildAPSHeader(apsFCF);
+        vi.spyOn(apsModule, "decodeZigbeeAPSFrameControl").mockReturnValue([apsFCF, 1]);
+        vi.spyOn(apsModule, "decodeZigbeeAPSHeader").mockReturnValue([apsHeader, 2]);
+        // The device has not switched to its new key yet, so the first attempt fails.
+        vi.spyOn(apsModule, "decodeZigbeeAPSPayload")
+            .mockImplementationOnce(() => {
+                throw new Error("Auth tag mismatch while decrypting Zigbee payload");
+            })
+            .mockReturnValue(decrypted);
+
+        await processFrame(Buffer.from([0x08]), context, macHandler, nwkHandler, nwkGPHandler, apsHandler);
+
+        expect(apsModule.decodeZigbeeAPSPayload).toHaveBeenCalledTimes(2);
+        expect(apsModule.decodeZigbeeAPSPayload).toHaveBeenLastCalledWith(
+            expect.anything(),
+            expect.any(Number),
+            undefined,
+            source64,
+            apsFCF,
+            apsHeader,
+        );
+        expect(apsHandlerMock.processFrame).toHaveBeenCalledWith(decrypted, header, nwkHeader, apsHeader, expect.any(Number));
     });
 
     it("resolves missing source64 using the address16 map", async () => {
