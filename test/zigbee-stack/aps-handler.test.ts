@@ -2314,6 +2314,78 @@ describe("APS Handler", () => {
         routeSpy.mockRestore();
     });
 
+    it("keeps a route the device reported when a child rejoins through a router", async () => {
+        const parent16 = 0x7103;
+        const parent64 = 0x00124b0000007103n;
+        const macHeader = { frameControl: {}, source16: parent16, source64: parent64 } as MACHeader;
+        const nwkHeader = { frameControl: {}, source16: parent16, source64: parent64 } as ZigbeeNWKHeader;
+
+        const payload = Buffer.alloc(11);
+        let offset = 0;
+        const child64 = 0x00124b0000008201n;
+        const child16 = 0x8201;
+        offset = payload.writeBigUInt64LE(child64, offset);
+        offset = payload.writeUInt16LE(child16, offset);
+        payload.writeUInt8(0x00, offset); // Standard Device Secured Rejoin
+
+        // the child has already told the coordinator it is reachable without a relay
+        const reported = mockNWKHandler.createSourceRouteEntry([], 1);
+
+        mockContext.sourceRouteTable.set(child16, [reported]);
+
+        // no known route to the parent, so the child is inferred as "via parent"
+        const routeSpy = vi.spyOn(mockNWKHandler, "findBestSourceRoute").mockReturnValue([undefined, undefined, undefined]);
+
+        await apsHandler.processUpdateDevice(payload, 0, macHeader, nwkHeader, {} as ZigbeeAPSHeader);
+
+        const entries = mockContext.sourceRouteTable.get(child16)!;
+
+        // what the device reported survives; the inference is kept only as a fallback behind it
+        expect(entries).toHaveLength(2);
+        expect(entries[0]).toBe(reported);
+        expect(entries[1].relayAddresses).toStrictEqual([parent16]);
+        expect(entries[1].pathCost).toStrictEqual(2);
+
+        routeSpy.mockRestore();
+    });
+
+    it("does not let an inferred parent route displace a child's own direct path", async () => {
+        const parent16 = 0x7104;
+        const parent64 = 0x00124b0000007104n;
+        const macHeader = { frameControl: {}, source16: parent16, source64: parent64 } as MACHeader;
+        const nwkHeader = { frameControl: {}, source16: parent16, source64: parent64 } as ZigbeeNWKHeader;
+
+        const payload = Buffer.alloc(11);
+        let offset = 0;
+        const child64 = 0x00124b0000008301n;
+        const child16 = 0x8301;
+        offset = payload.writeBigUInt64LE(child64, offset);
+        offset = payload.writeUInt16LE(child16, offset);
+        payload.writeUInt8(0x00, offset); // Standard Device Secured Rejoin
+
+        mockContext.address16ToAddress64.set(child16, child64);
+
+        const routeSpy = vi.spyOn(mockNWKHandler, "findBestSourceRoute").mockReturnValue([undefined, undefined, undefined]);
+
+        // the child joined through the router, so an entry "via parent" is inferred first
+        await apsHandler.processUpdateDevice(payload, 0, macHeader, nwkHeader, {} as ZigbeeAPSHeader);
+
+        routeSpy.mockRestore();
+
+        // the child then reports that it reaches the coordinator with no relay at all
+        mockNWKHandler.upsertSourceRoute(child16, mockNWKHandler.createSourceRouteEntry([], 1));
+
+        // the cheaper, reported path is chosen
+        expect(mockNWKHandler.findBestSourceRoute(child16, undefined)[1]).toBeUndefined();
+
+        // and the frame it carried is credited to it, so it keeps being chosen: crediting the
+        // first entry held would hand the inferred path a recency bonus it never earned, and the
+        // coordinator would relay to a device it can reach directly
+        mockNWKHandler.markRouteSuccess(child16);
+
+        expect(mockNWKHandler.findBestSourceRoute(child16, undefined)[1]).toBeUndefined();
+    });
+
     it("skips source route updates when parent short address is unknown", async () => {
         const macHeader = { frameControl: {}, source64: 0x00124b0000007102n } as MACHeader;
         const nwkHeader = { frameControl: {}, source64: 0x00124b0000007102n } as ZigbeeNWKHeader;

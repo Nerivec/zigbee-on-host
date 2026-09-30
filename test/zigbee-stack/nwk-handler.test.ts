@@ -160,6 +160,121 @@ describe("NWK Handler", () => {
             expect(relayAddresses).toEqual([0x0003]);
         });
 
+        it("does not reorder the source route table when a lookup prunes an entry", () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0012345678n;
+
+            mockContext.address16ToAddress64.set(device16, device64);
+
+            // Insertion order: the expired entry first, then a costly direct path, then a
+            // cheap relayed one. Filtering drops the first, which is what makes
+            // `findBestSourceRoute` write the survivors back to the table.
+            mockContext.sourceRouteTable.set(device16, [
+                {
+                    relayAddresses: [0x00aa],
+                    pathCost: 2,
+                    lastUpdated: Date.now() - 11 * 60 * 1000, // expired
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+                {
+                    relayAddresses: [],
+                    pathCost: 5,
+                    lastUpdated: Date.now(),
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+                {
+                    relayAddresses: [0x00bb],
+                    pathCost: 1,
+                    lastUpdated: Date.now(),
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+            ]);
+
+            const [, relayAddresses] = nwkHandler.findBestSourceRoute(device16, device64);
+
+            // The cheapest entry is chosen even though it is last in the table.
+            expect(relayAddresses).toEqual([0x00bb]);
+
+            // ...and the table still holds the survivors in insertion order. A read path
+            // must not reorder state that `Mgmt_Rtg_rsp` reports verbatim.
+            const stored = mockContext.sourceRouteTable.get(device16)!;
+
+            expect(stored.map((e) => e.pathCost)).toStrictEqual([5, 1]);
+        });
+
+        it("returns the same table order on repeated lookups", () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0012345678n;
+
+            mockContext.address16ToAddress64.set(device16, device64);
+
+            mockContext.sourceRouteTable.set(device16, [
+                {
+                    relayAddresses: [0x00aa],
+                    pathCost: 9,
+                    lastUpdated: Date.now() - 11 * 60 * 1000, // expired, forces the write-back
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+                {
+                    relayAddresses: [0x00cc],
+                    pathCost: 4,
+                    lastUpdated: Date.now(),
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+                {
+                    relayAddresses: [],
+                    pathCost: 1,
+                    lastUpdated: Date.now(),
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+            ]);
+
+            nwkHandler.findBestSourceRoute(device16, device64);
+            const afterFirst = mockContext.sourceRouteTable.get(device16)!.map((e) => e.pathCost);
+
+            nwkHandler.findBestSourceRoute(device16, device64);
+            const afterSecond = mockContext.sourceRouteTable.get(device16)!.map((e) => e.pathCost);
+
+            expect(afterFirst).toStrictEqual([4, 1]);
+            expect(afterSecond).toStrictEqual(afterFirst);
+        });
+
+        it("keeps the earlier entry when two routes score equally", () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0012345678n;
+
+            mockContext.address16ToAddress64.set(device16, device64);
+
+            // Same cost, same age, no failures: the tie must break on table order, which is
+            // what the stable sort used to do.
+            mockContext.sourceRouteTable.set(device16, [
+                {
+                    relayAddresses: [0x0011],
+                    pathCost: 2,
+                    lastUpdated: Date.now(),
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+                {
+                    relayAddresses: [0x0022],
+                    pathCost: 2,
+                    lastUpdated: Date.now(),
+                    failureCount: 0,
+                    lastUsed: undefined,
+                },
+            ]);
+
+            const [, relayAddresses] = nwkHandler.findBestSourceRoute(device16, device64);
+
+            expect(relayAddresses).toEqual([0x0011]);
+        });
+
         it("should filter expired routes", () => {
             const device16 = 0x1234;
             const device64 = 0x00124b0012345678n;
@@ -228,6 +343,67 @@ describe("NWK Handler", () => {
             const routes = mockContext.sourceRouteTable.get(device16)!;
             expect(routes[0].failureCount).toStrictEqual(0);
             expect(routes[0].lastUsed).toBeDefined();
+        });
+
+        it("records success against the selected route, not the first one held", () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0000001234n;
+
+            mockContext.address16ToAddress64.set(device16, device64);
+
+            // an inferred relayed path was installed first, then the device reported a direct one
+            const relayed = nwkHandler.createSourceRouteEntry([0x0001], 2);
+            const direct = nwkHandler.createSourceRouteEntry([], 1);
+
+            mockContext.sourceRouteTable.set(device16, [relayed, direct]);
+
+            // the cheaper path is the one that carries the frame
+            expect(nwkHandler.findBestSourceRoute(device16, undefined)[1]).toBeUndefined();
+
+            nwkHandler.markRouteSuccess(device16);
+
+            expect(direct.lastUsed).toBeDefined();
+            expect(direct.failureCount).toStrictEqual(0);
+            expect(relayed.lastUsed).toBeUndefined();
+
+            // table order is untouched: it is reported verbatim in Mgmt_Rtg_rsp
+            expect(mockContext.sourceRouteTable.get(device16)).toStrictEqual([relayed, direct]);
+        });
+
+        it("does not clear a blacklisted route when the frame went direct as a last resort", () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0000001234n;
+
+            mockContext.address16ToAddress64.set(device16, device64);
+
+            const blacklisted = nwkHandler.createSourceRouteEntry([0x0001], 2);
+
+            blacklisted.failureCount = 3;
+            mockContext.sourceRouteTable.set(device16, [blacklisted]);
+
+            // nothing is selectable, so the frame was sent direct; its success says nothing
+            // about the stored path
+            nwkHandler.markRouteSuccess(device16);
+
+            expect(blacklisted.failureCount).toStrictEqual(3);
+            expect(blacklisted.lastUsed).toBeUndefined();
+        });
+
+        it("records failure against the selected route, not the first one held", () => {
+            const device16 = 0x1234;
+            const device64 = 0x00124b0000001234n;
+
+            mockContext.address16ToAddress64.set(device16, device64);
+
+            const relayed = nwkHandler.createSourceRouteEntry([0x0001], 2);
+            const direct = nwkHandler.createSourceRouteEntry([], 1);
+
+            mockContext.sourceRouteTable.set(device16, [relayed, direct]);
+
+            nwkHandler.markRouteFailure(device16);
+
+            expect(direct.failureCount).toStrictEqual(1);
+            expect(relayed.failureCount).toStrictEqual(0);
         });
 
         it("should mark route failure and trigger MTORR", async () => {
@@ -1375,6 +1551,239 @@ describe("NWK Handler", () => {
         const routes = mockContext.sourceRouteTable.get(0x7788);
         expect(routes).toBeDefined();
         expect(routes).toHaveLength(2);
+    });
+
+    it("refreshes the known path when a route record repeats it", async () => {
+        const source16 = 0x8899;
+        const staleUpdate = Date.now() - 400000;
+
+        mockContext.sourceRouteTable.set(source16, [
+            {
+                relayAddresses: [0x1234],
+                pathCost: 2,
+                lastUpdated: staleUpdate,
+                failureCount: 2,
+                lastUsed: undefined,
+            },
+        ]);
+
+        const payload = Buffer.from([ZigbeeNWKCommandId.ROUTE_RECORD, 0x01, 0x34, 0x12]);
+
+        await nwkHandler.processCommand(
+            payload,
+            {
+                frameControl: {},
+                source16: 0x1234,
+                sequenceNumber: 21,
+            } as MACHeader,
+            {
+                frameControl: {},
+                source16,
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                seqNum: 22,
+            } as ZigbeeNWKHeader,
+        );
+
+        const routes = mockContext.sourceRouteTable.get(source16);
+        expect(routes).toHaveLength(1);
+        expect(routes?.[0].relayAddresses).toStrictEqual([0x1234]);
+        expect(routes?.[0].lastUpdated).toBeGreaterThan(staleUpdate);
+        expect(routes?.[0].failureCount).toStrictEqual(0);
+    });
+
+    it("keeps a repeated path usable past the route expiry", async () => {
+        const source16 = 0x9911;
+        const source64 = 0x00124b0000991122n;
+
+        mockContext.deviceTable.set(source64, {
+            address16: source16,
+            capabilities: undefined,
+            authorized: true,
+            neighbor: false,
+            lastTransportedNetworkKeySeq: undefined,
+            recentLQAs: [],
+            incomingNWKFrameCounter: undefined,
+            endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
+        });
+        mockContext.address16ToAddress64.set(source16, source64);
+        // learned longer ago than CONFIG_NWK_ROUTE_EXPIRY_TIME
+        mockContext.sourceRouteTable.set(source16, [
+            {
+                relayAddresses: [0x1234],
+                pathCost: 2,
+                lastUpdated: Date.now() - 400000,
+                failureCount: 0,
+                lastUsed: undefined,
+            },
+        ]);
+
+        const payload = Buffer.from([ZigbeeNWKCommandId.ROUTE_RECORD, 0x01, 0x34, 0x12]);
+
+        await nwkHandler.processCommand(
+            payload,
+            {
+                frameControl: {},
+                source16: 0x1234,
+                sequenceNumber: 23,
+            } as MACHeader,
+            {
+                frameControl: {},
+                source16,
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                seqNum: 24,
+            } as ZigbeeNWKHeader,
+        );
+
+        expect(nwkHandler.findBestSourceRoute(source16, undefined)).toStrictEqual([0, [0x1234], 2]);
+        expect(mockContext.sourceRouteTable.get(source16)).toHaveLength(1);
+    });
+
+    it("stores a new entry when the route record carries an unknown path", async () => {
+        const source16 = 0xaa22;
+
+        mockContext.sourceRouteTable.set(source16, [
+            {
+                relayAddresses: [0x1234],
+                pathCost: 2,
+                lastUpdated: Date.now(),
+                failureCount: 0,
+                lastUsed: undefined,
+            },
+        ]);
+
+        const payload = Buffer.from([ZigbeeNWKCommandId.ROUTE_RECORD, 0x01, 0x78, 0x56]);
+
+        await nwkHandler.processCommand(
+            payload,
+            {
+                frameControl: {},
+                source16: 0x5678,
+                sequenceNumber: 25,
+            } as MACHeader,
+            {
+                frameControl: {},
+                source16,
+                destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                seqNum: 26,
+            } as ZigbeeNWKHeader,
+        );
+
+        const routes = mockContext.sourceRouteTable.get(source16);
+        expect(routes).toHaveLength(2);
+        expect(routes?.[1].relayAddresses).toStrictEqual([0x5678]);
+    });
+
+    it("creates the source route table entry for an unknown destination", () => {
+        const destination16 = 0xbb33;
+
+        nwkHandler.upsertSourceRoute(destination16, nwkHandler.createSourceRouteEntry([0x1234], 2));
+
+        const routes = mockContext.sourceRouteTable.get(destination16);
+        expect(routes).toHaveLength(1);
+        expect(routes?.[0].relayAddresses).toStrictEqual([0x1234]);
+    });
+
+    it("refreshes cost, age and failure count of a known path on upsert", () => {
+        const destination16 = 0xcc44;
+        const staleUpdate = Date.now() - 400000;
+
+        mockContext.sourceRouteTable.set(destination16, [
+            {
+                relayAddresses: [0x1234, 0x5678],
+                pathCost: 5,
+                lastUpdated: staleUpdate,
+                failureCount: 3,
+                lastUsed: staleUpdate,
+            },
+        ]);
+
+        nwkHandler.upsertSourceRoute(destination16, nwkHandler.createSourceRouteEntry([0x1234, 0x5678], 3));
+
+        const routes = mockContext.sourceRouteTable.get(destination16);
+        expect(routes).toHaveLength(1);
+        expect(routes?.[0].pathCost).toStrictEqual(3);
+        expect(routes?.[0].lastUpdated).toBeGreaterThan(staleUpdate);
+        expect(routes?.[0].failureCount).toStrictEqual(0);
+        // untouched by a refresh
+        expect(routes?.[0].lastUsed).toStrictEqual(staleUpdate);
+    });
+
+    it("appends an unknown path on upsert, keeping the known one", () => {
+        const destination16 = 0xdd55;
+
+        mockContext.sourceRouteTable.set(destination16, [
+            {
+                relayAddresses: [0x1234],
+                pathCost: 2,
+                lastUpdated: Date.now(),
+                failureCount: 0,
+                lastUsed: undefined,
+            },
+        ]);
+
+        nwkHandler.upsertSourceRoute(destination16, nwkHandler.createSourceRouteEntry([0x1234, 0x5678], 3));
+
+        const routes = mockContext.sourceRouteTable.get(destination16);
+        expect(routes).toHaveLength(2);
+        expect(routes?.[0].relayAddresses).toStrictEqual([0x1234]);
+        expect(routes?.[1].relayAddresses).toStrictEqual([0x1234, 0x5678]);
+    });
+
+    it("refreshes the known path from a link status, without duplicating it", async () => {
+        const source16 = 0xee66;
+        const source64 = 0x00124b0000ee6677n;
+        const staleUpdate = Date.now() - 400000;
+
+        mockContext.deviceTable.set(source64, {
+            address16: source16,
+            capabilities: undefined,
+            authorized: true,
+            neighbor: true,
+            lastTransportedNetworkKeySeq: undefined,
+            recentLQAs: [],
+            incomingNWKFrameCounter: undefined,
+            endDeviceTimeout: undefined,
+            linkStatusMisses: 0,
+        });
+        mockContext.address16ToAddress64.set(source16, source64);
+        mockContext.sourceRouteTable.set(source16, [
+            {
+                relayAddresses: [],
+                pathCost: 1,
+                lastUpdated: staleUpdate,
+                failureCount: 1,
+                lastUsed: undefined,
+            },
+        ]);
+
+        const payload = Buffer.alloc(1 + 1 + 2 + 1);
+        let offset = 0;
+        offset = payload.writeUInt8(ZigbeeNWKCommandId.LINK_STATUS, offset);
+        offset = payload.writeUInt8(ZigbeeNWKConsts.CMD_LINK_OPTION_FIRST_FRAME | ZigbeeNWKConsts.CMD_LINK_OPTION_LAST_FRAME | 1, offset);
+        offset = payload.writeUInt16LE(ZigbeeConsts.COORDINATOR_ADDRESS, offset);
+        payload.writeUInt8(0x11, offset);
+
+        await nwkHandler.processCommand(
+            payload,
+            {
+                frameControl: {},
+                source16,
+                sequenceNumber: 27,
+            } as MACHeader,
+            {
+                frameControl: {},
+                source16,
+                source64,
+                destination16: ZigbeeConsts.BCAST_DEFAULT,
+                seqNum: 28,
+            } as ZigbeeNWKHeader,
+        );
+
+        const routes = mockContext.sourceRouteTable.get(source16);
+        expect(routes).toHaveLength(1);
+        expect(routes?.[0].lastUpdated).toBeGreaterThan(staleUpdate);
+        expect(routes?.[0].failureCount).toStrictEqual(0);
     });
 
     it("updates source route entries when route reply introduces new path", async () => {

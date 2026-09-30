@@ -290,6 +290,139 @@ export class NWKHandler {
      * - request valid and source route available and >=1 relay: [last index in relayAddresses, list of relay addresses, cost of the path]
      * - request valid and source route available and 0 relay: [undefined, undefined, cost of the path]
      */
+    /**
+     * 05-3474-23 #3.6.3.3 (Source routing tables)
+     *
+     * Reason a source route entry cannot carry a frame right now, or undefined when it can.
+     *
+     * Shared by `findBestSourceRoute` and `#selectRouteEntry` so that the entry a frame's outcome
+     * is recorded against is the same entry that was chosen to carry it.
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Applies route expiry, consecutive-failure blacklisting and hop count limits
+     * - ✅ Rejects a path whose relay is not acknowledging at the MAC layer (spec #3.6.3.5)
+     * DEVICE SCOPE: Coordinator, routers (N/A)
+     *
+     * @param entry Entry to judge
+     * @param now Reference time, passed in so a whole table is judged against a single instant
+     * @param ignoreStale When true, age is not considered
+     * @returns Reason string for logging, or undefined when the entry is usable
+     */
+    #rejectRouteEntry(entry: SourceRouteTableEntry, now: number, ignoreStale: boolean): string | undefined {
+        if (!ignoreStale) {
+            const age = now - entry.lastUpdated;
+
+            // remove expired routes
+            if (age > CONFIG_NWK_ROUTE_EXPIRY_TIME) {
+                return `expired (age=${age}ms)`;
+            }
+        }
+
+        // remove blacklisted routes (too many consecutive failures)
+        if (entry.failureCount >= CONFIG_NWK_ROUTE_MAX_FAILURES) {
+            return `blacklisted (failures=${entry.failureCount})`;
+        }
+
+        // ignore if too many hops
+        if (entry.relayAddresses.length > CONFIG_NWK_MAX_SOURCE_ROUTE) {
+            return `has too many hops (${entry.relayAddresses.length})`;
+        }
+
+        // check if any relay has too many NO_ACK
+        for (const relay of entry.relayAddresses) {
+            const macNoACKs = this.#context.macNoACKs.get(relay);
+
+            if (macNoACKs !== undefined && macNoACKs >= CONFIG_NWK_CONCENTRATOR_DELIVERY_FAILURE_THRESHOLD) {
+                return `via relay ${relay} has too many NO_ACKs (${macNoACKs})`;
+            }
+        }
+
+        return undefined;
+    }
+
+    /**
+     * 05-3474-23 #3.6.3.3 (Source routing tables)
+     *
+     * Composite route score: path cost, plus a staleness penalty, plus a failure penalty, less a
+     * recency bonus. Lower is better.
+     *
+     * @param entry Entry to score
+     * @param now Reference time
+     * @returns The score
+     */
+    #scoreRouteEntry(entry: SourceRouteTableEntry, now: number): number {
+        const age = now - entry.lastUpdated;
+
+        // add staleness penalty (0-2 points based on age)
+        const stalenessPenalty =
+            age > CONFIG_NWK_ROUTE_STALENESS_TIME ? Math.min(2, (age - CONFIG_NWK_ROUTE_STALENESS_TIME) / CONFIG_NWK_ROUTE_STALENESS_TIME) : 0;
+        // add failure penalty (1 point per failure)
+        const failurePenalty = entry.failureCount;
+        // add recency bonus (prefer recently used routes)
+        const recencyBonus = entry.lastUsed && now - entry.lastUsed < 30000 ? -1 : 0;
+
+        return entry.pathCost + stalenessPenalty + failurePenalty + recencyBonus;
+    }
+
+    /**
+     * 05-3474-23 #3.6.3.3 (Source routing tables)
+     *
+     * The lowest-scoring entry of an already-filtered list, without reordering it.
+     *
+     * Ranking by scanning rather than by sorting is what keeps the source route table in
+     * insertion order: the array handed in here is sometimes the very array stored in
+     * `sourceRouteTable`, which is reported verbatim in `Mgmt_Rtg_rsp` and is the order
+     * blacklisting walks. A comparison `sort()` would reorder that state as a side effect
+     * of a read.
+     *
+     * The tie rule is the stable sort's: a strictly lower score wins, so equal scores keep
+     * the earlier entry.
+     *
+     * @param entries Entries already judged usable by `#rejectRouteEntry`
+     * @param now Reference time, so a whole list is scored against a single instant
+     * @returns The entry that should carry the frame, or undefined when the list is empty
+     */
+    #lowestScoringEntry(entries: SourceRouteTableEntry[], now: number): SourceRouteTableEntry | undefined {
+        let best: SourceRouteTableEntry | undefined;
+        let bestScore = Number.POSITIVE_INFINITY;
+
+        for (const entry of entries) {
+            const score = this.#scoreRouteEntry(entry, now);
+
+            if (score < bestScore) {
+                best = entry;
+                bestScore = score;
+            }
+        }
+
+        return best;
+    }
+
+    /**
+     * 05-3474-23 #3.6.3.3 (Source routing tables)
+     *
+     * The entry `findBestSourceRoute` would choose for a destination, without the table
+     * maintenance and route discovery that function also performs.
+     *
+     * The table is deliberately left in insertion order: it is reported verbatim in
+     * `Mgmt_Rtg_rsp`, so the selected entry has to be identified rather than sorted to the front.
+     *
+     * @param entries Entries for one destination
+     * @returns The entry that would carry a frame now, or undefined if none can
+     */
+    #selectRouteEntry(entries: SourceRouteTableEntry[]): SourceRouteTableEntry | undefined {
+        const now = Date.now();
+        const usableEntries: SourceRouteTableEntry[] = [];
+
+        for (const entry of entries) {
+            if (this.#rejectRouteEntry(entry, now, false) === undefined) {
+                usableEntries.push(entry);
+            }
+        }
+
+        return this.#lowestScoringEntry(usableEntries, now);
+    }
+
     public findBestSourceRoute(
         destination16: number | undefined,
         destination64: bigint | undefined,
@@ -339,41 +472,10 @@ export class NWKHandler {
 
         // filter out expired and blacklisted routes
         for (const entry of sourceRouteEntries) {
-            if (!ignoreStale) {
-                const age = now - entry.lastUpdated;
+            const rejection = this.#rejectRouteEntry(entry, now, ignoreStale);
 
-                // remove expired routes
-                if (age > CONFIG_NWK_ROUTE_EXPIRY_TIME) {
-                    logger.debug(() => `Route to ${destination16}:${destination64} expired (age=${age}ms)`, NS);
-                    continue;
-                }
-            }
-
-            // remove blacklisted routes (too many consecutive failures)
-            if (entry.failureCount >= CONFIG_NWK_ROUTE_MAX_FAILURES) {
-                logger.debug(() => `Route to ${destination16}:${destination64} blacklisted (failures=${entry.failureCount})`, NS);
-                continue;
-            }
-
-            if (entry.relayAddresses.length > CONFIG_NWK_MAX_SOURCE_ROUTE) {
-                // ignore if too many hops
-                continue;
-            }
-
-            // check if any relay has too many NO_ACK
-            let relayFailed = false;
-
-            for (const relay of entry.relayAddresses) {
-                const macNoACKs = this.#context.macNoACKs.get(relay);
-
-                if (macNoACKs !== undefined && macNoACKs >= CONFIG_NWK_CONCENTRATOR_DELIVERY_FAILURE_THRESHOLD) {
-                    logger.debug(() => `Route to ${destination16}:${destination64} via relay ${relay} has too many NO_ACKs (${macNoACKs})`, NS);
-                    relayFailed = true;
-                    break;
-                }
-            }
-
-            if (relayFailed) {
+            if (rejection !== undefined) {
+                logger.debug(() => `Route to ${destination16}:${destination64} ${rejection}`, NS);
                 continue;
             }
 
@@ -399,32 +501,10 @@ export class NWKHandler {
             this.#context.sourceRouteTable.set(destination16, validEntries);
         }
 
-        // sort routes by composite score: path cost + staleness penalty + failure penalty + recency bonus
-        validEntries.sort((a, b) => {
-            const ageA = now - a.lastUpdated;
-            const ageB = now - b.lastUpdated;
-
-            // add staleness penalty (0-2 points based on age)
-            const stalenessPenaltyA =
-                ageA > CONFIG_NWK_ROUTE_STALENESS_TIME ? Math.min(2, (ageA - CONFIG_NWK_ROUTE_STALENESS_TIME) / CONFIG_NWK_ROUTE_STALENESS_TIME) : 0;
-            const stalenessPenaltyB =
-                ageB > CONFIG_NWK_ROUTE_STALENESS_TIME ? Math.min(2, (ageB - CONFIG_NWK_ROUTE_STALENESS_TIME) / CONFIG_NWK_ROUTE_STALENESS_TIME) : 0;
-
-            // add failure penalty (1 point per failure)
-            const failurePenaltyA = a.failureCount;
-            const failurePenaltyB = b.failureCount;
-
-            // add recency bonus (prefer recently used routes)
-            const recencyBonusA = a.lastUsed && now - a.lastUsed < 30000 ? -1 : 0;
-            const recencyBonusB = b.lastUsed && now - b.lastUsed < 30000 ? -1 : 0;
-
-            const scoreA = a.pathCost + stalenessPenaltyA + failurePenaltyA + recencyBonusA;
-            const scoreB = b.pathCost + stalenessPenaltyB + failurePenaltyB + recencyBonusB;
-
-            return scoreA - scoreB;
-        });
-
-        const bestEntry = validEntries[0];
+        // Rank by scanning, never by sorting: when the filter above dropped an entry,
+        // `validEntries` IS the array just stored in the table, and an in-place sort would
+        // reorder persistent state as a side effect of a read. See `#lowestScoringEntry`.
+        const bestEntry = this.#lowestScoringEntry(validEntries, now)!;
 
         if (bestEntry.relayAddresses.length === 0) {
             // direct route (cost only, no relays)
@@ -442,7 +522,6 @@ export class NWKHandler {
      * SPEC COMPLIANCE NOTES:
      * - ✅ Resets failure counter and updates last-used timestamp after successful forwarding
      * - ✅ Operates on currently selected best route entry to keep metrics coherent
-     * - ⚠️  Multi-entry route table means only first entry updated; others remain untouched
      * DEVICE SCOPE: Coordinator, routers (N/A)
      *
      * @param destination16 Network address of the destination
@@ -450,8 +529,13 @@ export class NWKHandler {
     public markRouteSuccess(destination16: number): void {
         const entries = this.#context.sourceRouteTable.get(destination16);
 
-        if (entries && entries.length > 0) {
-            const entry = entries[0]; // mark the currently-selected best route
+        // mark the currently-selected best route, which is not necessarily the first one held.
+        // no selectable entry means the frame went direct as a last resort, and a success then says
+        // nothing about any stored path: crediting one would clear the blacklist on an entry that
+        // carried nothing.
+        const entry = entries === undefined ? undefined : this.#selectRouteEntry(entries);
+
+        if (entry !== undefined) {
             entry.lastUsed = Date.now();
             entry.failureCount = 0; // reset failure count on success
         }
@@ -476,7 +560,10 @@ export class NWKHandler {
         const entries = this.#context.sourceRouteTable.get(destination16);
 
         if (entries && entries.length > 0) {
-            const entry = entries[0]; // mark the currently-selected best route
+            // mark the currently-selected best route, which is not necessarily the first one held.
+            // unlike the success path this keeps a fallback: an explicit repair request has to be
+            // able to purge and re-discover even when nothing in the table is selectable.
+            const entry = this.#selectRouteEntry(entries) ?? entries[0];
             entry.failureCount += 1;
 
             logger.debug(() => `Route to ${destination16} failed (failureCount=${entry.failureCount})`, NS);
@@ -577,6 +664,54 @@ export class NWKHandler {
         }
 
         return false;
+    }
+
+    /**
+     * 05-3474-23 #3.6.3.3 (Source routing tables)
+     *
+     * Add a source route for a destination, or refresh the existing entry when that path is already known.
+     *
+     * A device that keeps confirming the same path must keep that path alive: without refreshing `lastUpdated`,
+     * the entry ages out of `findBestSourceRoute` after CONFIG_NWK_ROUTE_EXPIRY_TIME while the device is still
+     * reporting it, and every frame to that destination falls back to direct until discovery runs again.
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Matches on the relay hop list, which is the identity of a path; refreshes cost, age and failure count on a match
+     * - ✅ Accepts optional pre-fetched entry array to avoid redundant map lookups
+     * - ⚠️  Formally spec route table holds single entry per destination; this helper assumes multi-entry model
+     * DEVICE SCOPE: Coordinator, routers (N/A)
+     */
+    public upsertSourceRoute(address16: number, newEntry: SourceRouteTableEntry, existingEntries?: SourceRouteTableEntry[]): void {
+        const entries = existingEntries ?? this.#context.sourceRouteTable.get(address16);
+
+        if (entries === undefined) {
+            this.#context.sourceRouteTable.set(address16, [newEntry]);
+
+            return;
+        }
+
+        for (const existingEntry of entries) {
+            if (newEntry.relayAddresses.length === existingEntry.relayAddresses.length) {
+                let matching = true;
+
+                for (let i = 0; i < newEntry.relayAddresses.length; i++) {
+                    if (newEntry.relayAddresses[i] !== existingEntry.relayAddresses[i]) {
+                        matching = false;
+                        break;
+                    }
+                }
+
+                if (matching) {
+                    existingEntry.pathCost = newEntry.pathCost;
+                    existingEntry.lastUpdated = newEntry.lastUpdated;
+                    existingEntry.failureCount = 0;
+
+                    return;
+                }
+            }
+        }
+
+        entries.push(newEntry);
     }
 
     // #endregion
@@ -939,27 +1074,9 @@ export class NWKHandler {
             }
 
             const routeEntry = this.createSourceRouteEntry(nextHopCandidates, pathCost === 0 ? nextHopCandidates.length + 1 : pathCost);
-            const existingEntries = this.#context.sourceRouteTable.get(responder16);
 
-            if (existingEntries === undefined) {
-                this.#context.sourceRouteTable.set(responder16, [routeEntry]);
-            } else {
-                const existingIndex = existingEntries.findIndex(
-                    (entry) =>
-                        entry.relayAddresses.length === routeEntry.relayAddresses.length &&
-                        entry.relayAddresses.every((relay, idx) => relay === routeEntry.relayAddresses[idx]),
-                );
-
-                if (existingIndex !== -1) {
-                    const existingEntry = existingEntries[existingIndex];
-                    existingEntry.pathCost = routeEntry.pathCost;
-                    existingEntry.lastUpdated = routeEntry.lastUpdated;
-                    existingEntry.failureCount = 0;
-                } else if (!this.hasSourceRoute(responder16, routeEntry, existingEntries)) {
-                    // TODO: do we want this here?
-                    existingEntries.push(routeEntry);
-                }
-            }
+            // TODO: do we want this here?
+            this.upsertSourceRoute(responder16, routeEntry);
 
             this.markRouteSuccess(responder16);
         }
@@ -1213,7 +1330,7 @@ export class NWKHandler {
      * - ✅ Stores source route in sourceRouteTable
      * - ✅ Creates source route entry with relays and path cost (relayCount + 1)
      * - ✅ Handles missing source16 by looking up via source64
-     * - ✅ Checks for duplicate routes before adding (hasSourceRoute)
+     * - ✅ Refreshes the known path, or adds it when new (upsertSourceRoute)
      * - ✅ ROUTE_RECORD provides path from source to coordinator
      *       - Relay list is in order from source toward coordinator ✅
      *       - Path cost calculation (relayCount + 1) is correct ✅
@@ -1256,14 +1373,7 @@ export class NWKHandler {
                 : nwkHeader.source16;
 
         if (source16 !== undefined) {
-            const entry = this.createSourceRouteEntry(relays, relayCount + 1);
-            const entries = this.#context.sourceRouteTable.get(source16);
-
-            if (entries === undefined) {
-                this.#context.sourceRouteTable.set(source16, [entry]);
-            } else if (!this.hasSourceRoute(source16, entry, entries)) {
-                entries.push(entry);
-            }
+            this.upsertSourceRoute(source16, this.createSourceRouteEntry(relays, relayCount + 1));
         }
 
         return offset;
@@ -1495,27 +1605,8 @@ export class NWKHandler {
                     address === ZigbeeConsts.COORDINATOR_ADDRESS
                         ? this.createSourceRouteEntry([], pathCost)
                         : this.createSourceRouteEntry([address], pathCost + 1);
-                const entries = this.#context.sourceRouteTable.get(device.address16);
 
-                if (entries === undefined) {
-                    this.#context.sourceRouteTable.set(device.address16, [entry]);
-                } else {
-                    // check if we already have this route; if so, update it
-                    const existingIndex = entries.findIndex(
-                        (e) =>
-                            e.relayAddresses.length === entry.relayAddresses.length &&
-                            e.relayAddresses.every((relay, idx) => relay === entry.relayAddresses[idx]),
-                    );
-
-                    if (existingIndex !== -1) {
-                        // update existing route with new cost and reset failure count
-                        entries[existingIndex].pathCost = entry.pathCost;
-                        entries[existingIndex].lastUpdated = entry.lastUpdated;
-                        entries[existingIndex].failureCount = 0;
-                    } else if (!this.hasSourceRoute(device.address16, entry, entries)) {
-                        entries.push(entry);
-                    }
-                }
+                this.upsertSourceRoute(device.address16, entry);
             }
         }
 

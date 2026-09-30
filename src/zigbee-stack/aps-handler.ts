@@ -734,12 +734,16 @@ export class APSHandler {
 
         try {
             const [, parentRelays] = this.#nwkHandler.findBestSourceRoute(parent16, parent64);
+            const entry = parentRelays
+                ? this.#nwkHandler.createSourceRouteEntry(parentRelays, parentRelays.length + 1)
+                : this.#nwkHandler.createSourceRouteEntry([parent16], 2);
 
-            if (parentRelays) {
-                this.#context.sourceRouteTable.set(child16, [this.#nwkHandler.createSourceRouteEntry(parentRelays, parentRelays.length + 1)]);
-            } else {
-                this.#context.sourceRouteTable.set(child16, [this.#nwkHandler.createSourceRouteEntry([parent16], 2)]);
-            }
+            // Upsert rather than replace. This path is inferred from which router admitted the
+            // device, and the association path is not the data path: a device may join through a
+            // router it does not route through, and one that egresses another way entirely reports
+            // no relay at all. So the guess is kept as a fallback, but it must not discard what the
+            // device itself has reported, nor outrank a cheaper path that is already known.
+            this.#nwkHandler.upsertSourceRoute(child16, entry);
         } catch {
             /* ignore (no known route yet) */
         }
