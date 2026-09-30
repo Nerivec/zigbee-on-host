@@ -177,15 +177,36 @@ export async function processFrame(
                     return;
                 }
 
-                const apsPayload = decodeZigbeeAPSPayload(
-                    nwkPayload,
-                    apsHOutOffset,
-                    undefined, // use pre-hashed this.context.netParams.tcKey,
-                    /* nwkHeader.frameControl.extendedSource ? nwkHeader.source64 : this.context.address16ToAddress64.get(nwkHeader.source16!) */
-                    nwkHeader.source64 ?? context.address16ToAddress64.get(nwkHeader.source16!),
-                    apsFCF,
-                    apsHeader,
-                );
+                const apsSource64 = nwkHeader.source64 ?? context.address16ToAddress64.get(nwkHeader.source16!);
+                // A device that has been issued its own Trust Center link key secures its
+                // APS frames with it, so the pre-hashed global key cannot open them. Fall
+                // back to the global key when the device key does not fit: the request that
+                // starts a key update, and the transport answering it, are both still
+                // secured with the old one.
+                let deviceKey: Buffer | undefined;
+
+                if (apsFCF.security && apsSource64 !== undefined && context.trustCenterPolicies.issueUniqueTCLinkKeys) {
+                    deviceKey = context.getAppLinkKey(apsSource64, context.netParams.eui64);
+                }
+
+                let apsPayload: Buffer;
+
+                try {
+                    apsPayload = decodeZigbeeAPSPayload(
+                        nwkPayload,
+                        apsHOutOffset,
+                        deviceKey, // undefined => use pre-hashed this.context.netParams.tcKey
+                        apsSource64,
+                        apsFCF,
+                        apsHeader,
+                    );
+                } catch (error) {
+                    if (deviceKey === undefined) {
+                        throw error;
+                    }
+
+                    apsPayload = decodeZigbeeAPSPayload(nwkPayload, apsHOutOffset, undefined, apsSource64, apsFCF, apsHeader);
+                }
 
                 // Delegate APS frame processing to APS handler
                 await apsHandler.processFrame(apsPayload, macHeader, nwkHeader, apsHeader, sourceLQA);

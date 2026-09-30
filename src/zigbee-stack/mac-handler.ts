@@ -382,7 +382,9 @@ export class MACHandler {
             const source16 =
                 macHeader.source16 ?? (macHeader.source64 !== undefined ? this.#context.deviceTable.get(macHeader.source64)?.address16 : undefined);
 
-            await this.#context.disassociate(source16, macHeader.source64);
+            // dropKeys=false: unauthenticated and carrying no rejoin flag, so
+            // it must not destroy a key that cannot be regenerated.
+            await this.#context.disassociate(source16, macHeader.source64, false);
         }
 
         return offset;

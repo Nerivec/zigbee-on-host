@@ -103,6 +103,19 @@ export type TrustCenterPolicies = {
     allowRejoinsWithWellKnownKey: boolean;
     /** This value controls whether devices are allowed to request a Trust Center Link Key after they have joined the network. */
     allowTCKeyRequest: TrustCenterKeyRequestPolicy;
+    /**
+     * When TRUE, a Trust Center Link Key request is answered with a key generated for
+     * that device alone, which is what Zigbee 3.0 requires (05-3474-23 #4.6.3.6, BDB #10.2).
+     * When FALSE, every requester is given the global `tcKey`.
+     *
+     * A device that receives the well-known global key in answer to its request has been
+     * given a key every other device already holds. A conformant Zigbee 3.0 joiner treats
+     * that as a failed key update: it decrypts the transport, acknowledges it, and then
+     * leaves the network - which looks from outside like a device that cannot join at all.
+     *
+     * Defaults to FALSE to preserve existing behaviour on upgrade.
+     */
+    issueUniqueTCLinkKeys: boolean;
     /** This policy indicates whether a node on the network that transmits a ZDO Mgmt_Permit_Join with a significance set to 1 is allowed to effect the local Trust Center’s policies. */
     allowRemoteTCPolicyChange: boolean;
     /** This value determines how the Trust Center SHALL handle attempts to request an application link key with a partner node. */
@@ -388,6 +401,7 @@ export class StackContext {
         allowJoins: false,
         installCode: InstallCodePolicy.NOT_REQUIRED,
         allowRejoinsWithWellKnownKey: true,
+        issueUniqueTCLinkKeys: false,
         allowTCKeyRequest: TrustCenterKeyRequestPolicy.ALLOWED,
         networkKeyUpdatePeriod: 0, // disable
         networkKeyUpdateMethod: NetworkKeyUpdateMethod.BROADCAST,
@@ -951,6 +965,56 @@ export class StackContext {
     }
 
     /**
+     * 05-3474-23 #4.7.3.11.1, #4.7.3.1 step 2b
+     *
+     * Drop one key pair.
+     *
+     * An entry inherited from a previous incarnation of the same IEEE makes
+     * the verify-key path answer a correct well-known-key proof with
+     * SECURITY_FAILURE. #4.7.3.11.1 recommends deleting "old, unused link
+     * keys ... to prevent them from being used". Rejoins (#4.7.3.2) keep
+     * their key. KeyAttributes and apsLinkKeyType are not modelled separately
+     * here: absence of an entry is the global-key state, the one #4.7.3.1
+     * step 2b describes for a joiner.
+     *
+     * DEVICE SCOPE: Trust Center
+     *
+     * @returns Whether an entry was removed
+     */
+    public deleteAppLinkKey(deviceA: bigint, deviceB: bigint): boolean {
+        return this.appLinkKeyTable.delete(this.#makeAppLinkKeyId(deviceA, deviceB));
+    }
+
+    /**
+     * 05-3474-23 #2.4.3.4.7.4 step 7a, #4.7.3.3 steps 4a/6a, #4.7.3.11.1
+     *
+     * Drop every key pair this device takes part in.
+     *
+     * "If any entry matches it SHALL be deleted" (#2.4.3.4.7.4 step 7a), and
+     * #4.7.3.11.1 recommends deleting "old, unused link keys ... to prevent
+     * them from being used". There is no SHALL for the leave path itself, and
+     * this runs from there rather than from Security_Decommission_req
+     * (#2.4.3.4.7), which this stack does not implement.
+     *
+     * DEVICE SCOPE: Trust Center
+     *
+     * @param device64 The device whose key pairs are to be removed
+     * @returns How many entries were removed
+     */
+    public deleteAppLinkKeys(device64: bigint): number {
+        let removed = 0;
+
+        for (const [id, entry] of this.appLinkKeyTable) {
+            if (entry.deviceA === device64 || entry.deviceB === device64) {
+                this.appLinkKeyTable.delete(id);
+                removed += 1;
+            }
+        }
+
+        return removed;
+    }
+
+    /**
      * 05-3474-23 #4.5.1 (Install Code processing)
      *
      * SPEC COMPLIANCE NOTES:
@@ -1477,6 +1541,14 @@ export class StackContext {
         );
 
         if (status === MACAssociationStatus.SUCCESS) {
+            if (initialJoin && source64 !== undefined && this.installCodeTable.get(source64) === undefined) {
+                // #4.7.3.11.1: an entry left by a previous incarnation of this
+                // IEEE is an old, unused key. Without it the joiner is on the
+                // well-known key, as #4.7.3.1 step 2b describes. An
+                // install-code entry is provisioned for this join, so it stays.
+                this.deleteAppLinkKey(source64, this.netParams.eui64);
+            }
+
             if (initialJoin || unknownRejoin) {
                 this.deviceTable.set(source64!, {
                     address16: newAddress16,
@@ -1536,7 +1608,7 @@ export class StackContext {
      * THOROUGH CLEANUP: All device-related state properly removed
      * DEVICE SCOPE: Coordinator, routers (N/A)
      */
-    public async disassociate(source16: number | undefined, source64: bigint | undefined): Promise<void> {
+    public async disassociate(source16: number | undefined, source64: bigint | undefined, dropKeys = true): Promise<void> {
         if (source64 === undefined && source16 !== undefined) {
             source64 = this.address16ToAddress64.get(source16);
         } else if (source16 === undefined && source64 !== undefined) {
@@ -1551,6 +1623,7 @@ export class StackContext {
             this.sourceRouteTable.delete(source16);
             this.pendingAssociations.delete(source64); // should never amount to a delete
             this.macNoACKs.delete(source16);
+            const removedKeys = dropKeys && this.trustCenterPolicies.issueUniqueTCLinkKeys ? this.deleteAppLinkKeys(source64) : 0;
 
             // XXX: should only be needed for `rxOnWhenIdle`, but for now always trigger (tricky bit, not always correct)
             for (const [addr16, entries] of this.sourceRouteTable) {
@@ -1572,7 +1645,7 @@ export class StackContext {
                 }
             }
 
-            logger.debug(() => `DEVICE_LEFT[src=${source16}:${source64}]`, NS);
+            logger.debug(() => `DEVICE_LEFT[src=${source16}:${source64} keyPairsRemoved=${removedKeys}]`, NS);
 
             setImmediate(() => {
                 this.#callbacks.onDeviceLeft(source16, source64);
