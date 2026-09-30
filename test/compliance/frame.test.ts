@@ -28,6 +28,7 @@ type TestContext = {
     computeLQA: ReturnType<typeof vi.fn>;
     computeDeviceLQA: ReturnType<typeof vi.fn>;
     updateIncomingNWKFrameCounter: ReturnType<typeof vi.fn>;
+    followAddressChange: ReturnType<typeof vi.fn>;
     rssiMin: number;
 };
 
@@ -167,6 +168,7 @@ describe("Frame handler", () => {
             computeLQA: vi.fn(() => 0x50),
             computeDeviceLQA: vi.fn(() => 0x60),
             updateIncomingNWKFrameCounter: vi.fn(() => true),
+            followAddressChange: vi.fn().mockResolvedValue(undefined),
             rssiMin: -60,
         };
         context = rawContext as unknown as StackContext;
@@ -506,5 +508,59 @@ describe("Frame handler", () => {
 
         expect(rawContext.updateIncomingNWKFrameCounter).toHaveBeenCalledWith(undefined, 10);
         expect(apsHandlerMock.processFrame).not.toHaveBeenCalled();
+    });
+
+    describe("address of a known device (§3.3.1.7)", () => {
+        const securityHeader = {
+            control: {
+                level: ZigbeeSecurityLevel.NONE,
+                keyId: ZigbeeKeyType.NWK,
+                nonce: true,
+                reqVerifiedFc: false,
+            },
+            frameCounter: 10,
+            source64: 0x00124b0000abcdefn,
+        };
+
+        const receiveCommand = async (commandId: number, nwkFCFOverrides: Partial<ZigbeeNWKFrameControl>, source64?: bigint): Promise<void> => {
+            const fcf = createMACFrameControl(macModule.MACFrameType.DATA, macModule.MACFrameAddressMode.SHORT, macModule.MACFrameAddressMode.SHORT);
+            mockMACDecoding(fcf, buildMacHeader(fcf), Buffer.from([0x08]));
+
+            const nwkFCF = buildNWKFrameControl({ frameType: nwkModule.ZigbeeNWKFrameType.CMD, ...nwkFCFOverrides });
+            const nwkHeader = buildNWKHeader(nwkFCF, { source64, securityHeader: nwkFCF.security ? securityHeader : undefined });
+            mockNWKDecoding(nwkFCF, nwkHeader, Buffer.from([commandId]));
+
+            await processFrame(Buffer.from([0x08]), context, macHandler, nwkHandler, nwkGPHandler, apsHandler);
+        };
+
+        it("checks a secured frame naming both addresses of its source before handling it", async () => {
+            await receiveCommand(nwkModule.ZigbeeNWKCommandId.LINK_STATUS, { security: true, extendedSource: true }, 0x00124b0000abcdefn);
+
+            expect(rawContext.followAddressChange).toHaveBeenCalledTimes(1);
+            expect(rawContext.followAddressChange).toHaveBeenCalledWith(0x00124b0000abcdefn, 0x5678);
+            expect(rawContext.followAddressChange.mock.invocationCallOrder[0]).toBeLessThan(
+                nwkHandlerMock.processCommand.mock.invocationCallOrder[0]!,
+            );
+        });
+
+        it("does not check an unsecured frame", async () => {
+            await receiveCommand(nwkModule.ZigbeeNWKCommandId.LINK_STATUS, { extendedSource: true }, 0x00124b0000abcdefn);
+
+            expect(rawContext.followAddressChange).not.toHaveBeenCalled();
+            expect(nwkHandlerMock.processCommand).toHaveBeenCalledTimes(1);
+        });
+
+        it("does not check a frame without the source IEEE address", async () => {
+            await receiveCommand(nwkModule.ZigbeeNWKCommandId.LINK_STATUS, { security: true });
+
+            expect(rawContext.followAddressChange).not.toHaveBeenCalled();
+        });
+
+        it("leaves a rejoin request to the rejoin", async () => {
+            await receiveCommand(nwkModule.ZigbeeNWKCommandId.REJOIN_REQ, { security: true, extendedSource: true }, 0x00124b0000abcdefn);
+
+            expect(rawContext.followAddressChange).not.toHaveBeenCalled();
+            expect(nwkHandlerMock.processCommand).toHaveBeenCalledTimes(1);
+        });
     });
 });

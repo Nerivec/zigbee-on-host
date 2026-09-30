@@ -335,6 +335,8 @@ export interface StackCallbacks {
 export interface StackContextCallbacks {
     /** Handle post-disassociate */
     onDeviceLeft: StackCallbacks["onDeviceLeft"];
+    /** Handle a known device found at a new address, see `followAddressChange` */
+    onDeviceRejoined?: StackCallbacks["onDeviceRejoined"];
 }
 
 /** Table 3-54 */
@@ -1583,5 +1585,71 @@ export class StackContext {
             // force saving after device change
             await this.savePeriodicState();
         }
+    }
+
+    /**
+     * 05-3474-23 #3.3.1.7: a frame carrying both addresses of its source is checked against the address map.
+     *
+     * A device known by its IEEE address that sends from a short address nobody holds has changed address
+     * without the announce that normally says so. A router that resolved a conflict and then rebooted onto the
+     * address its stack had saved is one such device. Left alone, its frames are credited to the old address,
+     * which keeps that address looking alive while nothing sent to it arrives.
+     *
+     * A short address recorded for another device is a conflict, not a change, and is not touched here.
+     *
+     * @param address64 The frame's source IEEE address
+     * @param address16 The frame's source short address
+     * @returns The device's previous short address if it was moved, undefined otherwise
+     */
+    public async followAddressChange(address64: bigint, address16: number): Promise<number | undefined> {
+        const device = this.deviceTable.get(address64);
+
+        if (device === undefined || device.address16 === address16) {
+            return undefined;
+        }
+
+        const holder64 = this.address16ToAddress64.get(address16);
+
+        if (holder64 !== undefined && holder64 !== address64) {
+            return undefined;
+        }
+
+        const previous16 = device.address16;
+
+        // release the old address only if it is still this device's, not if another device was recorded there since
+        if (this.address16ToAddress64.get(previous16) === address64) {
+            this.address16ToAddress64.delete(previous16);
+        }
+
+        this.address16ToAddress64.set(address16, address64);
+        device.address16 = address16;
+
+        // routes to the old address, or through it, lead nowhere now
+        this.sourceRouteTable.delete(previous16);
+        this.macNoACKs.delete(previous16);
+
+        for (const [addr16, entries] of this.sourceRouteTable) {
+            const filteredEntries = entries.filter((entry) => !entry.relayAddresses.includes(previous16));
+
+            if (filteredEntries.length === 0) {
+                this.sourceRouteTable.delete(addr16);
+            } else if (filteredEntries.length !== entries.length) {
+                this.sourceRouteTable.set(addr16, filteredEntries);
+            }
+        }
+
+        logger.warning(`DEVICE_ADDRESS_CHANGED[src=${address16}:${address64} previous16=${previous16}] following the device`, NS);
+
+        if (device.authorized && device.capabilities !== undefined) {
+            const capabilities = device.capabilities;
+
+            setImmediate(() => {
+                this.#callbacks.onDeviceRejoined?.(address16, address64, capabilities);
+            });
+        }
+
+        await this.savePeriodicState();
+
+        return previous16;
     }
 }

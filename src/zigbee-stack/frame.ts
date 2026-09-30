@@ -6,6 +6,7 @@ import {
     decodeZigbeeNWKFrameControl,
     decodeZigbeeNWKHeader,
     decodeZigbeeNWKPayload,
+    ZigbeeNWKCommandId,
     ZigbeeNWKConsts,
     ZigbeeNWKFrameType,
 } from "../zigbee/zigbee-nwk.js";
@@ -156,6 +157,19 @@ export async function processFrame(
 
                     return;
                 }
+            }
+
+            // #3.3.1.7: a secured frame naming both addresses of its source tells where a known device is now. A rejoin
+            // request is left to the rejoin, which decides the device's address itself.
+            if (
+                nwkFCF.security &&
+                nwkHeader.source64 !== undefined &&
+                nwkHeader.source16 !== undefined &&
+                nwkHeader.source16 !== ZigbeeConsts.COORDINATOR_ADDRESS &&
+                nwkHeader.source16 < ZigbeeConsts.BCAST_MIN &&
+                !(nwkFCF.frameType === ZigbeeNWKFrameType.CMD && nwkPayload.readUInt8(0) === ZigbeeNWKCommandId.REJOIN_REQ)
+            ) {
+                await context.followAddressChange(nwkHeader.source64, nwkHeader.source16);
             }
 
             if (nwkFCF.frameType === ZigbeeNWKFrameType.DATA) {

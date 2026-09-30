@@ -253,6 +253,103 @@ describe("StackContext", () => {
         });
     });
 
+    describe("followAddressChange", () => {
+        const device64 = 0x00124b0000aaaa01n;
+        const old16 = 0x2c41;
+        const new16 = 0x5b17;
+        const capabilities: MACCapabilities = {
+            alternatePANCoordinator: false,
+            deviceType: 1,
+            powerSource: 1,
+            rxOnWhenIdle: true,
+            securityCapability: true,
+            allocateAddress: true,
+        };
+
+        const addDevice = (address64: bigint, address16: number, authorized = true): void => {
+            context.deviceTable.set(address64, {
+                address16,
+                capabilities,
+                authorized,
+                neighbor: true,
+                recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
+            });
+            context.address16ToAddress64.set(address16, address64);
+        };
+
+        const route = (relayAddresses: number[]): SourceRouteTableEntry => ({
+            relayAddresses,
+            pathCost: 1,
+            lastUpdated: Date.now(),
+            failureCount: 0,
+        });
+
+        beforeEach(() => {
+            mockStackContextCallbacks.onDeviceRejoined = vi.fn();
+        });
+
+        it("moves a known device to an unrecorded address and forgets the routes that used the old one", async () => {
+            const other16 = 0x1111;
+            addDevice(device64, old16);
+            context.macNoACKs.set(old16, 2);
+            context.sourceRouteTable.set(old16, [route([])]);
+            context.sourceRouteTable.set(other16, [route([old16]), route([0x2222])]);
+            context.sourceRouteTable.set(0x3333, [route([old16, 0x2222])]);
+
+            await expect(context.followAddressChange(device64, new16)).resolves.toStrictEqual(old16);
+            await new Promise((resolve) => setImmediate(resolve));
+
+            expect(context.deviceTable.get(device64)?.address16).toStrictEqual(new16);
+            expect(context.address16ToAddress64.get(new16)).toStrictEqual(device64);
+            expect(context.address16ToAddress64.has(old16)).toStrictEqual(false);
+            expect(context.macNoACKs.has(old16)).toStrictEqual(false);
+            expect(context.sourceRouteTable.has(old16)).toStrictEqual(false);
+            expect(context.sourceRouteTable.get(other16)?.map((entry) => entry.relayAddresses)).toStrictEqual([[0x2222]]);
+            expect(context.sourceRouteTable.has(0x3333)).toStrictEqual(false);
+            expect(mockStackContextCallbacks.onDeviceRejoined).toHaveBeenCalledWith(new16, device64, capabilities);
+        });
+
+        it("keeps the old address mapped when another device was recorded there since", async () => {
+            const other64 = 0x00124b0000aaaa02n;
+            addDevice(device64, old16);
+            context.address16ToAddress64.set(old16, other64);
+
+            await context.followAddressChange(device64, new16);
+
+            expect(context.address16ToAddress64.get(old16)).toStrictEqual(other64);
+            expect(context.address16ToAddress64.get(new16)).toStrictEqual(device64);
+        });
+
+        it("does not announce a device that is not authorized yet, but still moves it", async () => {
+            addDevice(device64, old16, false);
+
+            await context.followAddressChange(device64, new16);
+            await new Promise((resolve) => setImmediate(resolve));
+
+            expect(context.deviceTable.get(device64)?.address16).toStrictEqual(new16);
+            expect(mockStackContextCallbacks.onDeviceRejoined).not.toHaveBeenCalled();
+        });
+
+        it("changes nothing for an unknown device, an unchanged address, or an address another device holds", async () => {
+            const other64 = 0x00124b0000aaaa02n;
+            addDevice(device64, old16);
+            addDevice(other64, new16);
+
+            await expect(context.followAddressChange(0x00124b0000aaaa03n, 0x4444)).resolves.toBeUndefined();
+            await expect(context.followAddressChange(device64, old16)).resolves.toBeUndefined();
+            await expect(context.followAddressChange(device64, new16)).resolves.toBeUndefined();
+            await new Promise((resolve) => setImmediate(resolve));
+
+            expect(context.address16ToAddress64.has(0x4444)).toStrictEqual(false);
+            expect(context.deviceTable.get(device64)?.address16).toStrictEqual(old16);
+            expect(context.address16ToAddress64.get(new16)).toStrictEqual(other64);
+            expect(mockStackContextCallbacks.onDeviceRejoined).not.toHaveBeenCalled();
+        });
+    });
+
     describe("network parameters", () => {
         it("should allow modifying network parameters", () => {
             context.netParams.channel = 20;
