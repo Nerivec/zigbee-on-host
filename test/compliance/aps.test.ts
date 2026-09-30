@@ -883,6 +883,146 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
             }
         });
 
+        describe("sequence numbers and next hop of an acknowledgment", () => {
+            const device16 = 0x5a01;
+            const device64 = 0x00124b00eeff5a01n;
+
+            function inbound(macSource16: number, macSeqNum: number, nwkSeqNum: number) {
+                const macHeader: MACHeader = {
+                    frameControl: createMACFrameControl(MACFrameType.DATA, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
+                    sequenceNumber: macSeqNum,
+                    destinationPANId: netParams.panId,
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    source16: macSource16,
+                    commandId: undefined,
+                    fcs: 0,
+                };
+                const nwkHeader: ZigbeeNWKHeader = {
+                    frameControl: {
+                        frameType: ZigbeeNWKFrameType.DATA,
+                        protocolVersion: ZigbeeNWKConsts.VERSION_2007,
+                        discoverRoute: ZigbeeNWKRouteDiscovery.SUPPRESS,
+                        multicast: false,
+                        security: true,
+                        sourceRoute: false,
+                        extendedDestination: false,
+                        extendedSource: true,
+                        endDeviceInitiator: false,
+                    },
+                    destination16: ZigbeeConsts.COORDINATOR_ADDRESS,
+                    source16: device16,
+                    source64: device64,
+                    radius: 5,
+                    seqNum: nwkSeqNum,
+                };
+                const apsHeader: ZigbeeAPSHeader = {
+                    frameControl: {
+                        frameType: ZigbeeAPSFrameType.DATA,
+                        deliveryMode: ZigbeeAPSDeliveryMode.UNICAST,
+                        ackFormat: false,
+                        security: false,
+                        ackRequest: true,
+                        extendedHeader: false,
+                    },
+                    destEndpoint: 0x01,
+                    clusterId: 0x0006,
+                    profileId: 0x0104,
+                    sourceEndpoint: 0x01,
+                    counter: 0x10,
+                };
+
+                return { macHeader, nwkHeader, apsHeader };
+            }
+
+            function captureFrames(): Buffer[] {
+                const frames: Buffer[] = [];
+
+                mockMACHandlerCallbacks.onSendFrame = vi.fn((payload: Buffer) => {
+                    frames.push(Buffer.from(payload));
+
+                    return Promise.resolve();
+                });
+
+                return frames;
+            }
+
+            beforeEach(() => {
+                registerNeighborDevice(context, device16, device64);
+            });
+
+            afterEach(() => {
+                mockMACHandlerCallbacks.onSendFrame = vi.fn();
+            });
+
+            it("takes the MAC and NWK sequence numbers of the acknowledgment from the coordinator's own counters", async () => {
+                const lastMACSeqNum = macHandler.nextSeqNum();
+                const lastNWKSeqNum = nwkHandler.nextSeqNum();
+                const { macHeader, nwkHeader, apsHeader } = inbound(device16, (lastMACSeqNum + 100) & 0xff, (lastNWKSeqNum + 100) & 0xff);
+                const frames = captureFrames();
+
+                await apsHandler.sendACK(macHeader, nwkHeader, apsHeader);
+
+                expect(frames).toHaveLength(1);
+                const decoded = decodeMACFramePayload(frames[0]!);
+                const { nwkHeader: ackNWKHeader } = decodeAPSFrame(decoded);
+
+                expect(decoded.header.sequenceNumber).toStrictEqual((lastMACSeqNum + 1) & 0xff);
+                expect(ackNWKHeader.seqNum).toStrictEqual((lastNWKSeqNum + 1) & 0xff);
+            });
+
+            it("does not repeat a MAC sequence number to one next hop when an acknowledgment is followed by data", async () => {
+                // the acknowledged frame carries exactly the number the coordinator's own counter hands out next
+                const lastMACSeqNum = macHandler.nextSeqNum();
+                const { macHeader, nwkHeader, apsHeader } = inbound(device16, (lastMACSeqNum + 1) & 0xff, 0x42);
+                const frames = captureFrames();
+
+                await apsHandler.sendACK(macHeader, nwkHeader, apsHeader);
+                await apsHandler.sendData(
+                    Buffer.from([0x00, 0x01, 0x00, 0x00]),
+                    ZigbeeNWKRouteDiscovery.SUPPRESS,
+                    device16,
+                    device64,
+                    ZigbeeAPSDeliveryMode.UNICAST,
+                    0x0006,
+                    0x0104,
+                    0x01,
+                    0x01,
+                    undefined,
+                );
+
+                expect(frames).toHaveLength(2);
+                const ack = decodeMACFramePayload(frames[0]!);
+                const data = decodeMACFramePayload(frames[1]!);
+
+                expect(ack.header.destination16).toStrictEqual(device16);
+                expect(data.header.destination16).toStrictEqual(device16);
+                expect(data.header.sequenceNumber).not.toStrictEqual(ack.header.sequenceNumber);
+            });
+
+            it("credits the MAC outcome of the acknowledgment to the next hop it was sent to", async () => {
+                // the frame came in through one router, and the route back to its originator goes through another
+                const inboundRelay16 = 0x5a02;
+                const outboundRelay16 = 0x5a03;
+                registerNeighborDevice(context, inboundRelay16, 0x00124b00eeff5a02n);
+                registerNeighborDevice(context, outboundRelay16, 0x00124b00eeff5a03n);
+                context.deviceTable.get(device64)!.neighbor = false;
+                context.sourceRouteTable.set(device16, [nwkHandler.createSourceRouteEntry([outboundRelay16], 2)]);
+
+                const { macHeader, nwkHeader, apsHeader } = inbound(inboundRelay16, 0x20, 0x21);
+                mockMACHandlerCallbacks.onSendFrame = vi.fn(() => Promise.reject(new Error("NO_ACK", { cause: NO_ACK_CODE })));
+
+                await apsHandler.sendACK(macHeader, nwkHeader, apsHeader);
+
+                expect(mockMACHandlerCallbacks.onSendFrame).toHaveBeenCalledTimes(1);
+                const ack = decodeMACFramePayload(vi.mocked(mockMACHandlerCallbacks.onSendFrame).mock.calls[0]![0]);
+                expect(ack.header.destination16).toStrictEqual(outboundRelay16);
+                expect(context.macNoACKs.get(outboundRelay16)).toStrictEqual(1);
+                expect(context.macNoACKs.has(inboundRelay16)).toStrictEqual(false);
+                expect(mockMACHandlerCallbacks.onMarkRouteFailure).toHaveBeenCalledWith(outboundRelay16);
+                expect(mockMACHandlerCallbacks.onMarkRouteFailure).not.toHaveBeenCalledWith(inboundRelay16);
+            });
+        });
+
         it("retransmits APS data when ACK is not received up to apsMaxFrameRetries", async () => {
             vi.useFakeTimers();
 

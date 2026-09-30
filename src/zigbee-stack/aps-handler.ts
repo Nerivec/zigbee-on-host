@@ -912,6 +912,11 @@ export class APSHandler {
         }
 
         const macDest16 = nwkDest16 < ZigbeeConsts.BCAST_MIN ? (relayAddresses?.[relayIndex!] ?? nwkDest16) : ZigbeeMACConsts.BCAST_ADDR;
+        // The ACK is a new frame from this device, so it takes this device's own NWK and MAC sequence numbers
+        // (05-3474-23 #3.6.2.1, IEEE 802.15.4 macDSN). The acknowledged frame's numbers belong to its originator
+        // and to its last hop: reusing them repeats a number this device may have just sent to the same next hop.
+        const nwkSeqNum = this.#nwkHandler.nextSeqNum();
+        const macSeqNum = this.#macHandler.nextSeqNum();
         const ackNeedsFragmentInfo =
             apsHeader.frameControl.extendedHeader && apsHeader.fragmentation !== undefined && apsHeader.fragmentation !== ZigbeeAPSFragmentation.NONE;
         const ackHeader: ZigbeeAPSHeader = {
@@ -958,7 +963,7 @@ export class APSHandler {
                 destination16: nwkHeader.source16,
                 source16: nwkHeader.destination16,
                 radius: this.#context.decrementRadius(nwkHeader.radius ?? CONFIG_NWK_MAX_HOPS),
-                seqNum: nwkHeader.seqNum,
+                seqNum: nwkSeqNum,
                 relayIndex,
                 relayAddresses,
             },
@@ -991,7 +996,7 @@ export class APSHandler {
                     frameVersion: MACFrameVersion.V2003,
                     sourceAddrMode: MACFrameAddressMode.SHORT,
                 },
-                sequenceNumber: macHeader.sequenceNumber,
+                sequenceNumber: macSeqNum,
                 destinationPANId: macHeader.destinationPANId,
                 destination16: macDest16,
                 // sourcePANId: undefined, // panIdCompression=true
@@ -1001,7 +1006,9 @@ export class APSHandler {
             ackNWKFrame,
         );
 
-        await this.#macHandler.sendFrame(macHeader.sequenceNumber!, ackMACFrame, macHeader.source16, undefined);
+        // the MAC outcome belongs to the next hop the ACK goes to, which is not the hop the acknowledged frame came from
+        // when the route back differs from the route in
+        await this.#macHandler.sendFrame(macSeqNum, ackMACFrame, macDest16, undefined);
     }
 
     /**
