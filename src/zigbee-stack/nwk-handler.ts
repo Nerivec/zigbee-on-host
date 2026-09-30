@@ -22,7 +22,7 @@ import {
     ZigbeeNWKStatus,
 } from "../zigbee/zigbee-nwk.js";
 import type { MACHandler } from "../zigbee-stack/mac-handler.js";
-import { END_DEVICE_TIMEOUT_TABLE_MS, type SourceRouteTableEntry, type StackContext } from "../zigbee-stack/stack-context.js";
+import { type DeviceTableEntry, END_DEVICE_TIMEOUT_TABLE_MS, type SourceRouteTableEntry, type StackContext } from "../zigbee-stack/stack-context.js";
 
 const NS = "nwk-handler";
 
@@ -165,6 +165,7 @@ export class NWKHandler {
      * - ✅ Resets timer using refresh() to maintain continuous reporting while handler active
      * - ⚠️  Aggregated cost calculation includes implementation-specific LQA penalty (documented)
      * - ✅ Enforces CONFIG_NWK_ROUTER_AGE_LIMIT by zeroing costs after consecutive misses per spec
+     * - ✅ Stops treating an aged-out router as a neighbour and invalidates the routes it is next hop for (#3.6.4.4.2)
      * DEVICE SCOPE: Coordinator, routers (N/A)
      */
     public async sendPeriodicZigbeeNWKLinkStatus(ignoreStale = false): Promise<void> {
@@ -182,6 +183,8 @@ export class NWKHandler {
                             incomingCost: 0,
                             outgoingCost: 0,
                         });
+
+                        this.#ageOutRouterNeighbor(entry);
 
                         continue;
                     }
@@ -218,6 +221,54 @@ export class NWKHandler {
 
         await this.sendLinkStatus(links);
         this.#linkStatusTimeout?.refresh();
+    }
+
+    /**
+     * 05-3474-23 #3.6.4.4.4 (Aging the Neighbor Table), #3.6.4.4.2 (Upon Receipt of a Link Status Command Frame)
+     *
+     * A router neighbour missed CONFIG_NWK_ROUTER_AGE_LIMIT link status periods in a row: its link is stale.
+     *
+     * Zeroing the advertised cost alone leaves the path choice untouched. The neighbour's last link status
+     * stored a direct (zero-relay) route that stays valid for CONFIG_NWK_ROUTE_EXPIRY_TIME, and
+     * `findBestSourceRoute` keeps returning it, so every frame to that device is still sent direct.
+     * On a coordinator whose MAC completion does not reflect delivery, nothing marks that route as failed,
+     * and the device stays unreachable even when another router can reach it.
+     *
+     * #3.6.4.4.2: "Whenever the outgoing cost field is set to 0, the link to this neighbor SHOULD be considered
+     * unidirectional or completely broken, and, as a result, all routing table entries where this neighbor
+     * appears as a next hop MAY be considered invalid". Those entries are the device's direct routes and every
+     * route whose first relay is the device. Clearing `neighbor` lets route discovery run for it again
+     * (`findBestSourceRoute` forces MTORR only for non-neighbours). The next link status from the device restores
+     * both.
+     *
+     * SPEC COMPLIANCE NOTES:
+     * - ✅ Invalidates exactly the routes whose next hop is the stale neighbour (#3.6.4.4.2)
+     * - ✅ Reversible: `processLinkStatus` sets `neighbor` again and re-learns the direct route
+     * - ⚠️  End devices are not aged here: they send no link status, and their neighbour state is set on association
+     * DEVICE SCOPE: Coordinator, routers (N/A)
+     *
+     * @param entry The aged-out router's device table entry
+     */
+    #ageOutRouterNeighbor(entry: DeviceTableEntry): void {
+        const neighbor16 = entry.address16;
+        entry.neighbor = false;
+
+        for (const [addr16, routeEntries] of this.#context.sourceRouteTable) {
+            // the next hop is the last relay (the frame's relay index starts there), or the destination itself for a direct route
+            const kept = routeEntries.filter(
+                (routeEntry) =>
+                    (routeEntry.relayAddresses.length === 0 ? addr16 : routeEntry.relayAddresses[routeEntry.relayAddresses.length - 1]) !==
+                    neighbor16,
+            );
+
+            if (kept.length === 0) {
+                this.#context.sourceRouteTable.delete(addr16);
+            } else if (kept.length !== routeEntries.length) {
+                this.#context.sourceRouteTable.set(addr16, kept);
+            }
+        }
+
+        logger.debug(() => `Neighbor ${neighbor16} missed ${entry.linkStatusMisses} link status periods, no longer a neighbor`, NS);
     }
 
     /**
