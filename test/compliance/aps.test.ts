@@ -58,7 +58,7 @@ import {
 } from "../../src/zigbee-stack/stack-context.js";
 import { NETDEF_EXTENDED_PAN_ID, NETDEF_NETWORK_KEY, NETDEF_PAN_ID, NETDEF_TC_KEY } from "../data.js";
 import { createMACFrameControl } from "../utils.js";
-import { captureMacFrame, type DecodedMACFrame, decodeMACFramePayload, NO_ACK_CODE, registerNeighborDevice } from "./utils.js";
+import { captureMacFrame, type DecodedMACFrame, decodeMACFramePayload, NO_ACK_CODE, registerDevice, registerNeighborDevice } from "./utils.js";
 
 describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
     let netParams: NetworkParameters;
@@ -1293,7 +1293,8 @@ describe("Zigbee 3.0 Application Support (APS) Layer Compliance", () => {
 
             const device16 = 0x3b66;
             const device64 = 0x00124b00eeeef222n;
-            registerNeighborDevice(context, device16, device64);
+            // A child of the reporting parent, not of the coordinator.
+            registerDevice(context, device16, device64, false);
 
             const payload = Buffer.alloc(1 + 8 + 2 + 1);
             let offset = 0;

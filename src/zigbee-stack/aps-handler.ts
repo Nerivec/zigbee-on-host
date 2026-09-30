@@ -1765,6 +1765,43 @@ export class APSHandler {
         } else if (status === ZigbeeAPSUpdateDeviceStatus.DEVICE_LEFT) {
             // left
             // TODO: according to spec, this is "informative" only, should not take any action?
+
+            // A third party's report can arrive after the device has already
+            // rejoined elsewhere under a new address -- a former parent ages the
+            // child out tens of seconds after it left. Removing by EUI64 then
+            // takes out the live device. Only a report naming the address the
+            // device holds now describes it.
+            const device = this.#context.deviceTable.get(device64);
+            const current16 = device?.address16;
+
+            if (current16 !== undefined && current16 !== device16) {
+                logger.debug(
+                    () => `<-~- APS Ignoring stale UPDATE_DEVICE[dev=${device16}:${device64} status=${status}], device is now ${current16}`,
+                    NS,
+                );
+
+                return offset;
+            }
+
+            // The address alone cannot tell a stale report from a current one
+            // when the device associated with the coordinator itself, because
+            // a known device is given its stored address back. So a child that
+            // a router granted an address to, and that never collected the
+            // response, joins here under that same address, and the router's
+            // later report of it names the address the device holds. A
+            // neighbour's own leave reaches the coordinator directly and is
+            // handled as a NWK leave, so a router's report adds nothing true
+            // about it.
+            if (device?.neighbor) {
+                logger.debug(
+                    () =>
+                        `<-~- APS Ignoring UPDATE_DEVICE[dev=${device16}:${device64} status=${status}] from ${nwkHeader.source16}, device is a neighbor`,
+                    NS,
+                );
+
+                return offset;
+            }
+
             await this.#context.disassociate(device16, device64);
         }
 
