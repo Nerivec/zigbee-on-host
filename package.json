@@ -1,6 +1,6 @@
 {
     "name": "zigbee-on-host",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "description": "Zigbee stack designed to run on a host and communicate with a radio co-processor (RCP)",
     "engines": {
         "node": ">=22.12.0"
@@ -41,7 +41,7 @@
     "homepage": "https://github.com/Nerivec/zigbee-on-host#readme",
     "devDependencies": {
         "@biomejs/biome": "^2.5.15",
-        "@types/node": "^24.13.4",
+        "@types/node": "^24.19.1",
         "@vitest/coverage-v8": "^5.0.3",
         "typescript": "^7.0.2",
         "vitest": "^5.0.0"
