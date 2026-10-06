@@ -732,6 +732,8 @@ describe("MACHandler", () => {
         it("encodes beacon responses with Zigbee beacon payload", async () => {
             getOnSendFrameMock().mockClear();
 
+            netParams.nwkUpdateId = 3;
+
             await macHandler.processBeaconReq(Buffer.alloc(0), 0, {
                 frameControl: createMACFrameControl(MACFrameType.CMD, MACFrameAddressMode.SHORT, MACFrameAddressMode.SHORT),
                 sequenceNumber: 0,
