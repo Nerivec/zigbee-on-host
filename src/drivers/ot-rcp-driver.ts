@@ -266,7 +266,7 @@ export class OTRCPDriver {
         }
     }
 
-    private async onTransportData(chunk: Buffer): Promise<void> {
+    private onTransportData(chunk: Buffer): void {
         let data = Buffer.concat([this.#inputBuffer, chunk]);
 
         if (data[0] !== HdlcReservedByte.FLAG) {
@@ -283,7 +283,10 @@ export class OTRCPDriver {
             if (position > 1) {
                 const frame = data.subarray(0, endPosition);
 
-                await this.onFrame(frame);
+                this.onFrame(frame).catch((error) => {
+                    logger.error(`<xx< [TRANSPORT ${frame.toString("hex")}] ${error}`, NS);
+                });
+
                 // remove the frame from internal buffer (set below)
                 data = data.subarray(endPosition);
             } else {

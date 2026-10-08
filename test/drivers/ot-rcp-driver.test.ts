@@ -1365,6 +1365,28 @@ describe("OT RCP Driver", () => {
             );
         });
 
+        it("logs incoming transport errors", async () => {
+            await mockStart(driver);
+            await mockFormNetwork(driver);
+
+            const onFrameSpy = vi.spyOn(driver, "onFrame");
+            const errorSpy = vi.spyOn(logger, "error");
+
+            driver.transport.emit(
+                "data",
+                Buffer.from(
+                    "7e8503712d006188d15d2e1c08000008021c0800001d8d288788260000000008004b1200001c830016086b8baf6e33c09f558414010401010001000000000000000014b2c07e",
+                    "hex",
+                ),
+            );
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(errorSpy.mock.calls[0][0]).toMatch(/<xx< \[TRANSPORT .* HDLC parsing error/);
+
+            onFrameSpy.mockRestore();
+            errorSpy.mockRestore();
+        });
+
         it("logs onStreamRaw errors", async () => {
             await mockStart(driver);
             await mockFormNetwork(driver);
@@ -4255,7 +4277,7 @@ describe("OT RCP Driver", () => {
         });
     });
 
-    it("NOT A TEST - only meant for quick local parsing", async () => {
+    it.skip("NOT A TEST - only meant for quick local parsing", async () => {
         const saveDir = `temp_TMP_${Math.floor(Math.random() * 1000000)}`;
         const mockTransport = new MockTransport();
         const driver = new OTRCPDriver(
