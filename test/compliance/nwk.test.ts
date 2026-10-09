@@ -19,6 +19,7 @@ import { logger } from "../../src/utils/logger.js";
 import {
     decodeMACCapabilities,
     encodeMACCapabilities,
+    encodeMACFrameZigbee,
     MACAssociationStatus,
     type MACCapabilities,
     MACFrameAddressMode,
@@ -32,6 +33,7 @@ import {
     decodeZigbeeNWKFrameControl,
     decodeZigbeeNWKHeader,
     decodeZigbeeNWKPayload,
+    encodeZigbeeNWKFrame,
     ZigbeeNWKCommandId,
     ZigbeeNWKConsts,
     type ZigbeeNWKFrameControl,
@@ -43,6 +45,7 @@ import {
     ZigbeeNWKStatus,
 } from "../../src/zigbee/zigbee-nwk.js";
 import { APSHandler, type APSHandlerCallbacks } from "../../src/zigbee-stack/aps-handler.js";
+import { processFrame } from "../../src/zigbee-stack/frame.js";
 import { MACHandler, type MACHandlerCallbacks } from "../../src/zigbee-stack/mac-handler.js";
 import { NWKGPHandler, type NWKGPHandlerCallbacks } from "../../src/zigbee-stack/nwk-gp-handler.js";
 import { CONFIG_NWK_MAX_HOPS, NWKHandler, type NWKHandlerCallbacks } from "../../src/zigbee-stack/nwk-handler.js";
@@ -54,7 +57,7 @@ import {
 } from "../../src/zigbee-stack/stack-context.js";
 import { NETDEF_EXTENDED_PAN_ID, NETDEF_NETWORK_KEY, NETDEF_PAN_ID, NETDEF_TC_KEY } from "../data.js";
 import { createMACFrameControl } from "../utils.js";
-import { captureMacFrame, type DecodedMACFrame, decodeMACFramePayload, NO_ACK_CODE, registerNeighborDevice } from "./utils.js";
+import { captureMacFrame, type DecodedMACFrame, decodeMACFramePayload, NO_ACK_CODE, registerDevice, registerNeighborDevice } from "./utils.js";
 
 describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     let netParams: NetworkParameters;
@@ -2173,6 +2176,101 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
 
             return payload;
         }
+
+        describe("known device at an unrecorded address (§3.3.1.7)", () => {
+            // a router that renumbered to resolve a conflict, then rebooted onto the address its stack had saved
+            const recorded16 = 0x2c41;
+            const current16 = 0x5b17;
+            const device64 = 0x00124b0011110004n;
+            let frameCounter: number;
+
+            async function receiveLinkStatus(source16: number, source64: bigint, security = true): Promise<void> {
+                const { macHeader, nwkHeader } = makeLinkStatusHeaders(source16, source64);
+                // encoded without PAN ID compression, so the frame carries the source PAN too
+                macHeader.sourcePANId = netParams.panId;
+                nwkHeader.frameControl.security = security;
+                const payload = encodeLinkStatusPayload([{ address: ZigbeeConsts.COORDINATOR_ADDRESS, incomingCost: 1, outgoingCost: 1 }]);
+                const nwkFrame = encodeZigbeeNWKFrame(
+                    nwkHeader,
+                    payload,
+                    security
+                        ? {
+                              control: { level: ZigbeeSecurityLevel.NONE, keyId: ZigbeeKeyType.NWK, nonce: true, reqVerifiedFc: false },
+                              frameCounter: frameCounter++,
+                              source64,
+                              keySeqNum: netParams.networkKeySequenceNumber,
+                              micLen: 4,
+                          }
+                        : undefined,
+                    undefined, // use pre-hashed network key
+                );
+
+                await processFrame(encodeMACFrameZigbee(macHeader, nwkFrame), context, macHandler, nwkHandler, nwkGPHandler, apsHandler);
+            }
+
+            beforeEach(() => {
+                frameCounter = 1;
+                mockStackContextCallbacks.onDeviceRejoined = vi.fn();
+                context.sourceRouteTable.clear();
+                registerDevice(context, recorded16, device64, true, {
+                    alternatePANCoordinator: false,
+                    deviceType: ZigbeeMACConsts.DEVICE_TYPE_FFD,
+                    powerSource: 1,
+                    rxOnWhenIdle: true,
+                    securityCapability: true,
+                    allocateAddress: true,
+                });
+                context.sourceRouteTable.set(recorded16, [nwkHandler.createSourceRouteEntry([], 1)]);
+            });
+
+            it("follows the device to the address its link status comes from", async () => {
+                await receiveLinkStatus(current16, device64);
+                await new Promise((resolve) => setImmediate(resolve));
+
+                expect(context.deviceTable.get(device64)?.address16).toStrictEqual(current16);
+                expect(context.address16ToAddress64.get(current16)).toStrictEqual(device64);
+                expect(context.address16ToAddress64.has(recorded16)).toStrictEqual(false);
+                // the links are credited where the frame came from, and nothing is left at the old address
+                expect(context.sourceRouteTable.has(current16)).toStrictEqual(true);
+                expect(context.sourceRouteTable.has(recorded16)).toStrictEqual(false);
+                expect(mockStackContextCallbacks.onDeviceRejoined).toHaveBeenCalledTimes(1);
+                expect(mockStackContextCallbacks.onDeviceRejoined).toHaveBeenCalledWith(
+                    current16,
+                    device64,
+                    context.deviceTable.get(device64)?.capabilities,
+                );
+            });
+
+            it("follows it once, not on every frame", async () => {
+                await receiveLinkStatus(current16, device64);
+                await receiveLinkStatus(current16, device64);
+                await new Promise((resolve) => setImmediate(resolve));
+
+                expect(mockStackContextCallbacks.onDeviceRejoined).toHaveBeenCalledTimes(1);
+            });
+
+            it("does not follow an unsecured frame", async () => {
+                await receiveLinkStatus(current16, device64, false);
+                await new Promise((resolve) => setImmediate(resolve));
+
+                expect(context.deviceTable.get(device64)?.address16).toStrictEqual(recorded16);
+                expect(context.address16ToAddress64.has(current16)).toStrictEqual(false);
+                expect(mockStackContextCallbacks.onDeviceRejoined).not.toHaveBeenCalled();
+            });
+
+            it("leaves an address recorded for another device alone", async () => {
+                const holder64 = 0x00124b0011110005n;
+                registerDevice(context, current16, holder64, false);
+
+                await receiveLinkStatus(current16, device64);
+                await new Promise((resolve) => setImmediate(resolve));
+
+                expect(context.deviceTable.get(device64)?.address16).toStrictEqual(recorded16);
+                expect(context.address16ToAddress64.get(current16)).toStrictEqual(holder64);
+                expect(context.address16ToAddress64.get(recorded16)).toStrictEqual(device64);
+                expect(mockStackContextCallbacks.onDeviceRejoined).not.toHaveBeenCalled();
+            });
+        });
 
         it("encodes link status command options and entry count", async () => {
             const links: ZigbeeNWKLinkStatus[] = [
