@@ -54,7 +54,7 @@ import {
 } from "../../src/zigbee-stack/stack-context.js";
 import { NETDEF_EXTENDED_PAN_ID, NETDEF_NETWORK_KEY, NETDEF_PAN_ID, NETDEF_TC_KEY } from "../data.js";
 import { createMACFrameControl } from "../utils.js";
-import { captureMacFrame, type DecodedMACFrame, decodeMACFramePayload, NO_ACK_CODE, registerNeighborDevice } from "./utils.js";
+import { captureMacFrame, type DecodedMACFrame, decodeMACFramePayload, NO_ACK_CODE, registerDevice, registerNeighborDevice } from "./utils.js";
 
 describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
     let netParams: NetworkParameters;
@@ -1648,6 +1648,85 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             for (const code of statusCodes) {
                 await processNetworkStatus(code, 0x5566);
             }
+        });
+
+        describe("address conflict (§3.6.1.10.5)", () => {
+            const conflict16 = 0x6a5b;
+            const device64 = 0x00124b0012345678n;
+
+            function capabilities(deviceType: number): MACCapabilities {
+                return {
+                    alternatePANCoordinator: false,
+                    deviceType,
+                    powerSource: deviceType,
+                    rxOnWhenIdle: deviceType === ZigbeeMACConsts.DEVICE_TYPE_FFD,
+                    securityCapability: true,
+                    allocateAddress: true,
+                };
+            }
+
+            it("sends an end device child a new address, addressed by its IEEE address", async () => {
+                registerDevice(context, conflict16, device64, true, capabilities(ZigbeeMACConsts.DEVICE_TYPE_RFD));
+
+                const macFrame = await captureMacFrame(
+                    () => processNetworkStatus(ZigbeeNWKStatus.ADDRESS_CONFLICT, conflict16),
+                    mockMACHandlerCallbacks,
+                );
+                const { nwkFrameControl, nwkHeader, nwkPayload } = decodeNWKFromMacFrame(macFrame, true);
+
+                expect(nwkFrameControl.security).toStrictEqual(true);
+                expect(nwkHeader.destination16).toStrictEqual(conflict16);
+                expect(nwkHeader.destination64).toStrictEqual(device64);
+                expect(nwkPayload.readUInt8(0)).toStrictEqual(ZigbeeNWKCommandId.REJOIN_RESP);
+                const newAddress16 = nwkPayload.readUInt16LE(1);
+                expect(newAddress16).not.toStrictEqual(conflict16);
+                expect(context.address16ToAddress64.has(newAddress16)).toStrictEqual(false);
+                expect(nwkPayload.readUInt8(3)).toStrictEqual(ZigbeeNWKConsts.ASSOC_STATUS_ADDR_CONFLICT);
+            });
+
+            it("answers repeated reports of one conflict once, until the response can no longer reach the child", async () => {
+                vi.useFakeTimers();
+                registerDevice(context, conflict16, device64, true, capabilities(ZigbeeMACConsts.DEVICE_TYPE_RFD));
+                const frames: Buffer[] = [];
+                mockMACHandlerCallbacks.onSendFrame = vi.fn((payload: Buffer) => {
+                    frames.push(Buffer.from(payload));
+                    return Promise.resolve();
+                });
+
+                await processNetworkStatus(ZigbeeNWKStatus.ADDRESS_CONFLICT, conflict16);
+                await processNetworkStatus(ZigbeeNWKStatus.ADDRESS_CONFLICT, conflict16);
+                await processNetworkStatus(ZigbeeNWKStatus.ADDRESS_CONFLICT, conflict16);
+
+                expect(frames).toHaveLength(1);
+
+                vi.advanceTimersByTime(ZigbeeConsts.MAC_INDIRECT_TRANSMISSION_TIMEOUT);
+                await processNetworkStatus(ZigbeeNWKStatus.ADDRESS_CONFLICT, conflict16);
+
+                expect(frames).toHaveLength(2);
+
+                vi.useRealTimers();
+            });
+
+            it("leaves a conflict on a router's address to the router", async () => {
+                registerDevice(context, conflict16, device64, true, capabilities(ZigbeeMACConsts.DEVICE_TYPE_FFD));
+                mockMACHandlerCallbacks.onSendFrame = vi.fn(() => Promise.resolve());
+
+                await processNetworkStatus(ZigbeeNWKStatus.ADDRESS_CONFLICT, conflict16);
+
+                expect(mockMACHandlerCallbacks.onSendFrame).not.toHaveBeenCalled();
+                expect(context.address16ToAddress64.get(conflict16)).toStrictEqual(device64);
+                expect(context.deviceTable.get(device64)?.address16).toStrictEqual(conflict16);
+            });
+
+            it("leaves a conflict on another parent's end device to that parent", async () => {
+                registerDevice(context, conflict16, device64, false, capabilities(ZigbeeMACConsts.DEVICE_TYPE_RFD));
+                mockMACHandlerCallbacks.onSendFrame = vi.fn(() => Promise.resolve());
+
+                await processNetworkStatus(ZigbeeNWKStatus.ADDRESS_CONFLICT, conflict16);
+
+                expect(mockMACHandlerCallbacks.onSendFrame).not.toHaveBeenCalled();
+                expect(context.address16ToAddress64.get(conflict16)).toStrictEqual(device64);
+            });
         });
 
         it.each([
