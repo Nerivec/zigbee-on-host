@@ -2286,6 +2286,40 @@ describe("Zigbee 3.0 Network Layer (NWK) Compliance", () => {
             expect(relayAddresses).toStrictEqual([0x5010]);
             expect(pathCost).toStrictEqual(2);
         });
+
+        it("stops sending direct to a router whose link has aged out and discovers a route instead (§3.6.4.4.2)", async () => {
+            vi.useFakeTimers();
+            const router16 = 0x4678;
+            const router64 = 0x00124b00aa55cc99n;
+            registerNeighborDevice(context, router16, router64);
+            context.deviceTable.get(router64)!.neighbor = false;
+
+            const { macHeader, nwkHeader } = makeLinkStatusHeaders(router16, router64);
+            const payload = encodeLinkStatusPayload([{ address: ZigbeeConsts.COORDINATOR_ADDRESS, incomingCost: 1, outgoingCost: 1 }]);
+
+            await nwkHandler.processCommand(payload, macHeader, nwkHeader);
+
+            expect(context.deviceTable.get(router64)!.neighbor).toStrictEqual(true);
+            expect(nwkHandler.findBestSourceRoute(router16, router64)).toStrictEqual([undefined, undefined, 1]);
+
+            const sendMTORR = vi.spyOn(nwkHandler, "sendPeriodicManyToOneRouteRequest").mockResolvedValue();
+
+            // the router falls silent: nwkRouterAgeLimit (3) periods pass, then one more
+            for (let i = 0; i < 4; i++) {
+                await nwkHandler.sendPeriodicZigbeeNWKLinkStatus();
+            }
+
+            expect(context.deviceTable.get(router64)!.neighbor).toStrictEqual(false);
+            expect(nwkHandler.findBestSourceRoute(router16, router64)).toStrictEqual([undefined, undefined, undefined]);
+            vi.runAllTimers();
+            expect(sendMTORR).toHaveBeenCalled();
+
+            // its next link status makes it a neighbor again, with its direct route
+            await nwkHandler.processCommand(payload, macHeader, nwkHeader);
+
+            expect(context.deviceTable.get(router64)!.neighbor).toStrictEqual(true);
+            expect(nwkHandler.findBestSourceRoute(router16, router64)).toStrictEqual([undefined, undefined, 1]);
+        });
     });
 
     /**

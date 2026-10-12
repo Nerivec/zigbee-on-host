@@ -1184,6 +1184,87 @@ describe("NWK Handler", () => {
             expect(sendLinkStatusSpy).toHaveBeenNthCalledWith(4, [{ address: 0x1357, incomingCost: 0, outgoingCost: 0 }]);
         });
 
+        it("stops treating an aged-out router as a neighbor and drops the routes it is next hop for", async () => {
+            const router64 = 0x00124b0012345613n;
+            const router16 = 0x1357;
+            const other16 = 0x7777;
+            mockContext.deviceTable.set(router64, {
+                address16: router16,
+                capabilities: { rxOnWhenIdle: true, deviceType: 1, alternatePANCoordinator: false } as MACCapabilities,
+                authorized: true,
+                neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
+                recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
+            });
+            mockContext.address16ToAddress64.set(router16, router64);
+
+            const direct = nwkHandler.createSourceRouteEntry([], 1);
+            const viaOther = nwkHandler.createSourceRouteEntry([other16], 2);
+            const firstHopRouter = nwkHandler.createSourceRouteEntry([router16], 2);
+            const deeperRouter = nwkHandler.createSourceRouteEntry([router16, other16], 3);
+            const firstHopRouterFar = nwkHandler.createSourceRouteEntry([other16, router16], 3);
+            mockContext.sourceRouteTable.set(router16, [direct, viaOther]);
+            mockContext.sourceRouteTable.set(0x2468, [firstHopRouter]);
+            mockContext.sourceRouteTable.set(0x3579, [deeperRouter, firstHopRouterFar]);
+
+            vi.spyOn(nwkHandler, "findBestSourceRoute").mockReturnValue([undefined, undefined, 1]);
+            const sendLinkStatusSpy = vi.spyOn(nwkHandler, "sendLinkStatus").mockResolvedValue(undefined);
+
+            for (let i = 0; i < 3; i++) {
+                await nwkHandler.sendPeriodicZigbeeNWKLinkStatus();
+            }
+
+            expect(mockContext.deviceTable.get(router64)!.neighbor).toStrictEqual(true);
+            expect(mockContext.sourceRouteTable.get(router16)).toStrictEqual([direct, viaOther]);
+
+            await nwkHandler.sendPeriodicZigbeeNWKLinkStatus();
+
+            expect(sendLinkStatusSpy).toHaveBeenNthCalledWith(4, [{ address: router16, incomingCost: 0, outgoingCost: 0 }]);
+            expect(mockContext.deviceTable.get(router64)!.neighbor).toStrictEqual(false);
+            // next hop is the router: its direct route, and routes whose first relay it is
+            expect(mockContext.sourceRouteTable.get(router16)).toStrictEqual([viaOther]);
+            expect(mockContext.sourceRouteTable.has(0x2468)).toStrictEqual(false);
+            // a route that only passes through the router further along keeps its own next hop
+            expect(mockContext.sourceRouteTable.get(0x3579)).toStrictEqual([deeperRouter]);
+
+            // no longer a neighbor, so no longer advertised
+            await nwkHandler.sendPeriodicZigbeeNWKLinkStatus();
+
+            expect(sendLinkStatusSpy).toHaveBeenNthCalledWith(5, []);
+        });
+
+        it("does not age out an end device neighbor", async () => {
+            const child64 = 0x00124b0012345614n;
+            const child16 = 0x1358;
+            mockContext.deviceTable.set(child64, {
+                address16: child16,
+                capabilities: { rxOnWhenIdle: false, deviceType: 0, alternatePANCoordinator: false } as MACCapabilities,
+                authorized: true,
+                neighbor: true,
+                lastTransportedNetworkKeySeq: undefined,
+                recentLQAs: [],
+                incomingNWKFrameCounter: undefined,
+                endDeviceTimeout: undefined,
+                linkStatusMisses: 0,
+            });
+            mockContext.address16ToAddress64.set(child16, child64);
+            const direct = nwkHandler.createSourceRouteEntry([], 1);
+            mockContext.sourceRouteTable.set(child16, [direct]);
+
+            vi.spyOn(nwkHandler, "findBestSourceRoute").mockReturnValue([undefined, undefined, 1]);
+            vi.spyOn(nwkHandler, "sendLinkStatus").mockResolvedValue(undefined);
+
+            for (let i = 0; i < 6; i++) {
+                await nwkHandler.sendPeriodicZigbeeNWKLinkStatus();
+            }
+
+            expect(mockContext.deviceTable.get(child64)!.neighbor).toStrictEqual(true);
+            expect(mockContext.sourceRouteTable.get(child16)).toStrictEqual([direct]);
+        });
+
         it("should send periodic many-to-one route request", async () => {
             await nwkHandler.sendPeriodicManyToOneRouteRequest();
 
