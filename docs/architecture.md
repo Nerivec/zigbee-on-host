@@ -186,7 +186,7 @@ export async function processFrame(
     nwkGPHandler: NWKGPHandler,
     apsHandler: APSHandler,
     rssi?: number,
-): Promise<void>
+): Promise<void>;
 ```
 
 ### MACHandler (MAC Layer)
@@ -511,7 +511,6 @@ Serial Port → RCP Firmware → Radio Transmission
 ### Routing Feedback Loop (Extra Pass Focus)
 
 Recent refactors introduced a closed-loop routing controller that keeps concentrator behavior stable even when radio quality fluctuates:
-
 1. **MAC delivery feedback** – Every unicast tracks whether the RCP reported an ACK. Success clears the destination entry in `StackContext.macNoACKs`, while a NO_ACK increments it and immediately calls `NWKHandler.markRouteFailure()`.
 2. **Source-route scoring** – `NWKHandler.findBestSourceRoute()` re-sorts all candidate paths on every lookup. The score combines hop count, staleness penalty, failure penalty, a recency bonus, and a hard filter that rejects any relay currently above the NO_ACK threshold.
 3. **Automatic recovery** – When the handler purges all routes (expired, blacklisted, or unhealthy relays), it schedules a many-to-one route discovery so the coordinator re-advertises itself and rebuilds source routes.
@@ -554,17 +553,17 @@ On driver start:
   - Complexity: O(1) lookup by IEEE address
   - Memory per device: ~80-120 bytes (depends on LQA history size)
   - Components: address16 (2B), capabilities (1B), flags (2B), recentLQAs array (variable)
-  
-- **Address Lookup Maps**: 
+
+- **Address Lookup Maps**:
   - `address16ToAddress64`: `Map<number, bigint>` - O(1) reverse lookup
   - Memory per entry: ~16 bytes
-  
+
 - **Source Route Table**: `Map<number, SourceRouteTableEntry[]>`
   - Complexity: O(1) lookup, O(n) route selection where n = alternate routes per destination
   - Memory per route: ~48 bytes + (relay count × 2 bytes)
   - Components: relayAddresses array, pathCost (4B), timestamps (16B), failureCount (4B)
   - Route aging: Stale after 2 minutes, expired after 5 minutes
-  
+
 - **Indirect Transmission Queue**: `Map<bigint, IndirectTxContext[]>`
   - Complexity: O(1) lookup by device IEEE address
   - Memory per queued frame: ~32 bytes + frame buffer size
@@ -572,7 +571,7 @@ On driver start:
 
 - **Configuration Attributes**: Pre-encoded ZDO response buffers
   - Address response: ~10 bytes
-  - Node descriptor: ~13 bytes  
+  - Node descriptor: ~13 bytes
   - Power descriptor: ~3 bytes
   - Active endpoints list: ~43 bytes
   - Simple descriptors: ~256 bytes
@@ -674,6 +673,6 @@ On driver start:
 **CPU Usage (typical):**
 - Idle: <1% CPU
 - Light traffic (1-5 msg/s): 1-3% CPU
-- Moderate traffic (10-20 msg/s): 3-8% CPU  
+- Moderate traffic (10-20 msg/s): 3-8% CPU
 - Heavy traffic (50+ msg/s): 10-20% CPU
 - Values are approximate and vary with message size, routing complexity, and crypto operations
