@@ -11,7 +11,6 @@
 ## Guidelines
 
 Some quick guidelines to keep the codebase maintainable:
-
 - No external production dependencies
 - Mark `TODO` / `XXX` / `@deprecated` in code as needed for quick access
 - Performance in mind (with the goal to eventually bring the appropriate layers to a lower language as needed)

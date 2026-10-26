@@ -1,58 +1,58 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches-ignore: [built-main]
+    push:
+        branches: [main]
+    pull_request:
+        branches-ignore: [built-main]
 
 permissions:
-  contents: read
+    contents: read
 
 jobs:
-  checks:
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v7
+    checks:
+        runs-on: ubuntu-latest
+        permissions:
+            actions: read
+            pull-requests: write
+        steps:
+            - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: "package.json"
+            - uses: actions/setup-node@v7
+              with:
+                  node-version-file: "package.json"
 
-      - name: Install deps
-        run: npm ci
+            - name: Install deps
+              run: npm ci
 
-      - name: Build
-        run: npm run build:prod
+            - name: Build
+              run: npm run build:prod
 
-      - name: Check
-        run: npm run check:ci
+            - name: Check
+              run: npm run check:ci
 
-      - name: Test
-        run: npm run test:cov
+            - name: Test
+              run: npm run test:cov
 
-  tests:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        node: [20, 22, 24]
-    runs-on: ${{ matrix.os }}
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v7
+    tests:
+        strategy:
+            matrix:
+                os: [ubuntu-latest, macos-latest, windows-latest]
+                node: [20, 22, 24]
+        runs-on: ${{ matrix.os }}
+        continue-on-error: true
+        steps:
+            - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ matrix.node }}
+            - uses: actions/setup-node@v7
+              with:
+                  node-version: ${{ matrix.node }}
 
-      - name: Install deps
-        run: npm ci
+            - name: Install deps
+              run: npm ci
 
-      - name: Build
-        run: npm run build:prod
+            - name: Build
+              run: npm run build:prod
 
-      - name: Test
-        run: npm run test:cov
+            - name: Test
+              run: npm run test:cov
