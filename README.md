@@ -62,15 +62,16 @@ You can also contribute by submitting sniffs/captures. [More information here](h
 - CI: ~95% coverage
 - Stress-testing: pending
 - Firmware stability:
-  - Silicon Labs: ongoing
-  - Texas Instruments: ongoing
-  - Nordic Semiconductor: [pending](https://github.com/Nerivec/zigbee-on-host/discussions/18)
+    - Silicon Labs: ongoing
+    - Texas Instruments: ongoing
+    - Nordic Semiconductor: [pending](https://github.com/Nerivec/zigbee-on-host/discussions/18)
 - Usage in test networks: ongoing
 - Usage in live networks: pending
 
 ### Firmware
 
 Use the appropriate OpenThread RCP firmware for your adapter:
+
 - Silicon Labs: https://github.com/Nerivec/silabs-firmware-builder/releases
 - Texas Instruments: https://github.com/Koenkk/OpenThread-TexasInstruments-firmware/releases
 - Nordic Semiconductor: https://github.com/Nerivec/zigbee-on-host/discussions/18
@@ -119,6 +120,7 @@ interface StackConfigJSON {
 }
 ```
 Defaults are:
+
 ```json
 {
     "tiSerialSkipBootloader": false,

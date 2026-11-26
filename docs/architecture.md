@@ -130,6 +130,7 @@ src/
 **Functions:**
 
 **Key Methods:**
+
 ```typescript
 // Network Management
 public async formNetwork(): Promise<void>
@@ -150,6 +151,7 @@ readonly nwkGPHandler: NWKGPHandler
 ```
 
 **Callbacks from External Consumers (StackCallbacks):**
+
 ```typescript
 interface StackCallbacks {
     onFatalError: (message: string) => void;
@@ -169,6 +171,7 @@ interface StackCallbacks {
 **Responsibility:** Decode inbound IEEE 802.15.4 frames and dispatch to the correct stack layer
 
 **Functions:**
+
 - Parse MAC frame control, header, and payload (CMD vs DATA)
 - Filter frames by PAN ID and destination addressing (broadcast vs coordinator)
 - Route MAC commands to `MACHandler.processCommand`
@@ -177,6 +180,7 @@ interface StackCallbacks {
 - Decode Zigbee APS frames, emit APS ACKs, and delegate to `APSHandler`
 
 **Key Methods:**
+
 ```typescript
 export async function processFrame(
     payload: Buffer,
@@ -194,6 +198,7 @@ export async function processFrame(
 **Responsibility:** IEEE 802.15.4 MAC layer operations
 
 **Functions:**
+
 - Handle MAC frame transmission/reception
 - Process association requests/responses
 - Manage beacon handling
@@ -203,18 +208,21 @@ export async function processFrame(
 - Update per-destination NO_ACK counters (`StackContext.macNoACKs`) to feed NWK routing heuristics
 
 **Key Methods:**
+
 ```typescript
 public async sendFrame(seqNum: number, payload: Buffer, dest16: number | undefined, dest64: bigint | undefined): Promise<boolean | undefined>
 public async sendFrameDirect(seqNum: number, payload: Buffer, dest16: number | undefined, dest64: bigint | undefined): Promise<boolean>
 ```
 
 **MAC Commands Handled:**
+
 - Association Request/Response
 - Data Request
 - Beacon Request/Response
 - Disassociation Notification
 
 **Callbacks to Driver (MACHandlerCallbacks):**
+
 ```typescript
 interface MACHandlerCallbacks {
     /** Process MAC frame at upper layers */
@@ -235,6 +243,7 @@ interface MACHandlerCallbacks {
 **Responsibility:** Zigbee Network layer operations
 
 **Functions:**
+
 - Handle NWK frame transmission/reception
 - Manage routing (discovery, repair, source routes)
 - Process link status frames
@@ -247,6 +256,7 @@ interface MACHandlerCallbacks {
 The handler now keeps multiple source-route entries per destination and ranks them every time `findBestSourceRoute` runs. Expired or blacklisted paths are purged eagerly, remaining entries are sorted by a composite score (path cost + penalties + recency bonus), and any relay that has accumulated too many MAC NO_ACK events is skipped entirely. When no usable path is left the handler immediately triggers a concentrator (many-to-one) refresh so the coordinator can rebuild routing knowledge.
 
 **Key Methods:**
+
 ```typescript
 public async onZigbeeNWKFrame(macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, nwkPayload: ZigbeeNWKPayload, rssi?: number): Promise<void>
 public findBestSourceRoute(destination16: number | undefined, destination64: bigint | undefined): [relayIndex: number | undefined, relayAddresses: number[] | undefined, pathCost: number | undefined]
@@ -257,6 +267,7 @@ public async sendPeriodicManyToOneRouteRequest(): Promise<void>
 ```
 
 **NWK Commands Handled:**
+
 - Route Request/Reply
 - Network Status
 - Leave/Rejoin Request/Response
@@ -270,6 +281,7 @@ public async sendPeriodicManyToOneRouteRequest(): Promise<void>
 - Commissioning Request/Response
 
 **Callbacks to Driver (NWKHandlerCallbacks):**
+
 ```typescript
 interface NWKHandlerCallbacks {
     /** Send APS TRANSPORT_KEY for network key */
@@ -282,6 +294,7 @@ interface NWKHandlerCallbacks {
 **Responsibility:** Zigbee Green Power frame processing
 
 **Functions:**
+
 - Process Green Power frames
 - Handle GP commissioning
 - Forward GP data frames to application
@@ -289,6 +302,7 @@ interface NWKHandlerCallbacks {
 - Track duplicates per GPD security frame counter with bounded cache
 
 **Key Methods:**
+
 ```typescript
 public processFrame(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader, lqa: number): void
 public enterCommissioningMode(commissioningWindow?: number): void
@@ -297,6 +311,7 @@ public isDuplicateFrame(macHeader: MACHeader, nwkHeader: ZigbeeNWKGPHeader): boo
 ```
 
 **Callbacks to Driver (NWKGPHandlerCallbacks):**
+
 ```typescript
 interface NWKGPHandlerCallbacks {
     /** Handle Green Power frame */
@@ -309,6 +324,7 @@ interface NWKGPHandlerCallbacks {
 **Responsibility:** Zigbee APS layer and ZDO operations
 
 **Functions:**
+
 - Handle APS frame transmission/reception
 - Apply/verify APS security
 - Process ZDO requests for coordinator
@@ -317,6 +333,7 @@ interface NWKGPHandlerCallbacks {
 - Support APS fragmentation and reassembly with duplicate suppression
 
 **Key Methods:**
+
 ```typescript
 public async sendData(finalPayload: Buffer, nwkDiscoverRoute: ZigbeeNWKRouteDiscovery, nwkDest16: number | undefined, nwkDest64: bigint | undefined, apsDeliveryMode: ZigbeeAPSDeliveryMode, clusterId: number, profileId: number, destEndpoint: number | undefined, sourceEndpoint: number | undefined, group: number | undefined): Promise<number>
 public async onZigbeeAPSFrame(data: Buffer, macHeader: MACHeader, nwkHeader: ZigbeeNWKHeader, apsHeader: ZigbeeAPSHeader, lqa: number): Promise<void>
@@ -328,6 +345,7 @@ public getRoutingTableResponse(startIndex: number): Buffer
 ```
 
 **Callbacks to Driver (APSHandlerCallbacks):**
+
 ```typescript
 interface APSHandlerCallbacks {
     /** Handle APS frame */
@@ -346,6 +364,7 @@ interface APSHandlerCallbacks {
 **Responsibility:** Single source of truth for all state
 
 **State Managed:**
+
 - Network parameters (EUI64, PAN ID, extended PAN ID, network key, etc.)
 - Device table (device entries with capabilities, LQA tracking, authorization)
 - Address mappings (16-bit ↔ 64-bit)
@@ -363,6 +382,7 @@ interface APSHandlerCallbacks {
 - Indirect transmissions (for devices with rxOnWhenIdle=false)
 
 **Key Methods:**
+
 ```typescript
 // State management
 public nextNWKKeyFrameCounter(): number
@@ -385,6 +405,7 @@ public async disassociate(source16: number | undefined, source64: bigint | undef
 ```
 
 **Callbacks to Driver (StackContextCallbacks):**
+
 ```typescript
 interface StackContextCallbacks {
     /** Handle post-disassociate */
@@ -511,6 +532,7 @@ Serial Port → RCP Firmware → Radio Transmission
 ### Routing Feedback Loop (Extra Pass Focus)
 
 Recent refactors introduced a closed-loop routing controller that keeps concentrator behavior stable even when radio quality fluctuates:
+
 1. **MAC delivery feedback** – Every unicast tracks whether the RCP reported an ACK. Success clears the destination entry in `StackContext.macNoACKs`, while a NO_ACK increments it and immediately calls `NWKHandler.markRouteFailure()`.
 2. **Source-route scoring** – `NWKHandler.findBestSourceRoute()` re-sorts all candidate paths on every lookup. The score combines hop count, staleness penalty, failure penalty, a recency bonus, and a hard filter that rejects any relay currently above the NO_ACK threshold.
 3. **Automatic recovery** – When the handler purges all routes (expired, blacklisted, or unhealthy relays), it schedules a many-to-one route discovery so the coordinator re-advertises itself and rebuilds source routes.
@@ -525,12 +547,14 @@ Together these steps ensure routing decisions remain deterministic and reflect t
 State is persisted to a `zoh.save` file in TLV (Tag-Length-Value) format, similar to NCP NVRAM.
 
 **State Components Saved:**
+
 1. Network parameters (PAN ID, extended PAN ID, channel, keys, pending key staging, etc.)
 2. Device data (capabilities, authorization, neighbor flag, LQA history, source routes, timeout metadata)
 3. Frame counters (NWK key, TC key)
 4. Application link key entries (pair-wise keys between coordinator and devices)
 
 **Save Format:**
+
 ```
 [Tag: 1 byte][Length: 2 bytes LE][Value: Length bytes] ...
 ```
@@ -538,6 +562,7 @@ State is persisted to a `zoh.save` file in TLV (Tag-Length-Value) format, simila
 ### State Loading
 
 On driver start:
+
 1. Load state from `zoh.save` if exists
 2. Register hashed keys for crypto operations
 3. Initialize RCP firmware
@@ -549,34 +574,36 @@ On driver start:
 ### Memory Characteristics
 
 **Data Structures:**
+
 - **Device Table**: `Map<bigint, DeviceTableEntry>`
-  - Complexity: O(1) lookup by IEEE address
-  - Memory per device: ~80-120 bytes (depends on LQA history size)
-  - Components: address16 (2B), capabilities (1B), flags (2B), recentLQAs array (variable)
+    - Complexity: O(1) lookup by IEEE address
+    - Memory per device: ~80-120 bytes (depends on LQA history size)
+    - Components: address16 (2B), capabilities (1B), flags (2B), recentLQAs array (variable)
 
 - **Address Lookup Maps**:
-  - `address16ToAddress64`: `Map<number, bigint>` - O(1) reverse lookup
-  - Memory per entry: ~16 bytes
+    - `address16ToAddress64`: `Map<number, bigint>` - O(1) reverse lookup
+    - Memory per entry: ~16 bytes
 
 - **Source Route Table**: `Map<number, SourceRouteTableEntry[]>`
-  - Complexity: O(1) lookup, O(n) route selection where n = alternate routes per destination
-  - Memory per route: ~48 bytes + (relay count × 2 bytes)
-  - Components: relayAddresses array, pathCost (4B), timestamps (16B), failureCount (4B)
-  - Route aging: Stale after 2 minutes, expired after 5 minutes
+    - Complexity: O(1) lookup, O(n) route selection where n = alternate routes per destination
+    - Memory per route: ~48 bytes + (relay count × 2 bytes)
+    - Components: relayAddresses array, pathCost (4B), timestamps (16B), failureCount (4B)
+    - Route aging: Stale after 2 minutes, expired after 5 minutes
 
 - **Indirect Transmission Queue**: `Map<bigint, IndirectTxContext[]>`
-  - Complexity: O(1) lookup by device IEEE address
-  - Memory per queued frame: ~32 bytes + frame buffer size
-  - Automatically cleaned on device poll (Data Request)
+    - Complexity: O(1) lookup by device IEEE address
+    - Memory per queued frame: ~32 bytes + frame buffer size
+    - Automatically cleaned on device poll (Data Request)
 
 - **Configuration Attributes**: Pre-encoded ZDO response buffers
-  - Address response: ~10 bytes
-  - Node descriptor: ~13 bytes
-  - Power descriptor: ~3 bytes
-  - Active endpoints list: ~43 bytes
-  - Simple descriptors: ~256 bytes
+    - Address response: ~10 bytes
+    - Node descriptor: ~13 bytes
+    - Power descriptor: ~3 bytes
+    - Active endpoints list: ~43 bytes
+    - Simple descriptors: ~256 bytes
 
 **Total Memory Footprint (estimated for typical network):**
+
 - Base overhead: ~2-3 MB (Node.js runtime + stack)
 - Per device: ~100-200 bytes
 - 50 devices: ~3-4 MB
@@ -586,6 +613,7 @@ On driver start:
 ### Throughput Characteristics
 
 **Protocol Overhead:**
+
 - MAC header: 9-25 bytes (depending on addressing mode)
 - NWK header: 8-20 bytes (with/without source routing)
 - NWK security: 14 bytes (auxiliary header + 4-byte MIC)
@@ -594,6 +622,7 @@ On driver start:
 - Total overhead: 35-80 bytes per frame
 
 **Frame Processing:**
+
 - HDLC decoding: <30 µs per frame
 - Spinel parsing: <20 µs per frame
 - MAC/NWK/APS decoding: <100 µs per frame (combined)
@@ -602,6 +631,7 @@ On driver start:
 - Total outgoing path: <1.5 ms (application call → radio transmission)
 
 **Network Timings:**
+
 - Link Status broadcast: Every 15 seconds (±1s jitter)
 - Many-to-One Route Request: Every 60 seconds (on-demand, throttled to min 10s)
 - Route staleness: 2 minutes (route becomes less preferred)
@@ -610,6 +640,7 @@ On driver start:
 - Broadcast delivery time: 9 seconds (network-wide propagation)
 
 **Serial Communication:**
+
 - HDLC chunk size: 2048 bytes
 - Stream high-water mark: 8192 bytes (4 × chunk size)
 - Typical baud rate: 921600 bps (115,200 bytes/s)
@@ -618,6 +649,7 @@ On driver start:
 ### Latency Characteristics
 
 **End-to-End Latency (typical values):**
+
 - Direct neighbor unicast: 5-10 ms
 - 1-hop routed unicast: 15-25 ms
 - 2-hop routed unicast: 25-40 ms
@@ -626,6 +658,7 @@ On driver start:
 - ZDO response (coordinator): <5 ms (generated locally)
 
 **Component Latencies:**
+
 - Serial port write: <0.5 ms
 - RCP processing: 1-3 ms
 - Radio transmission (2.4 GHz): 2-4 ms per hop
@@ -635,6 +668,7 @@ On driver start:
 ### Scalability Characteristics
 
 **Network Limits:**
+
 - Max network depth: 15 hops
 - Max network radius: 30 hops (2 × depth)
 - Max devices: Limited by available 16-bit addresses (~64,000 theoretical)
@@ -642,12 +676,14 @@ On driver start:
 - Max source route relays: Unlimited in table, practical limit ~10 per route
 
 **Routing Scalability:**
+
 - Route discovery: Exponential network flooding (resource intensive)
 - Many-to-One routing: Scalable to large networks (routes stored at edges)
 - Source routing: O(1) lookup, eliminates per-hop route discovery
 - Route table growth: O(n) where n = number of devices with active routes
 
 **State Persistence:**
+
 - Save format: TLV (Tag-Length-Value)
 - Typical save file size: 1-10 KB for small networks, 50-100 KB for large networks
 - Save operation: <10 ms (async file write)
@@ -656,6 +692,7 @@ On driver start:
 ### CPU Characteristics
 
 **Hot Paths (performance-critical):**
+
 - Frame encoding/decoding: Inline buffer operations, minimal allocations
 - HDLC escape detection: Simple comparison (no branching)
 - FCS calculation: Lookup table (pre-computed)
@@ -663,6 +700,7 @@ On driver start:
 - Logger: Lazy evaluation with lambdas (no string operations if debug disabled)
 
 **Optimization Strategies:**
+
 - Zero-copy buffer operations where possible (subarray/slice)
 - Pre-hashed security keys (computed once at startup)
 - Pre-encoded coordinator descriptors
@@ -671,6 +709,7 @@ On driver start:
 - Const enums (compile-time constants, zero runtime cost)
 
 **CPU Usage (typical):**
+
 - Idle: <1% CPU
 - Light traffic (1-5 msg/s): 1-3% CPU
 - Moderate traffic (10-20 msg/s): 3-8% CPU

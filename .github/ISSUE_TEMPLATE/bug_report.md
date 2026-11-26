@@ -13,6 +13,7 @@ A clear and concise description of what the bug is.
 
 **To Reproduce**
 Steps to reproduce the behavior:
+
 1. Do this
 2. Do that
 3. See error
@@ -21,6 +22,7 @@ Steps to reproduce the behavior:
 A clear and concise description of what you expected to happen.
 
 **Setup (please complete the following information):**
+
 - Machine: [e.g. Intel NUC, RPI]
 - OS: [e.g. debian 12.9]
 - Container: [e.g. no, Docker 27]
@@ -35,6 +37,7 @@ Commands that may help:
 -->
 
 **Coordinator/Adapter (please complete the following information):**
+
 - Manufacturer: [e.g. Silabs, TI]
 - Firmware Version (or link to firmware file): [e.g. 2.5.2.0_GitHub-1fceb225b]
 
