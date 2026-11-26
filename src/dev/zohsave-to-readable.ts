@@ -6,7 +6,7 @@ import { OTRCPDriver } from "../drivers/ot-rcp-driver";
 async function printSave(dataPath: string): Promise<void> {
     const driver = new OTRCPDriver(
         // @ts-expect-error not needed here
-        {},
+        { on: () => {} },
         {},
         {},
         {

@@ -181,7 +181,7 @@ async function convert(dataPath: string): Promise<void> {
 
     let driver = new OTRCPDriver(
         // @ts-expect-error not needed here
-        {},
+        { on: () => {} },
         {},
         {},
         {
@@ -237,7 +237,7 @@ async function convert(dataPath: string): Promise<void> {
 
     driver = new OTRCPDriver(
         // @ts-expect-error not needed here
-        {},
+        { on: () => {} },
         {},
         {},
         {
